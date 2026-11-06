@@ -276,3 +276,38 @@ test("interrupted sessions count against the active task limit", async (t) => {
     (error: unknown) => error instanceof BridgeError && error.status === 409,
   );
 });
+
+test("history pruning preserves interrupted tasks while trimming completed history", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "jarvis-pruning-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new TaskStore(directory);
+  await store.initialize();
+  const start = Date.UTC(2024, 0, 1);
+  for (let index = 0; index < 100; index++) {
+    await store.add({
+      id: `completed-task-${index}`,
+      title: "Completed task",
+      status: "completed",
+      reply: "",
+      createdAt: new Date(start + index * 1_000).toISOString(),
+      events: [],
+      approvals: [],
+      childTasks: {},
+    });
+  }
+  await store.add({
+    id: "interrupted-task",
+    title: "Unconfirmed task",
+    status: "interrupted",
+    reply: "",
+    createdAt: new Date(start + 100_000).toISOString(),
+    events: [],
+    approvals: [],
+    sessionId: "persisted-session-id",
+    childTasks: {},
+  });
+
+  assert.equal(store.values().length, 100);
+  assert.ok(store.get("interrupted-task"));
+  assert.equal(store.get("completed-task-0"), undefined);
+});

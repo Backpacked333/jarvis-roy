@@ -86,7 +86,7 @@ export class TaskStore {
   private prune(): void {
     while (this.records.size > 100) {
       const removable = [...this.records.values()]
-        .filter((task) => TERMINAL_STATUSES.has(task.status))
+        .filter((task) => TERMINAL_STATUSES.has(task.status) && task.status !== "interrupted")
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
       if (!removable) return;
       this.records.delete(removable.id);
