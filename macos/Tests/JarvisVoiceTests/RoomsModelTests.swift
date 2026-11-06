@@ -33,10 +33,98 @@ final class RoomsModelTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let first = RoomsModel(client: service, now: { RoomsFixture.now }, selectionStore: defaults)
         await first.refresh(); first.selectedRoomId = room.id
+        first.setGoalDraft("Unsubmitted session-only text", roomId: room.id)
         let second = RoomsModel(client: service, now: { RoomsFixture.now }, selectionStore: defaults)
         XCTAssertNil(second.state)
         await second.refresh()
         XCTAssertEqual(second.selectedRoomId, room.id)
+        XCTAssertEqual(second.goalDraft(roomId: room.id), "")
+    }
+
+    func testUnsubmittedGoalsStayRoomScopedAcrossSelectionAndRefresh() async throws {
+        let (model, service) = try make()
+        let first = service.snapshot.rooms[0].id
+        var another = service.snapshot.rooms[0]; another.id = "room_two"
+        service.snapshot.rooms.append(another)
+        await model.refresh()
+        model.setGoalDraft("Amber draft", roomId: first)
+        model.selectedRoomId = another.id
+        model.setGoalDraft("Indigo-only draft: Lantern 235. Do not submit yet.", roomId: another.id)
+        model.selectedRoomId = first
+        await model.pollOnce()
+        model.selectedRoomId = nil
+        await model.refresh()
+        model.selectedRoomId = another.id
+        XCTAssertEqual(model.goalDraft(roomId: first), "Amber draft")
+        XCTAssertEqual(model.goalDraft(roomId: another.id), "Indigo-only draft: Lantern 235. Do not submit yet.")
+        XCTAssertTrue(service.authored.isEmpty)
+        XCTAssertTrue(service.starts.isEmpty)
+    }
+
+    func testGoalSubmissionCapturesRoomAndClearsOnlyItsUnchangedDraft() async throws {
+        let (model, service) = try make()
+        let first = service.snapshot.rooms[0].id
+        var another = service.snapshot.rooms[0]; another.id = "room_two"
+        service.snapshot.rooms.append(another)
+        await model.refresh()
+        model.setGoalDraft("  Amber goal  ", roomId: first)
+        model.setGoalDraft("Indigo goal", roomId: another.id)
+        let submission = model.submitGoalDraft(roomId: first)
+        model.selectedRoomId = another.id
+        model.setGoalDraft("New Indigo goal", roomId: another.id)
+        let succeeded = await submission.value
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(service.authored.count, 1)
+        XCTAssertEqual(service.authored.first?.0, first)
+        XCTAssertEqual(service.authored.first?.1.goal, "Amber goal")
+        XCTAssertEqual(model.goalDraft(roomId: first), "")
+        XCTAssertEqual(model.goalDraft(roomId: another.id), "New Indigo goal")
+        XCTAssertTrue(service.starts.isEmpty)
+        XCTAssertEqual(service.acceptCalls, 0)
+    }
+
+    func testGoalCompletionPreservesNewEditsEvenWhenTextReturnsToOriginal() async throws {
+        let (model, service) = try make()
+        await model.refresh()
+        let roomId = service.snapshot.rooms[0].id
+        var continuation: CheckedContinuation<HarnessAuthoring, Error>?
+        service.authorHandler = { _, _ in try await withCheckedThrowingContinuation { continuation = $0 } }
+        model.setGoalDraft("Original goal", roomId: roomId)
+        let submission = model.submitGoalDraft(roomId: roomId)
+        while continuation == nil { await Task.yield() }
+        model.setGoalDraft("A newer edit", roomId: roomId)
+        model.setGoalDraft("Original goal", roomId: roomId)
+        continuation?.resume(returning: service.snapshot.authorings[0])
+        let succeeded = await submission.value
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(model.goalDraft(roomId: roomId), "Original goal")
+        XCTAssertEqual(service.authored.count, 1)
+    }
+
+    func testFailedGoalSubmissionRetainsUnsubmittedText() async throws {
+        let (model, service) = try make()
+        await model.refresh()
+        let roomId = service.snapshot.rooms[0].id
+        model.setGoalDraft("Keep this goal", roomId: roomId)
+        service.failure = RoomsError.conflict("Room changed")
+        let succeeded = await model.submitGoalDraft(roomId: roomId).value
+        XCTAssertFalse(succeeded)
+        XCTAssertEqual(model.goalDraft(roomId: roomId), "Keep this goal")
+        XCTAssertEqual(service.authored.count, 1)
+    }
+
+    func testEmptyOrUnknownRoomDraftCannotSubmit() async throws {
+        let (model, service) = try make()
+        await model.refresh()
+        let roomId = service.snapshot.rooms[0].id
+        model.setGoalDraft("Do not retarget", roomId: "missing_room")
+        model.setGoalDraft("", roomId: roomId)
+        let missing = await model.submitGoalDraft(roomId: "missing_room").value
+        let empty = await model.submitGoalDraft(roomId: roomId).value
+        XCTAssertFalse(missing)
+        XCTAssertFalse(empty)
+        XCTAssertEqual(model.goalDraft(roomId: "missing_room"), "")
+        XCTAssertTrue(service.authored.isEmpty)
     }
 
     func testOlderSnapshotNeverReplacesNewerState() async throws {
@@ -111,6 +199,7 @@ final class RoomsModelTests: XCTestCase {
         service.snapshot.rooms.append(another)
         await model.refresh()
         let context = model.voiceContext
+        model.setGoalDraft("Unsubmitted typed goal", roomId: service.snapshot.rooms[0].id)
         model.selectedRoomId = another.id
         let utterance = HarnessVoiceUtterance(text: "Build a page", context: context, sessionId: "session", generation: 3)
         await model.handleUtterance(utterance)
@@ -120,6 +209,7 @@ final class RoomsModelTests: XCTestCase {
         XCTAssertEqual(service.authored[0].1.goal, "Build a page")
         XCTAssertEqual(service.acceptCalls, 0)
         XCTAssertTrue(service.starts.isEmpty)
+        XCTAssertEqual(model.goalDraft(roomId: service.snapshot.rooms[0].id), "Unsubmitted typed goal")
     }
 
     func testStaleVoiceBindingCannotRetargetAnotherQuestionOrApproval() async throws {

@@ -238,8 +238,9 @@ struct RoomsWorkspaceView: View {
 private struct RoomsOverview: View {
     @ObservedObject var model: RoomsModel
     let room: HarnessRoom
-    @State private var goals: [String: String] = [:]
-    private var goal: Binding<String> { Binding(get: { goals[room.id] ?? "" }, set: { goals[room.id] = $0 }) }
+    private var goal: Binding<String> {
+        Binding(get: { model.goalDraft(roomId: room.id) }, set: { model.setGoalDraft($0, roomId: room.id) })
+    }
     private var running: Int { model.runs.flatMap(\.nodes).filter { $0.status == "running" }.count }
     private var waiting: Int { model.questions.filter { $0.target.roomId == room.id }.count }
     var body: some View {
@@ -269,7 +270,7 @@ private struct RoomsOverview: View {
                 HStack {
                     Text("Draft → review & accept → explicit start").font(.system(size: 10)).foregroundStyle(RoomsPalette.muted)
                     Spacer()
-                    Button { submit() } label: { Label("Draft a plan", systemImage: "arrow.up.right") }
+                    Button { model.submitGoalDraft(roomId: room.id) } label: { Label("Draft a plan", systemImage: "arrow.up.right") }
                         .buttonStyle(.borderedProminent).keyboardShortcut(.return, modifiers: .command)
                         .disabled(!model.canMutate || room.status != "active" || model.pendingActions.contains("author:\(room.id)") || goal.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -309,11 +310,6 @@ private struct RoomsOverview: View {
             Text("\(value)").font(.system(size: 23, weight: .light, design: .monospaced)).foregroundStyle(RoomsPalette.cyan)
             Text(label).font(.system(size: 8, weight: .medium)).tracking(1).foregroundStyle(RoomsPalette.muted)
         }
-    }
-    private func submit() {
-        let roomId = room.id
-        let text = goals[roomId] ?? ""
-        Task { if await model.authorGoal(text, roomId: roomId), goals[roomId] == text { goals[roomId] = "" } }
     }
 }
 

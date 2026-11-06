@@ -23,6 +23,7 @@ final class RoomsTestService: HarnessServing {
     var stateCalls = 0
     var stateHandler: (() async throws -> HarnessState)?
     var createHandler: ((HarnessCreateRoomRequest) async throws -> HarnessRoom)?
+    var authorHandler: ((String, HarnessAuthorPlanRequest) async throws -> HarnessAuthoring)?
     var answerHandler: ((HarnessAnswerRequest) async throws -> HarnessQuestion)?
     var failure: Error?
     var textAnswers: [HarnessAnswerRequest] = []
@@ -67,6 +68,7 @@ final class RoomsTestService: HarnessServing {
     }
     func authorPlan(_ roomId: String, input: HarnessAuthorPlanRequest) async throws -> HarnessAuthoring {
         authored.append((roomId, input))
+        if let authorHandler { return try await authorHandler(roomId, input) }
         if let failure { throw failure }
         var value = snapshot.authorings[0]
         value.roomId = roomId; value.goal = input.goal; value.requestId = input.requestId

@@ -30,6 +30,12 @@ final class RoomsModel: ObservableObject {
     let notifications: RoomsNotifications
     @Published private(set) var lastVoiceGoal: String?
     @Published private(set) var lastUpdated: Date?
+    @Published private var goalDrafts: [String: GoalDraft] = [:]
+
+    private struct GoalDraft {
+        let text: String
+        let revision = UUID()
+    }
 
     private let client: any HarnessServing
     private let now: () -> Date
@@ -242,6 +248,25 @@ final class RoomsModel: ObservableObject {
             _ = try await client.updateRoom(room.id, input: .init(expectedRevision: room.revision, title: title, description: description, status: status, policy: policy))
         }
     }
+    func goalDraft(roomId: String) -> String { goalDrafts[roomId]?.text ?? "" }
+
+    func setGoalDraft(_ text: String, roomId: String) {
+        guard state?.rooms.contains(where: { $0.id == roomId }) == true else { return }
+        goalDrafts[roomId] = text.isEmpty ? nil : GoalDraft(text: text)
+    }
+
+    @discardableResult
+    func submitGoalDraft(roomId: String) -> Task<Bool, Never> {
+        let draft = goalDrafts[roomId]
+        return Task { [weak self] in
+            guard let self, let draft, await self.authorGoal(draft.text, roomId: roomId) else { return false }
+            if self.goalDrafts[roomId]?.revision == draft.revision {
+                self.goalDrafts.removeValue(forKey: roomId)
+            }
+            return true
+        }
+    }
+
     func authorGoal(_ goal: String, roomId: String? = nil) async -> Bool {
         guard let room = state?.rooms.first(where: { $0.id == (roomId ?? selectedRoomId) }), room.status == "active" else {
             error = "Select an active room before planning."; return false
