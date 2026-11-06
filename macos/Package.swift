@@ -6,7 +6,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [.executable(name: "Jarvis", targets: ["Jarvis"])],
     targets: [
-        .executableTarget(name: "Jarvis"),
+        .target(name: "JarvisAudioSafety", linkerSettings: [.linkedFramework("AVFoundation"), .linkedFramework("CoreAudio")]),
+        .executableTarget(name: "Jarvis", dependencies: ["JarvisAudioSafety"]),
         .testTarget(name: "JarvisVoiceTests", dependencies: ["Jarvis"])
     ]
 )

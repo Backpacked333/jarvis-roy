@@ -162,6 +162,7 @@ export class JarvisService {
     const now = new Date().toISOString();
     const conversation: ConversationRecord = {
       id: randomUUID(), title: title?.trim() ?? "New conversation",
+      autoTitle: title === undefined,
       createdAt: now, updatedAt: now, messages: [],
     };
     await this.store.addConversation(conversation);

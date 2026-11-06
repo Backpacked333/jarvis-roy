@@ -138,6 +138,22 @@ test("follow-up attaches the same SDK session, retaining turn history and dedupl
   assert.equal((await stat(directory)).mode & 0o777, 0o700);
 });
 
+test("untitled threads take their first turn title while explicit titles survive follow-ups and restart", async (t) => {
+  const { service, client, directory } = await setup(t);
+  const automatic = await service.createConversation();
+  const first = await service.createTask("Plan a coastal trip. Start with trains.", automatic.id);
+  await completed(service, first.id);
+  const followUp = await service.createTask("Compare the options", automatic.id);
+  await completed(service, followUp.id);
+  const explicit = await service.createConversation("New conversation");
+  const named = await service.createTask("Do not rename my explicit title", explicit.id);
+  await completed(service, named.id);
+  const restarted = await JarvisService.create({ client, dataDirectory: directory });
+  const state = await restarted.state();
+  assert.equal(state.conversations.find((thread) => thread.id === automatic.id)?.title, "Plan a coastal trip.");
+  assert.equal(state.conversations.find((thread) => thread.id === explicit.id)?.title, "New conversation");
+});
+
 test("independent compatibility tasks become isolated threads and never share history", async (t) => {
   const { service, client } = await setup(t);
   const first = await service.createTask("Thread A.");

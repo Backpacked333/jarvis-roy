@@ -38,6 +38,7 @@ function isConversation(value: unknown): value is ConversationRecord {
   return object(value) && typeof value.id === "string" && CONVERSATION_ID.test(value.id) &&
     typeof value.title === "string" && typeof value.createdAt === "string" &&
     typeof value.updatedAt === "string" &&
+    (value.autoTitle === undefined || typeof value.autoTitle === "boolean") &&
     (value.sessionId === undefined || typeof value.sessionId === "string") &&
     Array.isArray(value.messages) && value.messages.every((message: unknown) =>
       object(message) && typeof message.id === "string" &&
@@ -200,6 +201,13 @@ export class TaskStore {
         });
         changed = true;
       }
+    }
+    const firstUserMessage = conversation.messages.find((message) => message.role === "user");
+    const firstTask = firstUserMessage && this.records.get(firstUserMessage.taskId);
+    if (conversation.autoTitle !== false && conversation.title === "New conversation" && firstTask?.userMessage) {
+      conversation.title = firstTask.title;
+      conversation.autoTitle = false;
+      changed = true;
     }
     if (changed) {
       const order = new Map(this.values().map((record, index) => [record.id, index]));

@@ -66,6 +66,7 @@ export interface Conversation {
 
 export interface ConversationRecord extends Conversation {
   sessionId?: string;
+  autoTitle?: boolean;
 }
 
 export interface Memory {

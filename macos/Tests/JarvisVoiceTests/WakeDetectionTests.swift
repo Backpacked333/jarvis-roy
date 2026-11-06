@@ -3,6 +3,30 @@ import XCTest
 @testable import Jarvis
 
 final class WakeDetectionTests: XCTestCase {
+    @MainActor
+    func testMissingAudioInputFailsBeforePermissionsAndStaysMuted() async {
+        let voice = VoiceController(audioInputAvailable: { false })
+        for _ in 0..<2 {
+            await voice.setWakeWordEnabled(true)
+            XCTAssertFalse(voice.wakeWordEnabled)
+            XCTAssertFalse(voice.isListening)
+            XCTAssertFalse(voice.isRequestingPermission)
+            XCTAssertTrue(voice.error?.contains("No usable microphone") == true)
+            voice.stopListening()
+            XCTAssertEqual(voice.wakeStatus, "Wake listening is off")
+        }
+    }
+
+    @MainActor
+    func testPushToTalkAlsoRejectsMissingInputWithoutStartingPermissionRequest() async {
+        let voice = VoiceController(audioInputAvailable: { false })
+        await voice.startListening()
+        XCTAssertFalse(voice.isListening)
+        XCTAssertFalse(voice.isRequestingPermission)
+        XCTAssertFalse(voice.wakeWordEnabled)
+        XCTAssertTrue(voice.error?.contains("Typing still works") == true)
+    }
+
     func testWakePrefixAcceptsCasePunctuationAndWhitespace() {
         for phrase in [
             "Hey Jarvis, turn on the lights", "HEY, JARVIS! turn on the lights",

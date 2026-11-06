@@ -1,4 +1,5 @@
 import AVFoundation
+import JarvisAudioSafety
 import Speech
 import SwiftUI
 
@@ -16,6 +17,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     var onCommand: ((String) -> Void)?
 
     private let engine = AVAudioEngine()
+    private let audioInputAvailable: () -> Bool
     private let synthesizer = AVSpeechSynthesizer()
     private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -32,7 +34,8 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     private var microphoneAuthorization: Task<Bool, Never>?
     private var spokenUtterance: AVSpeechUtterance?
 
-    override init() {
+    init(audioInputAvailable: @escaping () -> Bool = { JarvisHasAudioInput() }) {
+        self.audioInputAvailable = audioInputAvailable
         super.init()
         synthesizer.delegate = self
     }
@@ -79,6 +82,10 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     private func beginSession(_ purpose: WakeSessionGate.Purpose) async {
         guard !Task.isCancelled, !isSpeaking else { return }
         if purpose == .wake { guard gate.wakeEnabled else { return } }
+        guard audioInputAvailable() else {
+            fail("No usable microphone was found. Connect an input device in System Settings → Sound, then explicitly enable listening again. Typing still works.")
+            return
+        }
         let ticket = gate.begin(purpose)
         if purpose == .wake { wakeStatus = "Checking on-device speech access…" }
         let task = Task { [weak self] in
@@ -150,6 +157,10 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
 
     private func startAudio(_ purpose: WakeSessionGate.Purpose, ticket: UInt64) {
         guard isCurrent(ticket), !isListening, !hasTap else { return }
+        guard audioInputAvailable() else {
+            fail("The microphone became unavailable. Reconnect an input device and try again. Typing still works.")
+            return
+        }
         let locale = purpose == .wake ? Locale(identifier: "en-US") : .current
         guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable,
             recognizer.supportsOnDeviceRecognition
@@ -167,20 +178,19 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
         request.shouldReportPartialResults = true
         request.taskHint = purpose == .wake ? .unspecified : .dictation
         self.request = request
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            fail("No usable microphone was found. Connect a microphone and try again. Typing still works.")
-            return
-        }
         let activity = WakeAudioActivity()
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+        let tap: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { buffer, _ in
             request.append(buffer)
             if let channel = buffer.floatChannelData?[0] {
                 let stride = buffer.stride
                 let samples = UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength) * stride)
                 activity.observe(samples, stride: stride, at: ProcessInfo.processInfo.systemUptime)
             }
+        }
+        let installed = JarvisInstallInputTap(engine, tap)
+        guard installed else {
+            fail("The microphone's hardware format is unavailable or changed. Check System Settings → Sound and try again. Typing still works.")
+            return
         }
         hasTap = true
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, failure in
@@ -197,9 +207,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
                 if let text { self.received(text, isFinal: isFinal, purpose: purpose) }
             }
         }
-        do {
-            engine.prepare()
-            try engine.start()
+        if JarvisStartAudioEngine(engine) {
             sessionStartedAt = ProcessInfo.processInfo.systemUptime
             isListening = true
             error = nil
@@ -211,7 +219,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
                     self.poll(purpose, activity: activity)
                 }
             }
-        } catch {
+        } else {
             fail(
                 "Could not start the microphone. Check the selected input in System Settings → Sound, close other microphone apps, then try again. Typing still works."
             )
@@ -312,11 +320,8 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
         restartTask = nil
         monitorTask?.cancel()
         monitorTask = nil
-        engine.stop()
-        if hasTap {
-            engine.inputNode.removeTap(onBus: 0)
-            hasTap = false
-        }
+        JarvisStopAudioEngine(engine, hasTap)
+        hasTap = false
         request?.endAudio()
         recognitionTask?.cancel()
         recognitionTask = nil
