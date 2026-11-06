@@ -39,6 +39,7 @@ test("missing, redacted and oversized approval arguments are deny-only on the se
     await assert.rejects(service.respond(task.id, approval.id, "approve"), /Only denial/);
     assert.equal(client.session.responses.length, 0);
     await service.respond(task.id, approval.id, "deny");
+    await service.waitForObservedDelivery(task.id);
     assert.equal(client.session.responses[0]?.[0]?.optionId, "deny");
   }
 });

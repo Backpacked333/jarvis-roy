@@ -101,6 +101,7 @@ async function setup(t: TestContext) {
 
 async function completed(service: JarvisService, id: string): Promise<Task> {
   await until(async () => (await service.state()).tasks.find((task) => task.id === id)?.status === "completed");
+  await service.waitForObservedDelivery(id);
   return (await service.state()).tasks.find((task) => task.id === id)!;
 }
 
@@ -276,6 +277,7 @@ test("restart blocks an uncertain turn until cancellation is confirmed, then con
   const session = [...client.instances.values()][0]!;
   session.deliveries[0]!.finish({ status: "awaiting-input" });
   await until(async () => (await service.state()).tasks[0]?.status === "waiting");
+  await service.waitForObservedDelivery(first.id);
   const restarted = await JarvisService.create({ client, dataDirectory: directory });
   await assert.rejects(restarted.createTask("Cannot overlap.", first.conversationId), bridgeStatus(409));
   session.confirmCancellation = false;

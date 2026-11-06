@@ -314,6 +314,10 @@ export class JarvisService {
     return deleteMemory(id, this.store.dataDirectory);
   }
 
+  async waitForObservedDelivery(taskId: string): Promise<void> {
+    while (this.deliveryObservers.has(taskId)) await this.deliveryObservers.get(taskId);
+  }
+
   private async cancelActiveTask(taskId: string): Promise<void> {
     await this.store.update(taskId, (task) => {
       task.cancelRequested = true;
