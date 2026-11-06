@@ -10,12 +10,12 @@ private final class RoomsNotificationServiceDouble: RoomsNotificationServing {
     var posted: [RoomsNotificationNotice] = []
     var removed: [String] = []
     var permissionHandler: (() async -> Bool)?
-    var postHandler: (() async -> Void)?
+    var postHandler: (() async throws -> Void)?
     func permission() async -> RoomsNotificationPermission { permissionCalls += 1; return status }
     func requestPermission() async throws -> Bool { requestCalls += 1; return await permissionHandler?() ?? false }
     func post(_ notice: RoomsNotificationNotice) async throws {
         posted.append(notice)
-        await postHandler?()
+        try await postHandler?()
         finishedPosts += 1
     }
     func remove(_ identifiers: [String]) { removed.append(contentsOf: identifiers) }
@@ -113,5 +113,22 @@ final class RoomsNotificationTests: XCTestCase {
         await until { !notifications.enabled }
         XCTAssertFalse(service.removed.isEmpty)
         XCTAssertEqual(notifications.permission, .denied)
+    }
+
+    func testPostFailureKeepsTextErrorAndRevokesFailedNavigation() async throws {
+        let service = RoomsNotificationServiceDouble()
+        service.postHandler = { throw URLError(.cannotConnectToHost) }
+        let notifications = RoomsNotifications(service: service)
+        var opened = false
+        notifications.onOpen = { _ in opened = true }
+        notifications.update([try target()], suppressed: false)
+        await notifications.enable()
+        await until { notifications.error != nil }
+        let id = try XCTUnwrap(service.posted.first?.identifier)
+        XCTAssertTrue(service.removed.contains(id))
+        service.onOpen?(id)
+        XCTAssertFalse(opened)
+        XCTAssertTrue(notifications.enabled)
+        notifications.disable()
     }
 }

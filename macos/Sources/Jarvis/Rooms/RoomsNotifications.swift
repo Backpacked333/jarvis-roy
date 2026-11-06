@@ -180,7 +180,7 @@ final class RoomsNotifications: ObservableObject {
             } catch {
                 service.remove([notice.identifier])
                 ledger.failed(notice.identifier)
-                if token == generation { error = "A notification could not be delivered. Review the text inbox instead." }
+                if token == generation { self.error = "A notification could not be delivered. Review the text inbox instead." }
             }
         }
     }
