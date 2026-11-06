@@ -9,7 +9,7 @@ import { defaultRoomPolicy, type ArtifactManifest, type AttemptRef, type PlanDra
 import { questionBinding, type AnswerQuestionRequest, type QuestionPrompt } from "../bridge/harness-contracts/interactions.ts";
 import type { AuthoringResult, HarnessService, PlanAuthor } from "../bridge/harness-contracts/service.ts";
 import { artifactDigest, sha256 } from "../bridge/harness-contracts/validation.ts";
-import type { Cancellation, Reconciliation, WorkerContext, WorkerResult, WorkerRunner, WorkerSpec } from "../bridge/harness-contracts/worker.ts";
+import type { Cancellation, Continuation, Reconciliation, WorkerContext, WorkerResult, WorkerRunner, WorkerSpec } from "../bridge/harness-contracts/worker.ts";
 import { createHarnessKernel } from "../bridge/harness-kernel/index.ts";
 import { HarnessKernel } from "../bridge/harness-kernel/kernel.ts";
 import { zeroUsage, type Database } from "../bridge/harness-kernel/model.ts";
@@ -103,10 +103,10 @@ function complete(call: Call, used = usage()): WorkerResult {
   call.result.resolve(result);
   return result;
 }
-function question(call: Call, used = usage(), prompt: QuestionPrompt = { prompt: "Which color?", choices: [{ id: "blue", label: "Blue" }], allowText: true }): WorkerResult {
+function question(call: Call, used = usage(), prompt: QuestionPrompt = { prompt: "Which color?", choices: [{ id: "blue", label: "Blue" }], allowText: true }, content: Partial<Pick<Continuation, "summary" | "history">> = {}): WorkerResult {
   const result: WorkerResult = { status: "waiting_question", ref: call.spec.ref, usage: used,
     checkpoint: { version: 1, ref: call.spec.ref, sequence: call.sequence - 1, createdAt: new Date().toISOString(),
-      resumeMode: "continue_after_answer", continuation: { version: 1, summary: "Files sealed; previous tools must not replay", history: [], completedStepIds: ["step1"], usage: used },
+      resumeMode: "continue_after_answer", continuation: { version: 1, summary: "Files sealed; previous tools must not replay", history: [], completedStepIds: ["step1"], usage: used, ...content },
       artifacts: [artifact(call.spec)], question: prompt } };
   call.result.resolve(result);
   return result;
@@ -201,6 +201,28 @@ for (const [index, prompt] of unsafePrompts.entries()) {
 }
 
 for (const scope of ["worker", "authoring"] as const) {
+  for (const field of ["summary", "history"] as const) {
+    test(`kernel rejects credential-bearing ${scope} checkpoint ${field} even with a safe prompt`, { timeout: 10_000 }, async (t) => {
+      const continuation: Continuation = { version: 1, summary: "Never ask for secrets", history: [], completedStepIds: [], usage: usage() };
+      if (field === "summary") continuation.summary = credentialCanary;
+      else continuation.history = [{ role: "user", content: credentialCanary }];
+      const f = await fixture(t, scope === "authoring" ? { author: { author: async () => ({ status: "waiting_question", question: harmlessPrompt, usage: usage(), checkpoint: { version: 1, continuation } }) } } : {});
+      f.store.beforeSave = (db) => assert.equal(JSON.stringify(db).includes(credentialCanary), false, "Credential-bearing checkpoint reached store.save");
+      const r = await room(f.kernel);
+      if (scope === "worker") {
+        await start(f, r);
+        question(await f.worker.next(), usage(), harmlessPrompt, continuation);
+        await f.store.waitFor((db) => db.state.runs[0].nodes[0].status === "interrupted" && db.attempts[0].stopped);
+      } else {
+        await f.kernel.authorPlan(r.id, { requestId: "unsafe", expectedRoomRevision: r.revision, goal: "Choose a design" });
+        await f.store.waitFor((db) => db.state.authorings[0].status === "failed");
+      }
+      assert.deepEqual((await f.kernel.state()).questions, []);
+      await f.kernel.shutdown();
+      await assertNoStoredText(f.directory, [credentialCanary]);
+    });
+  }
+
   test(`kernel rejects sensitive text, choice and routed voice answers without consuming ${scope} binding`, { timeout: 10_000 }, async (t) => {
     let authorCalls = 0;
     const f = await fixture(t, scope === "authoring" ? { author: { author: async () => {
@@ -671,7 +693,7 @@ test("kernel rejects unsafe recovered worker questions without storing or replay
   await assertNoStoredText(directory, [prompt.prompt]);
 });
 
-for (const location of ["prompt", "choice", "answer", "result", "spec", "ledger", "author"] as const) {
+for (const location of ["prompt", "choice", "answer", "result", "spec", "ledger", "author", "author-history", "author-summary"] as const) {
   test(`kernel refuses legacy unsafe ${location} without exposing state, rewriting data or cancelling unrelated resources`, { timeout: 10_000 }, async (t) => {
     const f = await fixture(t);
     const r = await room(f.kernel);
@@ -696,7 +718,10 @@ for (const location of ["prompt", "choice", "answer", "result", "spec", "ledger"
       if (result?.status === "waiting_question") result.checkpoint.question.prompt = "What is your API key?";
     } else if (location === "spec") saved.attempts[1].spec.answer = answer;
     else if (location === "ledger") saved.ledgers[0].answer = answer;
-    else saved.authorJobs[0].answer = answer;
+    else if (location === "author") saved.authorJobs[0].answer = answer;
+    else saved.authorJobs[0].checkpoint = { version: 1, continuation: { version: 1, usage: usage(), completedStepIds: [],
+      summary: location === "author-summary" ? credentialCanary : "Never ask for secrets",
+      history: location === "author-history" ? [{ role: "user", content: credentialCanary }] : [] } };
     const file = path.join(f.directory, "harness-kernel/kernel.sqlite");
     const connection = new DatabaseSync(file);
     connection.prepare("UPDATE snapshot SET body=? WHERE id=1").run(JSON.stringify(saved));

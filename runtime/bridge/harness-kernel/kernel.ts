@@ -18,11 +18,11 @@ import {
 import { acceptPlan, canonicalJson, sha256, validateArtifact, validatePlan } from "../harness-contracts/validation.ts";
 import {
   CancellationSchema, WorkerEventSchema, WorkerResultSchema, WorkerSpecSchema,
-  type WorkerEvent, type WorkerResult, type WorkerSpec,
+  type Continuation, type WorkerEvent, type WorkerResult, type WorkerSpec,
 } from "../harness-contracts/worker.ts";
 import { addUsage, boundedDatabase, zeroUsage, type Attempt, type Database, type NodeLedger } from "./model.ts";
 import { SqliteKernelStore, type KernelStore } from "./store.ts";
-import { isSafeClarification, isSafeClarificationAnswer } from "../harness-interactions/clarification-safety.ts";
+import { isCredentialFreeText, isSafeClarification, isSafeClarificationAnswer } from "../harness-interactions/clarification-safety.ts";
 
 const AuthorResultSchema = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("completed"), draft: PlanDraftSchema, usage: UsageSchema }),
@@ -39,6 +39,8 @@ const revision = (actual: number, expected: number) => {
 };
 const copy = <T>(value: T): T => structuredClone(value);
 const terminal = new Set<Run["status"]>(["completed", "failed", "cancelled"]);
+const safeContinuation = (value: Continuation) => isCredentialFreeText(value.summary) &&
+  value.history.every((entry) => isCredentialFreeText(entry.content));
 
 async function bounded<T>(promise: Promise<T>, milliseconds = 5_000): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -496,6 +498,7 @@ export class HarnessKernel implements HarnessService {
           author.status = "completed";
           this.event(db, "plan.updated", plan.roomId, null, plan.id, plan.revision);
         } else if (result.status === "waiting_question") {
+          if (!safeContinuation(result.checkpoint.continuation)) throw new Error("Unsafe clarification checkpoint rejected");
           if (!equal(result.checkpoint.continuation.usage, result.usage)) throw new Error("Authoring checkpoint usage mismatch");
           author.status = "waiting_question";
           job.checkpoint = result.checkpoint;
@@ -866,6 +869,7 @@ export class HarnessKernel implements HarnessService {
       node.artifactIds = result.artifacts.map((a) => a.id);
     } else if (result.status === "waiting_question") {
       const checkpoint = result.checkpoint;
+      if (!safeContinuation(checkpoint.continuation)) throw new Error("Unsafe clarification checkpoint rejected");
       if (!equal(checkpoint.ref, ref) || checkpoint.sequence < Math.max(0, attempt.nextSequence - 1) ||
           checkpoint.sequence > (recovered ? 1_000 : attempt.nextSequence) || !equal(checkpoint.continuation.usage, result.usage)) throw new Error("Checkpoint scope, sequence or cumulative usage mismatch");
       this.addArtifacts(db, run, node, attempt, checkpoint.artifacts);
@@ -1041,11 +1045,13 @@ export class HarnessKernel implements HarnessService {
     const db = this.db;
     const safeQuestion = (question: QuestionPrompt | undefined) => !question || isSafeClarification(question);
     const safeAnswer = (answer: Pick<AnswerQuestionRequest, "text" | "choiceId"> | null) => !answer || isSafeClarificationAnswer(answer);
+    const safeCheckpoint = (checkpoint: { continuation: Continuation; question?: QuestionPrompt } | null) =>
+      !checkpoint || (safeQuestion(checkpoint.question) && safeContinuation(checkpoint.continuation));
     if (db.state.questions.some((q) => !safeQuestion(q.question) || !safeAnswer(q.answer)) ||
-        db.attempts.some((a) => !safeQuestion(a.spec.checkpoint?.question) || !safeAnswer(a.spec.answer) ||
-          (a.result?.status === "waiting_question" && !safeQuestion(a.result.checkpoint.question))) ||
-        db.ledgers.some((l) => !safeQuestion(l.checkpoint?.question) || !safeAnswer(l.answer)) ||
-        db.authorJobs.some((j) => !safeAnswer(j.answer))) {
+        db.attempts.some((a) => !safeCheckpoint(a.spec.checkpoint) || !safeAnswer(a.spec.answer) ||
+          (a.result?.status === "waiting_question" && !safeCheckpoint(a.result.checkpoint))) ||
+        db.ledgers.some((l) => !safeCheckpoint(l.checkpoint) || !safeAnswer(l.answer)) ||
+        db.authorJobs.some((j) => !safeCheckpoint(j.checkpoint) || !safeAnswer(j.answer))) {
       throw new Error("Unsafe persisted clarification; offline data review is required before startup");
     }
     const seen = new Set<string>();
