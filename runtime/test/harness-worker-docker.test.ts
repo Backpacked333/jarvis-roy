@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -23,6 +23,15 @@ function makeSpec(attemptId = "attempt"): WorkerSpec {
       limits: { ...policy.runBudget, maxWallTimeMs: 90_000 } }, policy, inputs: [], checkpoint: null, answer: null };
 }
 type Step = [string, { [key: string]: string }];
+async function durableBytes(directory: string): Promise<string> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const parts: string[] = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const path = join(directory, entry.name);
+    parts.push(entry.name, entry.isDirectory() ? await durableBytes(path) : (await readFile(path)).toString("utf8"));
+  }
+  return parts.join("\n");
+}
 function provider(steps: Step[], inspect?: (request: any) => void): typeof fetch {
   let next = 0;
   return (async (_url, init) => {
@@ -84,6 +93,57 @@ test("real smolagents + Docker file/test/artifact flow with synthetic provider, 
     assert.deepEqual(await runner.run(spec, context), result);
     assert.equal((await createWorkerRunner(options).reconcile(spec.ref)).state, "settled");
     assert.equal((await runner.cancel(spec.ref)).confirmed, true);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("real worker rejects unsafe questions before journals and sensitive resumed answers before model dispatch", { skip: !enabled, timeout: 120_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "jarvis-worker-question-safety-"));
+  try {
+    const unsafePrompt = "What is your API key? PROMPT_SAFETY_CANARY";
+    let calls = 0;
+    const transport = provider([["ask_question", { prompt: unsafePrompt }]]);
+    const options = { dataDirectory: directory, model: "fixture/model", fetch: (async (...args: Parameters<typeof fetch>) => {
+      calls++; return transport(...args);
+    }) as typeof fetch };
+    const runner = createWorkerRunner(options), spec = makeSpec();
+    const context = { signal: new AbortController().signal, emit: async () => {} };
+    const rejected = await runner.run(spec, context);
+    assert.equal(rejected.status, "failed");
+    assert.equal(calls, 1);
+    assert.equal(rejected.usage.modelCalls, 1);
+    assert.equal(rejected.usage.steps, 0);
+    if (rejected.status === "failed") assert.match(rejected.error, /Unsafe clarification/);
+    const journal = join(directory, "harness-workers-v1", "attempts", sha256(canonicalJson(spec.ref)));
+    const record = JSON.parse(await readFile(journal, "utf8"));
+    assert.equal(record.result.status, "failed");
+    assert.equal(record.stopped, true);
+    assert.equal(record.workspace, null);
+    assert.doesNotMatch(await durableBytes(directory), /PROMPT_SAFETY_CANARY/);
+    assert.doesNotMatch(await readFile(journal, "utf8"), /PROMPT_SAFETY_CANARY/);
+
+    const safeSpec = makeSpec("safe-question"); safeSpec.ref.nodeId = "safe-node"; safeSpec.node.id = "safe-node";
+    const safeTransport = provider([["ask_question", { prompt: "Which color should the header use?" }]]);
+    const safeRunner = createWorkerRunner({ ...options, fetch: (async (...args: Parameters<typeof fetch>) => {
+      calls++; return safeTransport(...args);
+    }) as typeof fetch });
+    const pending = await safeRunner.run(safeSpec, context);
+    assert.equal(pending.status, "waiting_question"); if (pending.status !== "waiting_question") return;
+    const before = await durableBytes(directory), priorCalls = calls;
+    const resume = structuredClone(safeSpec); resume.ref.attemptId = "answer"; resume.checkpoint = structuredClone(pending.checkpoint);
+    resume.answer = { binding: { questionId: "question", revision: 1, target: { scope: "node", ...safeSpec.ref } },
+      source: "text", text: "sk-live-synthetic-safety-canary-1234567890", choiceId: null };
+    await assert.rejects(safeRunner.run(resume, context), /Sensitive information/);
+    resume.answer.source = "voice";
+    await assert.rejects(safeRunner.run(resume, context), /Sensitive information/);
+    resume.answer.text = "blue";
+    resume.checkpoint.question.prompt = unsafePrompt;
+    await assert.rejects(safeRunner.run(resume, context), /Sensitive information/);
+    resume.checkpoint.question = pending.checkpoint.question;
+    resume.checkpoint.continuation.history.push({ role: "user", content: "sk-live-synthetic-safety-canary-1234567890" });
+    await assert.rejects(safeRunner.run(resume, context), /Sensitive information/);
+    assert.equal(calls, priorCalls);
+    assert.equal(await durableBytes(directory), before);
+    assert.equal((await safeRunner.reconcile(safeSpec.ref)).state, "settled");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

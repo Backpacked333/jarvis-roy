@@ -15,6 +15,7 @@ import { Gateway, ToolArguments, emptyUsage, type ToolName } from "./gateway.ts"
 import { runController } from "./controller.ts";
 import { command } from "./process.ts";
 import { imageProfile } from "./images.ts";
+import { isCredentialFreeText, isSafeClarification, isSafeClarificationAnswer } from "../harness-interactions/clarification-safety.ts";
 
 const LegacyRecordSchema = z.strictObject({
   version: z.literal(1), ref: AttemptRefSchema, specDigest: z.string(), planDigest: z.string(),
@@ -34,6 +35,8 @@ type Ledger = z.infer<typeof LedgerSchema>;
 const keyOf = (ref: AttemptRef) => sha256(canonicalJson(ref));
 const nodeKey = (ref: AttemptRef) => sha256(canonicalJson([ref.roomId, ref.runId, ref.nodeId]));
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
+const safeCheckpoint = (checkpoint: z.infer<typeof WorkerCheckpointSchema>) => isSafeClarification(checkpoint.question) &&
+  isCredentialFreeText(checkpoint.continuation.summary) && checkpoint.continuation.history.every(entry => isCredentialFreeText(entry.content));
 const errorMessage = (error: unknown) => error instanceof z.ZodError ? "Worker input or protocol validation failed" :
   error instanceof Error ? error.message.slice(0, 2000) : "Worker operation failed";
 
@@ -82,6 +85,9 @@ class Runner implements WorkerRunner {
     if (data === null) return null;
     const record = RecordSchema.parse(data);
     if (!same(ref, record.ref)) throw new Error("Worker journal scope mismatch");
+    if (record.result?.status === "waiting_question" && !safeCheckpoint(record.result.checkpoint)) {
+      throw new Error("Unsafe persisted clarification; offline data review is required");
+    }
     return record;
   }
 
@@ -92,6 +98,9 @@ class Runner implements WorkerRunner {
 
   async run(input: WorkerSpec, context: WorkerContext): Promise<WorkerResult> {
     const spec = WorkerSpecSchema.parse(input);
+    if (spec.checkpoint && !safeCheckpoint(spec.checkpoint) || spec.answer && !isSafeClarificationAnswer(spec.answer)) {
+      throw new Error("Sensitive information cannot be requested or supplied through clarifications");
+    }
     for (const bound of ["maxSteps", "maxModelCalls", "maxTokens", "maxOutputTokensPerCall", "maxWallTimeMs"] as const) {
       if (spec.node.limits[bound] > spec.policy.runBudget[bound]) throw new Error(`Node exceeds room ${bound}`);
     }
@@ -216,6 +225,9 @@ class Runner implements WorkerRunner {
         if (!pending || message.name !== pending.name || !same(message.arguments, pending.arguments)) throw new Error("Tool call does not match admitted model response");
         const call = pending; pending = null;
         const args = ToolArguments[call.name].parse(call.arguments) as { [key: string]: string };
+        if (call.name === "ask_question" && !isSafeClarification({ prompt: args.prompt, choices: [], allowText: true })) {
+          throw new Error("Unsafe clarification rejected");
+        }
         if (record!.usage.steps >= spec.node.limits.maxSteps) throw new Error("Worker step limit exhausted");
         record!.usage.steps++;
         await persistUsage();
@@ -259,6 +271,9 @@ class Runner implements WorkerRunner {
       });
       if (outcome.status === "failed" || outcome.status === "completed" && finalAnswer === null || outcome.status === "waiting_question" && question === null) {
         throw new Error("Worker did not reach a valid completion/question boundary");
+      }
+      if (outcome.status === "waiting_question" && history.some(entry => !isCredentialFreeText(entry.content))) {
+        throw new Error("Unsafe clarification checkpoint rejected");
       }
       const files = await snapshot();
       if (!await this.docker.stop(ref)) throw new Error("Cannot establish inert checkpoint: sandbox stop unconfirmed");
