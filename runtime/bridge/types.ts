@@ -1,0 +1,77 @@
+export type TaskStatus =
+  | "starting"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export interface ApprovalOption {
+  id: string;
+  label: string;
+}
+
+export interface Approval {
+  id: string;
+  title: string;
+  detail: string;
+  options: ApprovalOption[];
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  reply: string;
+  error?: string;
+  createdAt: string;
+  events: string[];
+  approvals: Approval[];
+}
+
+export interface TaskRecord extends Task {
+  sessionId?: string;
+  turnId?: string;
+  cancelRequested?: boolean;
+  cancelConfirmed?: boolean;
+  childTasks: Record<string, { name: string; kind?: string; sessionId?: string; outcome?: string }>;
+}
+
+export interface Memory {
+  id: string;
+  text: string;
+}
+
+export interface BridgeState {
+  ready: boolean;
+  model: string;
+  tasks: Task[];
+  memories: Memory[];
+  error?: string;
+}
+
+export interface EveEvent {
+  type: string;
+  data: Record<string, unknown>;
+  meta?: { position?: { line: number; index: number } };
+}
+
+export interface EveDelivery {
+  stream(options?: { signal?: AbortSignal }): AsyncIterable<unknown>;
+  result(options?: { signal?: AbortSignal }): Promise<unknown>;
+}
+
+export interface EveSession {
+  id: string;
+  respond(answers: readonly { interactionId: string; optionId: string }[]): Promise<EveDelivery>;
+  cancel(options?: { signal?: AbortSignal; turnId?: string | null }): Promise<EveDelivery>;
+}
+
+export interface EveClient {
+  health(): Promise<unknown>;
+  sessions: {
+    create(input: { message: string }): Promise<{ session: EveSession; delivery: EveDelivery }>;
+    attach(sessionId: string): EveSession;
+  };
+}
