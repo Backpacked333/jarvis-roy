@@ -107,6 +107,10 @@ choice and voice answers are checked at the kernel boundary before consumption o
 continuation; rejection leaves the exact pending revision unchanged. The shared
 filter uses credential patterns, secret redaction and sensitive terms, not a claim
 to detect every possible secret. Clarifications never grant approval authority.
+Inert checkpoint summaries/history also reject credential-shaped text before
+kernel persistence or replay; ordinary safety instructions mentioning secrets
+are allowed. These guarantees cover the kernel store, not a worker's earlier
+independent journal writes, which need the same guard in the worker adapter.
 
 Recovered worker questions pass the same checks as live results. Legacy snapshots
 containing unsafe prompts/answers fail startup before dispatch or reconciliation,
