@@ -5,8 +5,8 @@ import SwiftUI
 
 @MainActor
 final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling {
-    @Published var isListening = false
-    @Published var isSpeaking = false
+    @Published private(set) var isListening = false
+    @Published private(set) var isSpeaking = false
     @Published private(set) var isRequestingPermission = false
     @Published var transcript = ""
     @Published private(set) var error: String?
@@ -17,6 +17,8 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     @Published private(set) var handsFreeEnabled = false
     @Published private(set) var handsFreeStatus = "Hands-free is off"
     @Published private(set) var state: HarnessVoiceState = .idle
+
+    var capturedContext: HarnessVoiceContext? { turn.mode == .idle ? nil : turn.context }
 
     var onCommand: ((String) -> Void)?
     var onUtterance: ((HarnessVoiceUtterance) -> Void)?
@@ -97,7 +99,11 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
 
     func setHandsFreeEnabled(_ enabled: Bool) async {
         guard enabled else { stopListening(); return }
+        guard !Task.isCancelled else { return }
         cancelActive()
+        wakeGate.mute()
+        wakeWordEnabled = false
+        wakeStatus = "Wake listening is off"
         guard cloudConsentGranted, audioInputAvailable(), audioOutputAvailable() else { fail(VoiceAcousticError.unavailable.localizedDescription); return }
         let ticket = turn.begin(.capture, context: .init())
         guard await authorizeMicrophone(ticket), current(ticket) else { return }
@@ -107,7 +113,8 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
             turn.invalidate()
             handsFreeEnabled = true
             error = nil
-            handsFreeStatus = "Hands-free enabled · local AEC speech detection during replies · cloud answer windows after questions"
+            handsFreeStatus = "Hands-free enabled · local AEC mic during replies · cloud reply/question answer windows"
+            wakeStatus = "Hands-free idle · microphone off · wake listening is off"
             changeState(.idle)
         } catch { fail(VoiceAcousticError.unavailable.localizedDescription) }
     }
@@ -403,7 +410,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         captureStarted = now()
         lastDuplexSpeechAt = answerWindow ? nil : captureStarted
         changeState(.connecting)
-        wakeStatus = answerWindow ? "Opening an eight-second answer window for this exact question" : "Interrupted · preserving your speech while Scribe connects"
+        wakeStatus = answerWindow ? "Opening an eight-second answer window for the captured reply/question context" : "Interrupted · preserving your speech while Scribe connects"
         try transport.connect()
         var frame = turn.frame("start"); frame.context = context; frame.cloudConsent = true
         try transport.send(frame)

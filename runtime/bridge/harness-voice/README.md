@@ -45,6 +45,14 @@ voice.onStateChange = { state in /* RoomsModel.updateVoiceState */ }
 voice.speak(questionText, context: exactQuestionContext)
 ```
 
+`voice.capturedContext` is read-only and returns the current non-idle turn's
+captured context (including connecting/thinking), or nil after stop/completion.
+Use it to gate partial-transcript display/storage: room/question capture must not
+leak into the currently selected conversation. Conversation partials require nil
+room/question and an exact captured conversation match. Finals use `onUtterance`
+and its own context, never ambient UI focus. `isListening`/`isSpeaking` remain
+read-only; integration tests should drive the controller through injected ports.
+
 Before any cloud voice, the user must explicitly opt in for the current session:
 `voice.setCloudConsent(true)`. Show that microphone audio and spoken-reply text
 go to ElevenLabs; discourage speaking secrets. Consent defaults off, is not
@@ -114,12 +122,17 @@ current-session hands-free toggle and await `voice.setHandsFreeEnabled(true)`.
 Observe `handsFreeEnabled` and `handsFreeStatus`; failure never leaves it enabled.
 Explain that the microphone stays active **locally during replies** for speech
 detection and will automatically send a bounded answer window to ElevenLabs after
-a spoken bound question. Do not infer this consent from wake arming, a key, or the
+a reply carrying an exact conversation ID or a bound question. Recommended copy:
+**Local mic during replies, cloud capture during reply/question answer windows.**
+Do not infer this consent from wake arming, a key, or the
 spoken-attention toggle. Setting false, mute, stop, interrupt, cloud revocation,
 device loss or a detector failure stops capture and revokes acoustic rearming.
 Typed commands and manual push-to-talk remain available. Public stopSpeaking is
 also a full acoustic stop, whereas an internally detected barge-in transitions
 directly into a new capture generation.
+Enabling hands-free explicitly stops and disables wake listening, with truthful
+off status; the user can separately re-enable wake later. Idle hands-free alone
+does not leave an ambient microphone running.
 
 Implementation:
 
@@ -148,16 +161,18 @@ Implementation:
   connecting audio is capped at two seconds; slow handshakes fail closed instead
   of dropping words or replaying old turns. Pending PCM drains in order only after
   Scribe reports listening. Normal manual capture is unchanged.
-- A spoken **bound clarification** opens an answer window automatically only
+- A spoken **bound clarification or exact conversation reply** opens an answer window automatically only
   after real audio was received, provider audio ended AND every native scheduled
   buffer reports `dataPlayedBack`. Provider idle/done alone does not suffice.
-  The exact question/revision/room/run/node/attempt travels unchanged. Silence
+  The exact question/revision/room/run/node/attempt or nonempty conversation ID
+  travels unchanged, even if UI selection changes. Silence
   closes the window after eight seconds without committing or dispatching text;
   detected speech uses 1.2 seconds trailing silence and a 45-second maximum.
-  Unbound narration does not auto-open an ambient answer window.
+  Missing-context or room-only narration never auto-opens an ambient answer window.
 - Final transcripts alone call `onUtterance`. Partials remain display-only and can
   be corrected. No spoken yes, local VAD event or transcript authorizes approval.
-  The parent still owns exact pending-question/approval routing and expiry checks.
+  The parent still owns exact pending-question/approval routing and expiry checks,
+  and routes conversation finals through the existing busy/pending-approval gate.
 
 System API references:
 [Apple voice processing](https://developer.apple.com/videos/play/wwdc2019/510/),
@@ -225,7 +240,8 @@ retries, stale sessions, overflow and multi-second producer backpressure.
 
 Native tests cover pure generation/context/PCM state, real AVAudioConverter
 buffers, system speech-classifier loading, playback-drain accounting, pre-roll,
-echo-correlation fixtures and injected consent/device-loss/permission/duplex
+echo-correlation fixtures, exact-conversation capture/windows, partial/final
+context guards, mute/silence cancellation and injected consent/device-loss/permission/duplex
 callbacks. They require the
 parent's macOS stage (`swift test --package-path macos`); there is no Swift or
 Clang toolchain on the Linux implementation VM. Native sources and tests have not
