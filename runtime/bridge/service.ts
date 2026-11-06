@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import { containsCredentialLikeData, deleteMemory, listMemories } from "../agent/lib/memory.ts";
 import { BridgeError, errorMessage } from "./errors.ts";
 import { redactText, safeJson } from "./redaction.ts";
-import { TaskStore } from "./store.ts";
+import { CONVERSATION_ID, TaskStore } from "./store.ts";
 import type {
   Approval,
   BridgeState,
+  Conversation,
+  ConversationRecord,
   EveClient,
   EveDelivery,
   EveEvent,
@@ -41,9 +43,12 @@ function titleFromMessage(message: string): string {
 function publicTask(record: TaskRecord): Task {
   return {
     id: record.id,
+    conversationId: record.conversationId!,
+    userMessage: record.userMessage ?? null,
     title: record.title,
     status: record.status,
     reply: record.reply,
+    ...(record.lateReply ? { lateReply: record.lateReply } : {}),
     ...(record.error ? { error: record.error } : {}),
     createdAt: record.createdAt,
     events: [...record.events],
@@ -51,6 +56,13 @@ function publicTask(record: TaskRecord): Task {
       ...approval,
       options: approval.options.map((option) => ({ ...option })),
     })),
+  };
+}
+
+function publicConversation(record: ConversationRecord): Conversation {
+  return {
+    id: record.id, title: record.title, createdAt: record.createdAt, updatedAt: record.updatedAt,
+    messages: record.messages.map((message) => ({ ...message })),
   };
 }
 
@@ -131,17 +143,48 @@ export class JarvisService {
       tasks: this.store.values()
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
         .map(publicTask),
+      conversations: this.store.conversations()
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+        .map(publicConversation),
       memories,
       ...(error ? { error } : {}),
     };
   }
 
-  async createTask(message: string): Promise<Task> {
+  async createConversation(title?: string): Promise<Conversation> {
+    if (title !== undefined && (typeof title !== "string" || !title.trim() || title.length > 120)) {
+      throw new BridgeError("Conversation title must contain 1–120 characters.", 400);
+    }
+    if (title && containsCredentialLikeData(title)) {
+      throw new BridgeError("Conversation titles containing credential-like data cannot be persisted.", 400);
+    }
+    const now = new Date().toISOString();
+    const conversation: ConversationRecord = {
+      id: randomUUID(), title: title?.trim() ?? "New conversation",
+      createdAt: now, updatedAt: now, messages: [],
+    };
+    await this.store.addConversation(conversation);
+    this.pruneCaches();
+    return publicConversation(conversation);
+  }
+
+  async createTask(message: string, conversationId?: string): Promise<Task> {
+    if (conversationId !== undefined &&
+      (typeof conversationId !== "string" || !CONVERSATION_ID.test(conversationId) ||
+        !this.store.conversation(conversationId))) {
+      throw new BridgeError("Conversation not found. Create a conversation before sending to it.", 404);
+    }
     if (message.trim().length === 0 || message.length > MAX_MESSAGE_LENGTH) {
       throw new BridgeError("Message must contain 1–20000 characters.", 400);
     }
     if (containsCredentialLikeData(message)) {
       throw new BridgeError("Messages containing credential-like data cannot be persisted.", 400);
+    }
+    if (conversationId && this.store.values().some((task) =>
+      task.conversationId === conversationId && (ACTIVE_STATUSES.has(task.status) ||
+        this.cancelOperations.has(task.id) || this.sessionCancelOperations.has(task.id) ||
+        this.pendingSessions.has(task.id)))) {
+      throw new BridgeError("This conversation has an active or unconfirmed turn. Wait for it to finish, or Stop its task and confirm cancellation before sending again.", 409);
     }
     const activeCount = this.store.values()
       .filter((task) => ACTIVE_STATUSES.has(task.status)).length;
@@ -151,6 +194,8 @@ export class JarvisService {
 
     const task: TaskRecord = {
       id: randomUUID(),
+      conversationId: conversationId ?? randomUUID(),
+      userMessage: message,
       title: titleFromMessage(message),
       status: "starting",
       reply: "",
@@ -158,29 +203,40 @@ export class JarvisService {
       events: [],
       approvals: [],
       childTasks: {},
+      ...(conversationId && this.store.conversation(conversationId)?.sessionId
+        ? { sessionId: this.store.conversation(conversationId)!.sessionId } : {}),
     };
+    // add() reserves the turn synchronously, before the first await yields to another submit.
     await this.store.add(task);
+    this.pruneCaches();
     this.pendingOptions.set(task.id, new Map());
     this.callInputs.set(task.id, new Map());
     this.seenEvents.set(task.id, new Set());
-    const ready = Promise.resolve().then(() => this.client.sessions.create({ message }));
+    const ready = Promise.resolve().then(async () => {
+      if (!task.sessionId) return this.client.sessions.create({ message });
+      const session = this.client.sessions.attach(task.sessionId);
+      if (session.id !== task.sessionId) throw new Error("Eve attached the wrong session. Stop the runtime and restore its session store before continuing.");
+      this.sessions.set(task.id, session);
+      if (!session.send) throw new Error("The Eve client does not support conversation follow-ups. Install the pinned runtime and restart Jarvis.");
+      return { session, delivery: await session.send(message) };
+    });
     this.pendingSessions.set(task.id, ready);
     void ready.then(async ({ session, delivery }) => {
       this.pendingSessions.delete(task.id);
+      await this.store.bindSession(task.id, session.id);
       this.sessions.set(task.id, session);
-      await this.store.update(task.id, (record) => {
-        record.sessionId = session.id;
-      });
-      if (this.store.get(task.id)?.cancelRequested) {
-        await this.requestCancellation(task.id, session);
-      } else {
-        await this.observeDelivery(task.id, delivery);
-      }
+      const observation = this.observeDelivery(task.id, delivery);
+      if (this.store.get(task.id)?.cancelRequested) await this.requestCancellation(task.id, session);
+      await observation;
     }).catch(async (cause) => {
       this.pendingSessions.delete(task.id);
       await this.store.update(task.id, (record) => {
-        record.status = record.cancelRequested ? "interrupted" : "failed";
-        record.error = redactText(errorMessage(cause));
+        const status = asRecord(cause).status;
+        const rejected = typeof status === "number" && status >= 400 && status < 500 && status !== 408;
+        record.status = rejected ? "failed" : "interrupted";
+        record.error = rejected
+          ? `Eve rejected this message. Check runtime access; if the saved session has ended, create a new conversation. ${redactText(errorMessage(cause))}`
+          : `Message submission or observation is unconfirmed. Stop this task before sending again. ${redactText(errorMessage(cause))}`;
       });
     });
     return publicTask(task);
@@ -235,6 +291,7 @@ export class JarvisService {
       await cancellation;
     } finally {
       this.cancelOperations.delete(taskId);
+      await this.store.update(taskId, (record) => { record.cancellationPending = false; });
     }
     return publicTask(task);
   }
@@ -256,12 +313,13 @@ export class JarvisService {
   private async cancelActiveTask(taskId: string): Promise<void> {
     await this.store.update(taskId, (task) => {
       task.cancelRequested = true;
+      task.cancellationPending = true;
       task.error = undefined;
     });
 
     let session = this.sessions.get(taskId);
     const pending = this.pendingSessions.get(taskId);
-    if (!session && pending) {
+    if (pending) {
       try {
         let timer: NodeJS.Timeout | undefined;
         const created = await Promise.race([
@@ -280,7 +338,7 @@ export class JarvisService {
             task.error = `Cancellation is unconfirmed: ${redactText(errorMessage(cause))}`;
           }
         });
-        return;
+        if (!session) return;
       }
     }
 
@@ -340,7 +398,8 @@ export class JarvisService {
       const observed = (async () => {
         for await (const rawEvent of receipt.stream({ signal })) {
           const event = rawEvent as EveEvent;
-          if (event.type === "turn.settled" && event.data.outcome === "cancelled") {
+          if (event.type === "turn.settled" && event.data.outcome === "cancelled" &&
+            this.eventBelongsToTask(taskId, event)) {
             sawTurnCancellation = true;
           }
           await this.handleEvent(taskId, event);
@@ -372,6 +431,12 @@ export class JarvisService {
           } finally {
             if (onAbort) signal.removeEventListener("abort", onAbort);
           }
+          if (this.deliveryObservers.has(taskId)) {
+            await this.store.update(taskId, (record) => {
+              record.status = "interrupted";
+              record.error = "Turn cancellation was confirmed, but the original delivery is still unobserved. Retry Stop after the runtime is reachable before continuing this conversation.";
+            });
+          }
         }
         return;
       }
@@ -399,8 +464,11 @@ export class JarvisService {
       }
       const result = asRecord(await delivery.result());
       await this.store.update(taskId, (task) => {
-        if (task.cancelConfirmed) return;
         const reply = stringValue(result.reply);
+        if (task.cancelConfirmed) {
+          if (reply) task.lateReply = redactText(reply);
+          return;
+        }
         if (reply !== undefined) task.reply = redactText(reply);
         if (result.status === "completed") {
           task.status = "completed";
@@ -413,7 +481,12 @@ export class JarvisService {
           task.error = redactText(errorMessage(asRecord(result.error).message));
           task.approvals = [];
         } else if (result.status === "cancelled") {
-          task.status = "cancelled";
+          task.cancelConfirmed = true;
+          task.status = Object.values(task.childTasks).some((child) => child.outcome === undefined)
+            ? "interrupted" : "cancelled";
+          task.error = task.status === "interrupted"
+            ? "The parent turn cancellation was confirmed, but one or more child-task endings were not confirmed."
+            : undefined;
           task.approvals = [];
         }
       });
@@ -430,7 +503,18 @@ export class JarvisService {
   }
 
   private async observeDelivery(taskId: string, delivery: EveDelivery): Promise<void> {
-    const observation = this.consumeDelivery(taskId, delivery);
+    const observation = (async () => {
+      await this.store.update(taskId, (task) => {
+        task.observingDeliveries = (task.observingDeliveries ?? 0) + 1;
+      });
+      try {
+        await this.consumeDelivery(taskId, delivery);
+      } finally {
+        await this.store.update(taskId, (task) => {
+          task.observingDeliveries = Math.max(0, (task.observingDeliveries ?? 1) - 1);
+        });
+      }
+    })();
     this.deliveryObservers.set(taskId, observation);
     try {
       await observation;
@@ -438,15 +522,18 @@ export class JarvisService {
       if (this.deliveryObservers.get(taskId) === observation) {
         this.deliveryObservers.delete(taskId);
       }
+      this.pruneCaches();
     }
   }
 
   private async handleEvent(taskId: string, event: EveEvent): Promise<void> {
     if (!event || typeof event.type !== "string") return;
+    if (!this.eventBelongsToTask(taskId, event)) return;
     const seen = this.seenEvents.get(taskId) ?? new Set<string>();
     const signature = eventSignature(event);
     if (seen.has(signature)) return;
     seen.add(signature);
+    if (seen.size > 10_000) seen.delete(seen.values().next().value!);
     this.seenEvents.set(taskId, seen);
 
     const data = asRecord(event.data);
@@ -470,8 +557,12 @@ export class JarvisService {
       };
 
       switch (event.type) {
+        case "delivery.consumed": {
+          task.turnId ??= stringValue(data.turnId);
+          break;
+        }
         case "turn.started": {
-          task.turnId = stringValue(data.turnId);
+          task.turnId ??= stringValue(data.turnId);
           if (ACTIVE_STATUSES.has(task.status) && !task.cancelConfirmed) task.status = "running";
           append("Turn started.");
           break;
@@ -486,6 +577,13 @@ export class JarvisService {
           if (outcome === "completed") {
             append("Turn completed.");
           } else if (outcome === "cancelled") {
+            task.turnId ??= stringValue(data.turnId);
+            task.cancelConfirmed = true;
+            task.status = Object.values(task.childTasks).some((child) => child.outcome === undefined)
+              ? "interrupted" : "cancelled";
+            task.error = task.status === "interrupted"
+              ? "The parent turn cancellation was confirmed, but one or more child-task endings were not confirmed."
+              : undefined;
             append("Turn cancelled.");
           } else if (outcome === "failed") {
             if (!task.cancelConfirmed) {
@@ -523,6 +621,7 @@ export class JarvisService {
           break;
         }
         case "interaction.opened": {
+          if (task.cancelConfirmed) break;
           const interactionId = stringValue(data.interactionId);
           const request = asRecord(data.request);
           if (!interactionId) break;
@@ -617,7 +716,11 @@ export class JarvisService {
         }
         case "content.completed": {
           if (data.kind === "text" && data.phase === "reply" && typeof data.value === "string") {
-            task.reply = redactText(data.value);
+            const partId = stringValue(data.partId) ?? "reply";
+            task.replyParts = { ...task.replyParts, [partId]: redactText(data.value) };
+            const reply = Object.values(task.replyParts).join("\n");
+            if (task.cancelConfirmed) task.lateReply = reply;
+            else task.reply = reply;
           }
           break;
         }
@@ -652,6 +755,26 @@ export class JarvisService {
       for (const interactionId of settledInteractions) {
         this.submittingInteractions.delete(`${taskId}:${interactionId}`);
       }
+    }
+  }
+
+  private eventBelongsToTask(taskId: string, event: EveEvent): boolean {
+    const task = this.store.get(taskId);
+    if (!task) return false;
+    const turnId = event.scope?.turnId ?? stringValue(asRecord(event.data).turnId);
+    if (!turnId) return true;
+    if (task.turnId) return turnId === task.turnId;
+    return !this.store.values().some((other) => other.id !== taskId &&
+      other.conversationId === task.conversationId && other.turnId === turnId);
+  }
+
+  private pruneCaches(): void {
+    const retained = new Set(this.store.values().map((task) => task.id));
+    for (const cache of [this.sessions, this.pendingOptions, this.callInputs, this.seenEvents]) {
+      for (const id of cache.keys()) if (!retained.has(id)) cache.delete(id);
+    }
+    for (const key of this.submittingInteractions) {
+      if (!retained.has(key.split(":", 1)[0]!)) this.submittingInteractions.delete(key);
     }
   }
 }

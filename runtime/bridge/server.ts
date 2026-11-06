@@ -116,7 +116,19 @@ async function route(
       if (typeof body.message !== "string") {
         throw new BridgeError("message must be a string.", 400);
       }
-      json(response, 202, await service.createTask(body.message));
+      if (body.conversationId !== undefined && typeof body.conversationId !== "string") {
+        throw new BridgeError("conversationId must be a string.", 400);
+      }
+      json(response, 202, await service.createTask(body.message, body.conversationId));
+      return;
+    }
+    if (pathname === "/v1/conversations") {
+      if (method !== "POST") throw new BridgeError("Method not allowed.", 405);
+      const body = await readJson(request);
+      if (body.title !== undefined && typeof body.title !== "string") {
+        throw new BridgeError("title must be a string.", 400);
+      }
+      json(response, 201, await service.createConversation(body.title));
       return;
     }
     if (pathname === "/v1/stop") {

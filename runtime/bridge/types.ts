@@ -21,21 +21,49 @@ export interface Approval {
 
 export interface Task {
   id: string;
+  conversationId: string;
+  userMessage: string | null;
   title: string;
   status: TaskStatus;
   reply: string;
+  lateReply?: string;
   error?: string;
   createdAt: string;
   events: string[];
   approvals: Approval[];
 }
 
-export interface TaskRecord extends Task {
+export interface TaskRecord extends Omit<Task, "conversationId" | "userMessage"> {
+  conversationId?: string;
+  userMessage?: string | null;
   sessionId?: string;
   turnId?: string;
   cancelRequested?: boolean;
   cancelConfirmed?: boolean;
+  observingDeliveries?: number;
+  cancellationPending?: boolean;
+  replyParts?: Record<string, string>;
   childTasks: Record<string, { name: string; kind?: string; sessionId?: string; outcome?: string }>;
+}
+
+export interface ConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  createdAt: string;
+  taskId: string;
+}
+
+export interface Conversation {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ConversationMessage[];
+}
+
+export interface ConversationRecord extends Conversation {
+  sessionId?: string;
 }
 
 export interface Memory {
@@ -47,6 +75,7 @@ export interface BridgeState {
   ready: boolean;
   model: string;
   tasks: Task[];
+  conversations: Conversation[];
   memories: Memory[];
   error?: string;
 }
@@ -54,6 +83,7 @@ export interface BridgeState {
 export interface EveEvent {
   type: string;
   data: Record<string, unknown>;
+  scope?: { turnId?: string };
   meta?: { position?: { line: number; index: number } };
 }
 
@@ -64,6 +94,7 @@ export interface EveDelivery {
 
 export interface EveSession {
   id: string;
+  send?(message: string): Promise<EveDelivery>;
   respond(answers: readonly { interactionId: string; optionId: string }[]): Promise<EveDelivery>;
   cancel(options?: { signal?: AbortSignal; turnId?: string | null }): Promise<EveDelivery>;
 }
