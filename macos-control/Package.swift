@@ -5,5 +5,8 @@ let package = Package(
     name: "JarvisControl",
     platforms: [.macOS(.v14)],
     products: [.executable(name: "JarvisControl", targets: ["JarvisControl"])],
-    targets: [.executableTarget(name: "JarvisControl")]
+    targets: [
+        .executableTarget(name: "JarvisControl"),
+        .testTarget(name: "JarvisControlTests", dependencies: ["JarvisControl"])
+    ]
 )

@@ -31,3 +31,5 @@ jobs:
       - run: ./scripts/build-macos.sh
       - run: swift test --package-path macos
       - run: swift test --package-path macos -c release
+      - run: swift test --package-path macos-control
+      - run: swift test --package-path macos-control -c release

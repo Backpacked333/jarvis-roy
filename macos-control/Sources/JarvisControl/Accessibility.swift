@@ -20,9 +20,15 @@ func runningApplication(bundleId: String) throws -> NSRunningApplication {
 func attribute(_ element: AXUIElement, _ name: String) throws -> CFTypeRef? {
     var result: CFTypeRef?
     let status = AXUIElementCopyAttributeValue(element, name as CFString, &result)
+    return try checkedAttributeValue(result, name: name, status: status)
+}
+
+func checkedAttributeValue(_ result: CFTypeRef?, name: String, status: AXError) throws -> CFTypeRef? {
     if status == .noValue || status == .attributeUnsupported { return nil }
+    // Some native controls advertise AXDescription but fail to provide it.
+    if name == kAXDescriptionAttribute && status == .failure { return nil }
     guard status == .success else {
-        throw ControlFailure("AX_UNAVAILABLE", "The application did not expose a stable accessible element. Check Accessibility permission, focus the app, and inspect again. Not every app supports these controls.")
+        throw ControlFailure("AX_UNAVAILABLE", "The application could not read \(name) (Accessibility error \(status.rawValue)). Check Accessibility permission, focus the app, and inspect again. Not every app supports these controls.")
     }
     return result
 }
