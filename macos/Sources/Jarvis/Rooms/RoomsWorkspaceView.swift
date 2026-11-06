@@ -9,6 +9,7 @@ struct RoomsWorkspaceView: View {
     let onVoiceContext: (HarnessVoiceContext) -> Void
     let onSpeakQuestion: (HarnessQuestion) -> Void
     let onReviewApproval: (HarnessApproval) -> Void
+    var observationOwnership: RoomsObservationOwner = .workspace
     @State private var section: RoomsWorkspaceSection = .overview
     @State private var creatingRoom = false
     @State private var editingRoom: HarnessRoom?
@@ -48,8 +49,19 @@ struct RoomsWorkspaceView: View {
             }
         }
         .background(RoomsPalette.background).foregroundStyle(.white).tint(RoomsPalette.cyan).preferredColorScheme(.dark)
-        .task(id: scenePhase) { if scenePhase == .active { await model.observe() } }
-        .onAppear { onVoiceContext(model.voiceContext) }
+        .onAppear {
+            if observationOwnership == .workspace {
+                model.setApplicationActive(scenePhase == .active)
+                model.startObserving(owner: .workspace)
+            }
+            onVoiceContext(model.voiceContext)
+            showAttentionNavigation()
+        }
+        .onDisappear { if observationOwnership == .workspace { model.stopObserving(owner: .workspace) } }
+        .onChange(of: scenePhase) { _, phase in
+            if observationOwnership == .workspace { model.setApplicationActive(phase == .active) }
+        }
+        .onChange(of: model.attentionNavigation) { _, _ in showAttentionNavigation() }
         .onChange(of: model.selectedRoomId) { _, _ in onVoiceContext(model.voiceContext) }
         .onChange(of: model.focusedQuestion) { _, _ in onVoiceContext(model.voiceContext) }
         .onChange(of: model.state?.sequence) { _, _ in speakNextQuestion() }
@@ -210,9 +222,16 @@ struct RoomsWorkspaceView: View {
             .background(RoomsPalette.panel.opacity(0.5))
     }
     private func speakNextQuestion() {
-        guard scenePhase == .active, let question = model.nextSpokenQuestion() else { return }
+        guard model.onQuestionAttention == nil, scenePhase == .active, let question = model.nextSpokenQuestion() else { return }
         onVoiceContext(model.voiceContext)
         onSpeakQuestion(question)
+    }
+
+    private func showAttentionNavigation() {
+        guard let target = model.attentionNavigation else { return }
+        section = .attention
+        if case .approval(let approval) = target, model.onAttentionNavigation == nil { onReviewApproval(approval) }
+        model.clearAttentionNavigation()
     }
 }
 
@@ -303,9 +322,11 @@ private struct RoomsPlanCard: View {
     let plan: HarnessPlan
     let onEdit: (HarnessPlan) -> Void
     @State private var reviewing: HarnessPlan?
+    @State private var reusing: HarnessPlan?
+    private var hasPriorRuns: Bool { model.state?.runs.contains { $0.planId == plan.id && $0.roomId == plan.roomId } == true }
     private var policyMatches: Bool { model.state?.rooms.first(where: { $0.id == plan.roomId })?.policy.revision == plan.policyRevision }
     var body: some View {
-        RoomsPanel(title: "The plan", eyebrow: plan.status == "draft" ? "02 / REVIEW BEFORE ACCEPTING" : "03 / ACCEPTED · NOT AUTO-STARTED") {
+        RoomsPanel(title: plan.status == "accepted" ? "Reusable accepted plan" : "The plan", eyebrow: plan.status == "draft" ? "02 / REVIEW BEFORE ACCEPTING" : "03 / ACCEPTED · NOT AUTO-STARTED") {
             HStack { RoomsStatus(value: plan.status); Text("Revision \(plan.revision) · policy \(plan.policyRevision)").font(.caption).foregroundStyle(RoomsPalette.muted); Spacer() }
             Text(plan.goal).font(.system(size: 14)).textSelection(.enabled)
             RoomsDependencyGraph(nodes: plan.nodes)
@@ -329,13 +350,14 @@ private struct RoomsPlanCard: View {
                     Spacer()
                     Button("Accept this revision…") { reviewing = plan }.buttonStyle(.borderedProminent)
                 } else {
-                    Text("Acceptance is not authorization for host actions.").font(.caption).foregroundStyle(RoomsPalette.muted)
+                    Button("Draft a variation…") { reusing = plan }
                     Spacer()
-                    Button("Start isolated run…") { reviewing = plan }.buttonStyle(.borderedProminent)
+                    Button(hasPriorRuns ? "Review & run again…" : "Start isolated run…") { reviewing = plan }.buttonStyle(.borderedProminent)
                         .disabled(!policyMatches || model.state?.worker.available != true)
                 }
             }.disabled(!model.canMutate || model.pendingActions.contains("plan:\(plan.id)"))
         }
+        .sheet(item: $reusing) { RoomsPlanReuseView(model: model, plan: $0) }
         .confirmationDialog("Confirm the reviewed plan", isPresented: Binding(get: { reviewing != nil }, set: { if !$0 { reviewing = nil } }), titleVisibility: .visible, presenting: reviewing) { reviewed in
             if reviewed.status == "draft" { Button("Accept revision \(reviewed.revision)") { Task { await model.accept(reviewed) }; reviewing = nil } }
             else { Button("Start isolated run") { Task { await model.start(reviewed) }; reviewing = nil } }
@@ -375,6 +397,7 @@ private struct RoomsRunCard: View {
             }
             if run.status == "paused" { Text("New dispatch is paused. Already-running workers may finish; pause is not cancellation.").font(.caption).foregroundStyle(RoomsPalette.amber) }
             RoomsUsageView(usage: run.usage, limits: run.policy.runBudget)
+            RoomsWorkerCensus(nodes: run.nodes)
             DisclosureGroup("Immutable run policy · revision \(run.policy.revision)") {
                 VStack(alignment: .leading, spacing: 7) {
                     Text("\(run.policy.maxConcurrentWorkers) concurrent workers · \(run.policy.runBudget.maxTokens) token cap · \(run.policy.runBudget.maxWallTimeMs / 1_000)s wall-time cap")
