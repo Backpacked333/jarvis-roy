@@ -10,10 +10,12 @@ import { defaultRoomPolicy } from "../bridge/harness-contracts/domain.ts";
 import type { WorkerEvent, WorkerSpec } from "../bridge/harness-contracts/worker.ts";
 import { createWorkerRunner } from "../bridge/harness-worker/index.ts";
 import { Docker, resourceName } from "../bridge/harness-worker/docker.ts";
+import { WORKER_IMAGES } from "../bridge/harness-worker/images.ts";
 import { canonicalJson, sha256 } from "../bridge/harness-contracts/validation.ts";
 
 const enabled = process.env.JARVIS_WORKER_DOCKER_TESTS === "1";
-const image = process.env.JARVIS_WORKER_IMAGE ?? "python@sha256:2986c55feb36e6cae00fa1fefb454283e4b33f35e75ff8bdd123b134130be301";
+const architecture = enabled ? await new Docker("docker", "platform").available() : "amd64";
+const image = process.env.JARVIS_WORKER_TEST_IMAGE ?? WORKER_IMAGES.python[architecture];
 function makeSpec(attemptId = "attempt"): WorkerSpec {
   const policy = defaultRoomPolicy(image);
   return { version: 1, ref: { roomId: "room", runId: "run", nodeId: "node", attemptId }, planDigest: "a".repeat(64),
@@ -74,6 +76,9 @@ test("real smolagents + Docker file/test/artifact flow with synthetic provider, 
     assert.equal(result.usage.steps, 3); assert.equal(result.usage.modelCalls, 3);
     assert.equal(result.artifacts[0].verification, "passed"); assert.match(result.artifacts[0].verificationSummary, /exit=0/);
     assert.equal(events[0].type, "started"); assert.deepEqual(events.map(e => e.sequence), events.map((_, n) => n));
+    for (const event of events) if (event.type === "usage") {
+      assert.equal(event.usage.accounting, "measured"); assert.equal(event.usage.reservedTokens, 0);
+    }
     const manifest = result.artifacts[0];
     assert.equal(Buffer.from((await runner.artifacts.read({ roomId: "room", runId: "run", artifactId: manifest.id, digest: manifest.digest }, "output.txt", 100)).bytes).toString(), "real container output\n");
     assert.deepEqual(await runner.run(spec, context), result);
@@ -91,10 +96,12 @@ test("question seals/stops old container, resumes exact answer/files in new atte
       ["run_check", { command: "python -I -S -c 'assert open(\"once.txt\").read()==\"1\"; assert open(\"output.txt\").read()==\"Hello Roy\"'" }],
       ["final_answer", { answer: "Used the greeting and verified both files." }],
     ], request => { if (JSON.stringify(request).includes("Hello Roy")) assert.match(JSON.stringify(request), /Bound clarification answer/); }) });
-    const first = makeSpec(), resources: string[] = [], context = { signal: new AbortController().signal,
-      emit: async (event: WorkerEvent) => { if (event.type === "started") resources.push(event.resourceId); } };
+    const first = makeSpec(), resources: string[] = [], events: WorkerEvent[] = [], context = { signal: new AbortController().signal,
+      emit: async (event: WorkerEvent) => { events.push(event); if (event.type === "started") resources.push(event.resourceId); } };
     const result = await runner.run(first, context);
     assert.equal(result.status, "waiting_question", JSON.stringify(result)); if (result.status !== "waiting_question") return;
+    assert.equal(result.checkpoint.sequence, events.at(-1)!.sequence);
+    assert.equal(events[0].sequence, 0);
     const resumed = makeSpec("attempt2"); resumed.checkpoint = result.checkpoint;
     resumed.answer = { binding: { questionId: "q1", revision: 1, target: { scope: "node", ...first.ref } }, source: "text", text: "Hello Roy", choiceId: null };
     const second = await runner.run(resumed, context);

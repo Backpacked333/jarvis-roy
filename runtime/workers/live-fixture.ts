@@ -17,7 +17,7 @@ const spec: WorkerSpec = {
   version: 1, ref: { roomId: "livefixture", runId: "run", nodeId: "node", attemptId: "attempt" }, planDigest: "a".repeat(64), policy,
   node: { id: "node", title: "Harmless live worker fixture", role: "builder", dependencies: [], inputFrom: [], outputPaths: ["hello.txt"], limits,
     instructions: "Use exactly these three tool calls, one per response: 1) write_file path hello.txt with content Hello from Jarvis followed by a newline. " +
-      "2) run_check with python -I -S -c 'assert open(\"hello.txt\").read() == \"Hello from Jarvis\\n\"; print(\"fixture passed\")'. " +
+      "2) run_check with python3 -I -S -c 'assert open(\"hello.txt\").read() == \"Hello from Jarvis\\n\"; print(\"fixture passed\")'. " +
       "3) final_answer briefly describe the file and actual check. No other actions, questions, network access or files." },
   inputs: [], checkpoint: null, answer: null,
 };

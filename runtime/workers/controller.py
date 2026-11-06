@@ -13,6 +13,7 @@ if importlib.metadata.version("smolagents") != "1.26.0":
 
 from smolagents import Model, Tool, ToolCallingAgent
 from smolagents.models import ChatMessage
+from smolagents.memory import ActionStep, TaskStep
 
 wire = sys.stdout
 sequence = 0
@@ -45,8 +46,26 @@ def rpc(kind, **payload):
 
 
 class GatewayModel(Model):
+    agent = None
+
     def generate(self, messages, stop_sequences=None, tools_to_call_from=None, **kwargs):
         payload = self._prepare_completion_kwargs(messages, tools_to_call_from=tools_to_call_from)
+        # Use native Chat Completions call IDs, not textual tool-role conversions.
+        memory = self.agent.memory
+        native = [{"role": "system", "content": memory.system_prompt.system_prompt}]
+        for step in memory.steps:
+            if isinstance(step, TaskStep):
+                native.append({"role": "user", "content": step.task})
+            elif isinstance(step, ActionStep) and step.tool_calls:
+                if len(step.tool_calls) != 1:
+                    raise Halt("Unexpected batched memory")
+                call = step.tool_calls[0]
+                native.append({"role": "assistant", "content": step.model_output or "", "tool_calls": [{
+                    "id": call.id, "type": "function", "function": {"name": call.name, "arguments": json.dumps(call.arguments)}}]})
+                native.append({"role": "tool", "tool_call_id": call.id, "content": step.observations or str(step.error or "")})
+            elif isinstance(step, ActionStep) and step.error:
+                native.append({"role": "user", "content": "Previous step failed: " + str(step.error)[:4000]})
+        payload["messages"] = native
         response = rpc("model", request=payload)
         return ChatMessage.from_dict(response)
 
@@ -74,7 +93,7 @@ class ReadFile(Tool):
 
 class RunCheck(Tool):
     name = "run_check"
-    description = "Run a bounded shell command only inside the no-network Docker workspace. Python stdlib is available."
+    description = "Build/test only inside the no-network Docker workspace. python3 stdlib is available; other toolchains depend on the task runtime. No dependency downloads."
     inputs = {"command": {"type": "string", "description": "Shell command for building or checking workspace files"}}
     output_type = "string"
 
@@ -121,6 +140,7 @@ def main():
                      "No external effects, permissions, network or host access. A question is not approval. "
                      "Resume from current files and the bound answer; never replay old tool calls.",
     )
+    agent.model.agent = agent
     try:
         with contextlib.redirect_stdout(sys.stderr):
             result = agent.run(init["task"], reset=True)

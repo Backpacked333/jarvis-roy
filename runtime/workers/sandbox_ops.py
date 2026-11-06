@@ -93,11 +93,30 @@ def snapshot(request):
     return sorted(files, key=lambda item: item["path"])
 
 
+def check_environment():
+    return {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/workspace", "LANG": "C.UTF-8",
+            "PYTHONDONTWRITEBYTECODE": "1", "NPM_CONFIG_CACHE": "/tmp/npm-cache", "NPM_CONFIG_OFFLINE": "true",
+            "NPM_CONFIG_AUDIT": "false", "NPM_CONFIG_FUND": "false", "NPM_CONFIG_UPDATE_NOTIFIER": "false",
+            "COREPACK_ENABLE_NETWORK": "0"}
+
+
 def main(request):
     op = request["op"]
     if op == "probe":
+        if sys.version_info < (3, 10):
+            raise ValueError("Python 3.10+ required")
+        mounts = {line.split()[4]: line.split()[5].split(",") for line in open("/proc/self/mountinfo")}
+        for path in ("/workspace", "/tmp"):
+            if not {"rw", "nosuid", "nodev"}.issubset(mounts[path]):
+                raise ValueError("Unsafe scratch mount")
+        if request.get("coding"):
+            for program in ("node", "npm", "cc", "c++", "make"):
+                version = subprocess.run([program, "--version"], env=check_environment(), capture_output=True, check=True, timeout=5)
+                if program == "node" and not version.stdout.startswith(b"v24."):
+                    raise ValueError("Node 24 required")
         status = dict(line.split(":", 1) for line in open("/proc/self/status") if ":" in line)
         return {"uid": os.geteuid(), "noNewPrivs": status["NoNewPrivs"].strip(), "seccomp": status["Seccomp"].strip(),
+                "workspaceNoexec": "noexec" in mounts["/workspace"], "temporaryNoexec": "noexec" in mounts["/tmp"],
                 "caps": status["CapEff"].strip(),
                 "memory": open("/sys/fs/cgroup/memory.max").read().strip(),
                 "swap": open("/sys/fs/cgroup/memory.swap.max").read().strip(),
@@ -116,7 +135,7 @@ def main(request):
     if op == "check":
         start = time.monotonic()
         child = subprocess.Popen(["/bin/sh", "-c", request["command"]], cwd="/workspace", start_new_session=True,
-                                 env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/workspace", "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"})
+                                 env=check_environment())
         try:
             code = child.wait(timeout=request["timeoutMs"] / 1000)
         except subprocess.TimeoutExpired:

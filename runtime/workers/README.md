@@ -20,9 +20,10 @@ worker, a host terminal adapter, an HF Space, or a cloud deployment.
   network, dropped capabilities, no-new-privileges, default seccomp, cgroup v2
   CPU/memory/swap/PID limits, bounded tmpfs, private namespaces, no bind mounts,
   no Docker socket, no devices, no published ports, no credential/environment
-  inheritance. The bounded workspace is `noexec`; interpreted Python/shell
-  source works, but running newly compiled native executables is intentionally
-  not enabled. No package downloads or autonomous network research in v1.
+  inheritance. The bounded workspace stays `noexec` for minimal Python and
+  custom images. Only the exact reviewed **coding image pins** below enable
+  executable `/workspace` tmpfs for native compiler/test helpers; `/tmp` remains
+  `noexec` for every image. No package downloads or autonomous network research.
 - **Crash watchdog:** container PID 1 and its finite-lifetime sleep process use
   a *different non-root UID*, 65533. Generated code cannot send signals to stop
   that watchdog. Expiry ends the container even if the Node controller dies;
@@ -34,6 +35,17 @@ worker, a host terminal adapter, an HF Space, or a cloud deployment.
 Docker is an isolation boundary, **not** a guarantee against kernel/runtime
 vulnerabilities. Use a maintained Docker installation and review image/package
 updates. Local work does not continue through Mac sleep or shutdown.
+
+Executable scratch is an explicit tradeoff selected by the trusted room image
+policy, never by a model/tool argument. It grants no host access: the root stays
+read-only, `nosuid,nodev`, non-root UIDs, capability/seccomp restrictions, no
+network/mounts/credentials and resource/watchdog bounds are unchanged and probed.
+The original Python/shell capability already executes arbitrary instructions
+inside this boundary; `noexec` was not a complete sandbox. Native executables do
+increase attack surface, so unreviewed or merely similarly named Node images do
+not automatically receive executable scratch. No permissions survive container
+removal. Artifacts retain bytes, not executable modes; rebuild/chmod only inside
+a subsequent isolated coding attempt, never execute downloaded artifacts on host.
 
 ## Reproducible setup
 
@@ -50,20 +62,44 @@ runtime/workers/.venv/bin/python -m pip install -r runtime/workers/requirements.
 runtime/workers/.venv/bin/python -m pip check
 export JARVIS_WORKER_PYTHON="$PWD/runtime/workers/.venv/bin/python"
 
-# Inspected official Python 3.12.12 slim-bookworm linux/amd64 manifest:
-export JARVIS_WORKER_IMAGE='python@sha256:2986c55feb36e6cae00fa1fefb454283e4b33f35e75ff8bdd123b134130be301'
-docker pull "$JARVIS_WORKER_IMAGE"
+# Explicit operator setup; each command selects the DOCKER ENGINE architecture,
+# pulls only its immutable platform pin, then probes/cleans a disposable sandbox:
+node runtime/workers/setup-image.ts python --pull
+node runtime/workers/setup-image.ts coding --pull
+
+# Select a room's default policy image. Without --pull this is read-only:
+JARVIS_WORKER_IMAGE="$(node runtime/workers/setup-image.ts coding)" && export JARVIS_WORKER_IMAGE
+# Use `python` instead of `coding` for the smaller noexec/Python-only profile.
 ```
 
-The corresponding official **linux/arm64/v8 metadata** resolves to
-`python@sha256:228390eced221ad2986a3dd77e10b1accca6ba8ceb36f1572de1b346a337cc1a`.
-That ARM manifest was inspected, **not executed here**. Select/verify the exact
-platform intentionally; never replace these with a mutable `latest` tag.
+Reviewed platform pins (the setup script and runner share one catalog):
+
+| Profile | Platform | Immutable image |
+| --- | --- | --- |
+| Minimal Python 3.12.12 slim-bookworm | linux/amd64 | `python@sha256:2986c55feb36e6cae00fa1fefb454283e4b33f35e75ff8bdd123b134130be301` |
+| Minimal Python | linux/arm64/v8 | `python@sha256:228390eced221ad2986a3dd77e10b1accca6ba8ceb36f1572de1b346a337cc1a` |
+| Official Node 24.22.2 bookworm | linux/amd64 | `node@sha256:6b9d4ea31e614e29f364bf75758458731eb1e105b80c99667438dd6b3fe262e0` |
+| Official Node 24.22.2 bookworm | linux/arm64/v8 | `node@sha256:0bab91d6a954a4a75de4a887edfda7386ed8711aa8b1eb5fb309ee0f0a2c544f` |
+
+Both AMD64 profiles were executed. ARM manifests/configuration were inspected,
+**not executed here**; the script must pass its real probes on the target Mac.
+Wrong-platform images fail before launch, rather than silently enabling emulation.
+Never substitute mutable `latest`/`24-bookworm` tags. The reviewed Node image was
+resolved from the official multi-platform index
+`sha256:8fa96264f302f58bbb13aa7339c541547b56975766ce956c875da149452a3e40`;
+the actual policy uses the corresponding immutable platform manifest above.
+
+Verified coding tools on AMD64: Node 24.22.2, npm 11.19.1, Python 3.11.2,
+GCC/C++ 12.2 and GNU Make 4.3. The image includes public buildpack-deps tools,
+not arbitrary project dependencies. Node/npm are absent in the minimal profile.
+The operation protocol now uses `python3` on the fixed trusted PATH, not a
+Python-image-specific `/usr/local/bin/python` path. Startup rejects missing
+Python 3.10+; coding startup additionally checks Node 24, npm, C/C++ and make.
 
 All controller dependencies, including transitive packages, are pinned in
 `requirements.txt`. No root Node dependency or tsconfig edits are necessary.
-The tested clean venv is Python 3.10.12 on Linux; generated code uses Python
-3.12.12 in the pinned image. `smolagents` is Apache-2.0; inspected upstream
+The tested clean venv is Python 3.10.12 on Linux; generated code uses the pinned
+image's Python listed above. `smolagents` is Apache-2.0; inspected upstream
 release wheel SHA-256:
 `70e1cfb1576f782da93190ee31d9bb2659e5ca4bd84fda0c412e1f20498f28b6`.
 PyYAML is explicit because the inspected framework imports `yaml` but does not
@@ -113,6 +149,20 @@ must be explicitly cancelled/reaped, then retried with a fresh attempt. Missing
 or corrupt records are not assumed successful. Locks/unknown resources are
 retained when cleanup cannot be established.
 
+Event sequences start at zero; a checkpoint records the last emitted sequence.
+Transient per-call token reservations stay durably in worker journals, but are
+not emitted as kernel usage events: the kernel already reserves the full node,
+and clearing a transient partial event would violate its monotonic usage rules.
+Settled measured usage is emitted; uncertain terminal usage remains in results.
+
+The inspected smolagents memory is translated into native Chat Completions
+assistant/tool messages with exact call IDs, rather than flattening tools into
+user prose. This is one in-memory adapter over the agent's existing memory, not
+a second scheduler or durable store. Providers that ignore
+`parallel_tool_calls:false` get at most one corrective model call per response;
+**none** of the rejected batch executes. The repair consumes the same cumulative
+call/token/time budget and repeated invalid batches fail closed.
+
 Use `worker.artifacts.read` **only after** the kernel's exact scoped artifact
 lookup. Artifacts are immutable content-addressed blobs with hashed manifests,
 input provenance and scope/path/size checks. Imports copy only individually
@@ -122,6 +172,26 @@ result requires real files covering all declared output paths. `passed` means
 actual sandbox commands exited zero and the captured files still match the last
 check snapshot; it is not proof of semantic correctness, and model prose never
 sets verification status. A write after a check clears that verification.
+
+### Practical coding scope
+
+The coding profile supports dependency-free static/web projects, Node built-in
+tests, Python stdlib checks and C/C++/make helpers. `npm run build` and `npm test`
+work for **already available** tooling; this is not a claim that arbitrary
+React/Vite/Next/esbuild projects can install or build offline. npm runs with
+offline mode, no audit/update/fund traffic and a bounded `/tmp/npm-cache`;
+Docker's no-network namespace remains the hard boundary even if a command changes
+those environment variables. The real fixture confirms an uncached esbuild
+request fails, not that esbuild is installed. Browser automation, downloaded
+browsers, third-party Python packages, missing SDKs and remote APIs remain
+unavailable unless independently reviewed/preinstalled in an explicitly pinned
+image. Custom images retain noexec unless their exact pins receive code review.
+
+No host repository mount is used. Supply source via immutable upstream artifacts
+or worker file tools. The strict artifact snapshot still rejects symlinks,
+hardlinks and excess files; typical `node_modules/.bin` links and build caches
+must be excluded/removed before completion. Large toolchains/artifacts require
+explicit budgets; there is no automatic resource or permission escalation.
 
 ## Budget semantics
 
@@ -144,10 +214,11 @@ sets verification status. A write after a check clears that verification.
 npm --prefix runtime run typecheck
 npm --prefix runtime test
 JARVIS_WORKER_DOCKER_TESTS=1 node --test runtime/test/harness-worker*.test.ts
+JARVIS_WORKER_DOCKER_TESTS=1 JARVIS_WORKER_CODING_TESTS=1 npm --prefix runtime test
 npm --prefix runtime run build
 ```
 
-The Docker suite is opt-in to keep the existing tests usable without Docker;
+The Docker suites are opt-in to keep the existing tests usable without Docker;
 CI for worker acceptance should explicitly set the flag and install/pull the
 prerequisites above. Those fixtures run the *real* pinned smolagents agent and
 real Docker containers with a deterministic **synthetic model provider**. They
@@ -156,6 +227,17 @@ actual controller crash recovery, cancellation, independent watchdog, memory/
 PID/tmpfs/network/filesystem boundaries, step/log/time bounds and verification
 invalidation. Ordinary unit tests exercise actual parsing, immutable storage,
 hash checks, budget accounting and failure paths without Docker.
+
+The coding suite selects the reviewed coding pin for the Docker engine. The
+original suite defaults to its matching minimal Python pin, independently of
+the app's `JARVIS_WORKER_IMAGE` (advanced tests may use `JARVIS_WORKER_TEST_IMAGE`).
+Pull **both** profiles for combined acceptance. Coding fixtures use the real
+smolagents controller with an explicitly synthetic provider to create a complete
+offline project: HTML/CSS/browser modules, shared search logic, Node unit and
+container-only loopback HTTP tests, Python HTML/hash checks, a make-built C
+helper, and immutable source/build/binary exports. They verify every emitted
+asset hash, real native execution, actual running-Node cancellation, wrong-arch
+refusal, minimal-profile noexec, `/tmp` noexec and unavailable package behavior.
 
 An explicit, paid-model opt-in fixture is also supplied:
 
@@ -172,6 +254,26 @@ immutable artifact bytes and cleanup: three calls/three steps, measured 4,368
 input + 123 output tokens. This is separate from the synthetic-provider tests,
 not proof of general task quality or native Mac operation.
 
+An additional project-enhancement live fixture uses the selected coding profile:
+
+```sh
+JARVIS_WORKER_LIVE_TEST=1 node runtime/workers/live-coding-fixture.ts
+```
+
+It first builds genuine source artifacts using a synthetic provider, then gives
+the live model a scoped implementation task: extend the shared browser/Node
+search logic to match project statuses and add tests. The paid phase is limited
+to eight calls/steps, 60,000 admitted total tokens, 2,048 output tokens per call
+and 90 seconds. A separate fresh Docker attempt then independently rebuilds and
+asserts the generated module behavior and hashes. Generated code never runs on
+the host. All resources are cleaned or retained as explicitly uncertain.
+
+The verified live enhancement completed in five tool steps/six model calls,
+with measured 12,110 input + 722 output tokens. Earlier bounded runs exposed a
+provider ignoring the no-parallel hint and poor textual tool-history handling;
+they failed safely. The native call-ID adapter and budgeted batch repair were
+then regression-tested and the complete enhancement/rebuild/export passed.
+
 ## Inspected sources
 
 - HF release API/source: https://github.com/huggingface/smolagents/tree/v1.26.0
@@ -180,3 +282,6 @@ not proof of general task quality or native Mac operation.
 - Secure execution guidance: https://huggingface.co/docs/smolagents/v1.26.0/en/tutorials/secure_code_execution
 - Gateway API: https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions/chat-completions
 - Live model catalog: https://ai-gateway.vercel.sh/v1/models
+- Official Node image source: https://github.com/nodejs/docker-node/tree/e994dfe115899a82684caa7533380aa7d439aae1/24/bookworm
+- Official Node variants: https://github.com/nodejs/docker-node/blob/e994dfe115899a82684caa7533380aa7d439aae1/README.md
+- Digest pulls/platform selection: https://docs.docker.com/reference/cli/docker/image/pull/
