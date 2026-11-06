@@ -6,6 +6,7 @@ import { reviewArguments } from "./approval.ts";
 import { CONVERSATION_ID, TaskStore } from "./store.ts";
 import { HarnessApprovalSchema, type HarnessApproval } from "./harness-contracts/interactions.ts";
 import { inspectEveInteraction } from "./harness-interactions/eve-safety.ts";
+import { isSafeClarificationAnswer, isSafeClarificationText } from "./harness-interactions/clarification-safety.ts";
 import type {
   Approval,
   BridgeState,
@@ -26,6 +27,9 @@ const MAX_ACTIVE_TASKS = 4;
 const MAX_EVENTS_PER_TASK = 100;
 const MAX_MESSAGE_LENGTH = 20_000;
 const CANCEL_TIMEOUT_MS = 15_000;
+const BLOCKED_QUESTION_TITLE = "Question blocked";
+const BLOCKED_QUESTION_DETAIL = "This question cannot be answered here. Stop the task and request a non-sensitive clarification.";
+const BLOCKED_QUESTION_REASON = "This question was blocked by the clarification safety policy.";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -41,6 +45,22 @@ function titleFromMessage(message: string): string {
   const firstLine = message.trim().split(/\r?\n/, 1)[0] ?? "Jarvis task";
   const firstSentence = firstLine.split(/(?<=[.!?])\s/, 1)[0] ?? firstLine;
   return redactText(firstSentence).slice(0, 120) || "Jarvis task";
+}
+
+function isSafeRootQuestion(card: { title: unknown; detail: unknown; options: unknown }): boolean {
+  const safeText = (value: unknown): value is string => typeof value === "string" &&
+    isSafeClarificationText(value) && !value.includes("[REDACTED]");
+  return safeText(card.title) && safeText(card.detail) && Array.isArray(card.options) &&
+    card.options.every((option) => safeText(asRecord(option).id) && safeText(asRecord(option).label));
+}
+
+function projectQuestion(card: Approval): Approval {
+  if (card.kind === "question" && (card.reviewable === false || !isSafeRootQuestion(card))) {
+    return { id: card.id, kind: "question", revision: card.revision, expiresAt: card.expiresAt,
+      title: BLOCKED_QUESTION_TITLE, detail: BLOCKED_QUESTION_DETAIL, blockedReason: BLOCKED_QUESTION_REASON,
+      reviewable: false, allowText: false, options: [] };
+  }
+  return { ...card, options: card.options.map((option) => ({ ...option })) };
 }
 
 function publicTask(record: TaskRecord): Task {
@@ -59,7 +79,7 @@ function publicTask(record: TaskRecord): Task {
       ...approval,
       options: approval.options.map((option) => ({ ...option })),
     })),
-    questions: record.approvals.filter((a) => a.kind !== "approval").map((question) => ({ ...question, options: question.options.map((option) => ({ ...option })) })),
+    questions: record.approvals.filter((a) => a.kind !== "approval").map(projectQuestion),
   };
 }
 
@@ -261,19 +281,25 @@ export class JarvisService {
     if (this.stopping || this.cancelOperations.has(taskId)) {
       throw new BridgeError("The task is being cancelled.", 409);
     }
-    const options = this.pendingOptions.get(taskId) ?? pendingOptionsFromTask(task);
     const card = task.approvals.find((item) => item.id === interactionId);
     if (!card || (expectedRevision !== undefined && expectedRevision !== card.revision) ||
       (card.expiresAt !== undefined && Date.parse(card.expiresAt) <= Date.now())) {
       throw new BridgeError("This exact card has expired or changed. Refresh before responding.", 409);
     }
     if (card.kind !== "approval" && card.kind !== "question") throw new BridgeError("Unsupported interaction kind. Stop the task rather than guessing a response.", 409);
+    if (card.kind === "question") {
+      if (card.reviewable === false || !isSafeRootQuestion(card)) throw new BridgeError(BLOCKED_QUESTION_DETAIL, 409);
+      if (!isSafeClarificationAnswer({ text: text ?? null, choiceId: text === undefined ? optionId : null })) {
+        throw new BridgeError("This question cannot accept that answer. Use only non-sensitive clarification details.", 400);
+      }
+    }
     if (text !== undefined && (card.kind !== "question" || !card.allowText || !text.trim() || text.length > 16_000 || containsCredentialLikeData(text))) {
       throw new BridgeError("This card does not allow that text answer. Never enter secrets.", 400);
     }
     if (card.reviewable === false && optionId !== "deny") {
       throw new BridgeError("This request cannot be fully reviewed. Only denial is allowed.", 409);
     }
+    const options = this.pendingOptions.get(taskId) ?? pendingOptionsFromTask(task);
     const allowed = options.get(interactionId);
     const submissionKey = `${taskId}:${interactionId}`;
     if (!allowed || (text === undefined && !allowed.has(optionId)) || this.submittingInteractions.has(submissionKey)) {
@@ -670,8 +696,11 @@ export class JarvisService {
           const request = asRecord(data.request);
           if (!interactionId) break;
           const kind = inspectEveInteraction({ interactionId, request: { kind: stringValue(request.kind) ?? "unknown" } }).kind;
-          const title = redactText(stringValue(request.title) ?? stringValue(request.kind) ?? "Response required");
-          const options = Array.isArray(request.options)
+          const blocked = kind === "question" && !isSafeRootQuestion({
+            title: request.title ?? "question", detail: request.prompt ?? "A response is required.", options: request.options ?? [],
+          });
+          const title = blocked ? BLOCKED_QUESTION_TITLE : redactText(stringValue(request.title) ?? stringValue(request.kind) ?? "Response required");
+          const options = !blocked && Array.isArray(request.options)
             ? request.options.flatMap((option) => {
                 const item = asRecord(option);
                 const id = stringValue(item.id);
@@ -686,15 +715,16 @@ export class JarvisService {
           const call = callId ? callInputs.get(callId) : undefined;
           const callName = stringValue(originCall.name) ?? call?.name;
           const input = originCall.input ?? call?.input;
-          const prompt = redactText(stringValue(request.prompt) ?? "A response is required.");
+          const prompt = blocked ? BLOCKED_QUESTION_DETAIL : redactText(stringValue(request.prompt) ?? "A response is required.");
           const review = request.kind === "approval" ? reviewArguments(callName, input) : undefined;
           const visibleOptions = kind === "other" ? [] : review?.reviewable === false ? options.filter((option) => option.id === "deny") : options;
           const approval: Approval = {
             id: interactionId,
             kind, revision: 1, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
-            allowText: kind === "question" && (request.allowFreeform === true || options.length === 0),
+            allowText: kind === "question" && !blocked && (request.allowFreeform === true || options.length === 0),
             title: title.slice(0, 500),
             ...(review ?? {}),
+            ...(blocked ? { reviewable: false, blockedReason: BLOCKED_QUESTION_REASON } : {}),
             detail: review ? review.detail : prompt.slice(0, 8_000),
             options: visibleOptions,
           };
