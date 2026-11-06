@@ -73,7 +73,7 @@ test("real smolagents + Docker file/test/artifact flow with synthetic provider, 
     if (result.status !== "completed") return;
     assert.equal(result.usage.steps, 3); assert.equal(result.usage.modelCalls, 3);
     assert.equal(result.artifacts[0].verification, "passed"); assert.match(result.artifacts[0].verificationSummary, /exit=0/);
-    assert.equal(events[0].type, "started"); assert.deepEqual(events.map(e => e.sequence), events.map((_, n) => n + 1));
+    assert.equal(events[0].type, "started"); assert.deepEqual(events.map(e => e.sequence), events.map((_, n) => n));
     const manifest = result.artifacts[0];
     assert.equal(Buffer.from((await runner.artifacts.read({ roomId: "room", runId: "run", artifactId: manifest.id, digest: manifest.digest }, "output.txt", 100)).bytes).toString(), "real container output\n");
     assert.deepEqual(await runner.run(spec, context), result);

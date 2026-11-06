@@ -33,9 +33,9 @@ final class AppModel: ObservableObject {
     private var transcriptSubscription: AnyCancellable?
     private var receivedUtterances: [String] = []
 
-    init(client: (any RuntimeServing)? = nil, harnessClient: (any HarnessServing)? = nil) {
+    init(client: (any RuntimeServing)? = nil, harnessClient: (any HarnessServing)? = nil, voice injectedVoice: VoiceController? = nil) {
         self.client = client ?? RuntimeClient()
-        self.voice = VoiceController()
+        self.voice = injectedVoice ?? VoiceController()
         self.rooms = RoomsModel(client: harnessClient ?? HarnessClient())
         voice.contextProvider = { [weak self] in self?.captureContext ?? HarnessVoiceContext() }
         voice.onUtterance = { [weak self] utterance in Task { await self?.handleUtterance(utterance) } }

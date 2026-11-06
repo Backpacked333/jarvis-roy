@@ -118,10 +118,14 @@ export class Gateway {
       await persist();
       throw new Error("Provider omitted trustworthy usage; execution halted with full remaining reservation");
     }
-    const response = ResponseSchema.parse(raw);
+    const parsedResponse = ResponseSchema.safeParse(raw);
+    if (!parsedResponse.success) throw new Error("Gateway returned an invalid single-tool response envelope");
+    const response = parsedResponse.data;
     if (response.choices[0].finish_reason !== "tool_calls" && response.choices[0].finish_reason !== "stop") throw new Error("Incomplete model response");
     const call = response.choices[0].message.tool_calls[0];
-    const args = ToolArguments[call.function.name].parse(JSON.parse(call.function.arguments));
+    const parsedArgs = ToolArguments[call.function.name].safeParse(JSON.parse(call.function.arguments));
+    if (!parsedArgs.success) throw new Error(`Gateway returned invalid arguments for ${call.function.name}`);
+    const args = parsedArgs.data;
     return {
       message: { role: "assistant", content: response.choices[0].message.content ?? "", tool_calls: [{ ...call, function: { name: call.function.name, arguments: args } }] },
       call: { name: call.function.name, arguments: args },

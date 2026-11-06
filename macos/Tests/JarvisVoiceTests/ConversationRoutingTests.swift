@@ -163,18 +163,30 @@ final class ConversationRoutingTests: XCTestCase {
     }
 
     @MainActor
-    func testStopAllMutesAndInterruptsBeforeNetworkCancellation() async {
-        let runtime = FixtureRuntime()
-        let model = AppModel(client: runtime)
-        model.voice.isListening = true
-        model.voice.isSpeaking = true
-        runtime.onRequest = {
-            XCTAssertFalse(model.voice.isListening)
-            XCTAssertFalse(model.voice.isSpeaking)
-            XCTAssertFalse(model.voice.wakeWordEnabled)
+    func testStopAllDisconnectsPendingVoiceBeforeNetworkCancellation() async {
+        for capture in [true, false] {
+            let runtime = FixtureRuntime()
+            let transport = FixtureVoiceTransport()
+            let voice = VoiceController(audioInputAvailable: { true }, audioOutputAvailable: { true },
+                                        transport: transport, microphonePermission: { true })
+            let model = AppModel(client: runtime, voice: voice)
+            voice.setCloudConsent(true)
+            if capture { await voice.startListening() }
+            else { voice.speak("Harmless fixture reply") }
+            for _ in 0..<100 where transport.frames.isEmpty { await Task.yield() }
+            XCTAssertEqual(transport.connections, 1)
+            XCTAssertEqual(voice.state, .connecting)
+            let before = transport.disconnections
+            runtime.onRequest = {
+                XCTAssertGreaterThan(transport.disconnections, before)
+                XCTAssertFalse(model.voice.isListening)
+                XCTAssertFalse(model.voice.isSpeaking)
+                XCTAssertFalse(model.voice.wakeWordEnabled)
+                XCTAssertNotEqual(model.voice.state, .connecting)
+            }
+            await model.stopAll()
+            XCTAssertEqual(runtime.requests.first?.0, "v1/stop")
         }
-        await model.stopAll()
-        XCTAssertEqual(runtime.requests.first?.0, "v1/stop")
     }
 
     @MainActor

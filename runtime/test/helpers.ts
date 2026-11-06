@@ -80,7 +80,7 @@ export class FakeDelivery implements EveDelivery {
 export class FakeSession implements EveSession {
   readonly id = "fake-session";
   initial = new FakeDelivery();
-  readonly responses: Array<readonly { interactionId: string; optionId: string }[]> = [];
+  readonly responses: Array<readonly { interactionId: string; optionId?: string; text?: string }[]> = [];
   responseDelivery = new FakeDelivery();
   cancelDelivery = new FakeDelivery();
   cancelCalls = 0;
@@ -89,7 +89,7 @@ export class FakeSession implements EveSession {
   postCancelResult: unknown = { status: "cancelled", outcome: "handled" };
 
   async respond(
-    answers: readonly { interactionId: string; optionId: string }[],
+    answers: readonly { interactionId: string; optionId?: string; text?: string }[],
   ): Promise<EveDelivery> {
     this.responses.push(answers);
     if (this.respondGate) await this.respondGate;

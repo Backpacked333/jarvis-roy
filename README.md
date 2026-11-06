@@ -7,7 +7,8 @@ A native macOS assistant with persistent conversations, opt-in **Hey Jarvis** li
 ## Implemented
 
 - **Continuous conversations:** create/select a thread in the sidebar, send follow-ups to the same Eve session, and see chronological user/assistant messages. Activity and approval cards are separate from the transcript and scoped to the selected conversation. Up to four threads can work concurrently; an active or unconfirmed thread cannot accept a new turn. Saved memories are intentionally shared, not isolated per thread.
-- **Voice:** manual on-device input for review; opt-in rolling English-US recognition for “Hey Jarvis …”; spoken replies; persistent visible microphone state and mute. Wake listening is **off on every launch**. Switch threads and capture mutes, with recognized text retained in the original thread. Busy/offline threads or existing drafts/review text never auto-submit commands. Approvals require buttons, never a spoken “yes.”
+- **Rooms:** durable scoped workspaces with validated specialist dependency plans, separate **Accept** and **Start** actions, bounded parallel local Docker workers, immutable artifact previews, exact question cards, cancellation and restart reconciliation. Plan authoring is not execution. Generated code never runs on the host or receives host credentials. Local work stops during sleep/shutdown; this is not an always-on cloud worker service.
+- **Voice:** explicit session-only cloud consent, ElevenLabs **v4 Turbo** dialogue streaming and **Scribe v2 realtime**, bounded audio queues, real playback-drain state, visible Listen/Finish/Mute controls, and explicit interruption. Apple recognition is only an optional local “Hey Jarvis” detector, never a transcription/provider fallback. Wake listening is **off on every launch**. Captured room/conversation/question bindings cannot retarget when selection changes. Approvals require exact buttons, never a spoken “yes.” Hands-free acoustic interruption requires separate hardware acceptance.
 - **Desktop:** approved main-screen OCR, bounded Accessibility inspection, and validated focus/click/set-text/navigation-key actions. Approving a control action explicitly activates its named app after you leave the approval card; process identity, observation freshness and target safety are still checked before interaction. Document/window controls require unchanged non-menu content across the app, including other windows; menu targets require the entire observed tree unchanged. Secure or stale controls are refused. No universal app compatibility promise.
 - **Terminal:** opt-in exact executable/argument-array/cwd execution, per-action approval, timeout/output limits and process-group cancellation. **It runs with your user's privileges, NOT in a security sandbox.** Explicitly approved scripts can access your files and network.
 - **Research:** Tavily search and extraction of public HTTPS pages, bounded evidence, actual source URLs and honest partial failures. Opening a URL is not reading it.
@@ -23,10 +24,11 @@ A native macOS assistant with persistent conversations, opt-in **Hey Jarvis** li
 | Compiler | Xcode Command Line Tools, Swift 5.9+ (`xcode-select --install`) |
 | Runtime | [Node.js 24 LTS](https://nodejs.org/en/download), npm on `PATH` |
 | Cloud model | [Vercel AI Gateway key](https://vercel.com/docs/ai-gateway/authentication-and-byok) and credits |
-| Optional voice | Real microphone, Microphone + Speech Recognition permission, on-device English-US support |
+| Optional room execution | Python 3.10+, pinned controller dependencies, local Docker with cgroup v2/default seccomp, explicitly pulled immutable image |
+| Optional voice | ElevenLabs key with v4 Turbo/Scribe access, one configured voice ID, real microphone/output and explicit session cloud consent; Speech Recognition/on-device English-US support only for wake detection |
 | Optional providers | Your Tavily key and/or Home Assistant instance/token |
 
-No Docker daemon, database account, Vercel deployment or speech-provider key is required. Inference and research may be billed by their providers. Dependencies remain pinned to Eve `1.0.0-rc.6` and Zod `4.6.7`; upgrades require protocol/migration review.
+Text conversations do not require Docker or a speech-provider key. No database account or Vercel deployment is required. Model, research and voice use may be billed by their providers. Dependencies remain pinned to Eve `1.0.0-rc.6` and Zod `4.6.7`; upgrades require protocol/migration review.
 
 ## Reproducible setup
 
@@ -40,6 +42,14 @@ cd jarvis-roy
 The setup script runs `npm ci`, builds Eve, builds both Swift executables and bundles the helper. The launcher prompts for `AI_GATEWAY_API_KEY` without echoing it if missing; it does not persist it. Keep that terminal open. Quitting Jarvis stops the launcher-owned services. Launch with the script, not by double-clicking the app: the script starts authenticated loopback services and supplies a fresh local token.
 
 In the app, choose **New conversation**, then type a message. Ask for an analysis; see the real task state. Ask to save a preference; inspect and deny its approval first. After completion, send a follow-up in the same conversation. Create another thread to keep unrelated context separate.
+
+### Room worker setup and first run
+
+Install a maintained Docker engine yourself, start it, then run `./scripts/setup-workers.sh`. This creates the trusted Python controller venv and checks pinned dependencies; it does not pull images or start workers. Choose the exact platform digest in [worker setup](runtime/workers/README.md), explicitly run `docker pull "$JARVIS_WORKER_IMAGE"`, and export `JARVIS_WORKER_IMAGE` in the launch shell. The launcher discovers the local venv and Docker binary. Missing prerequisites fail closed, not through a host executor.
+
+In **Rooms**, create two differently named rooms. Select one, enter a bounded goal, and **Author plan**. Inspect its graph, limits and output paths, then **Accept** and explicitly **Start**. Staff states and operations come from real worker events; artifacts appear only after sealed output. A question stops the old container and seals declared files; an exact answer creates a new attempt without replaying old tools. A question answer is not approval for a host action. Review such approvals in their original conversation. Use **Stop all** to stop root work, authors, workers and voice; uncertain stops/restarts require inspection and explicit retry.
+
+The initial Python image is intentionally offline and cannot run arbitrary npm/native builds: there are no dependency downloads, network access or executable scratch binaries. Declare every durable file/directory in plan outputs. [Worker limits](runtime/workers/README.md) describe the exact boundary. Step/call/token/time/resource limits are enforced locally; displayed dollar estimates are **not provider billing caps**. A sleeping/shut-down Mac cannot keep a local run working.
 
 ### Opt-in capabilities
 
@@ -61,7 +71,7 @@ read -r -s -p 'Tavily key: ' TAVILY_API_KEY; printf '\n'; export TAVILY_API_KEY
 
 | Variable | Behavior |
 | --- | --- |
-| `AI_GATEWAY_API_KEY` | Required inference credential, runtime only |
+| `AI_GATEWAY_API_KEY` | Required inference credential, trusted runtime/bridge only; never passed to generated workers |
 | `JARVIS_MODEL` | Default `openai/gpt-4.1-mini` |
 | `JARVIS_DATA_DIR` | Default `~/Library/Application Support/JarvisRoy` |
 | `JARVIS_ENABLE_DESKTOP` | Default off; enable helper-based screen/AX tools |
@@ -72,6 +82,9 @@ read -r -s -p 'Tavily key: ' TAVILY_API_KEY; printf '\n'; export TAVILY_API_KEY
 | `JARVIS_ALLOW_HOME_ASSISTANT_HTTP` | Default off; `1` permits HTTP only to an explicit private/loopback IP; prefer HTTPS |
 | `JARVIS_LOCAL_TOKEN` | Fresh ephemeral token generated by launcher; never save/share |
 | `JARVIS_NATIVE_HELPER` | Absolute bundled helper path set by launcher; do not point to untrusted code |
+| `JARVIS_WORKER_IMAGE` | Explicit local digest-pinned Linux image; mutable tags and automatic pulls are refused |
+| `JARVIS_WORKER_PYTHON`, `JARVIS_DOCKER_BINARY` | Trusted absolute interpreter/Docker paths; launcher detects local venv and Docker |
+| `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | Bridge-only key and one selected voice; no credentials in native frames, query strings or worker environments |
 
 To disable, unset the relevant flag or key(s) and relaunch. No risky configuration is mutable over the API. Runtime tools refuse disabled/unconfigured services even if the model proposes them.
 
@@ -81,7 +94,7 @@ Home Assistant setup: [authentication](https://www.home-assistant.io/docs/authen
 
 ### macOS permissions and native account setup
 
-1. **Voice:** enable the UI toggle or manual microphone, then allow Microphone and Speech Recognition. If denied, use **System Settings → Privacy & Security → Microphone / Speech Recognition**, then relaunch. Audio is not uploaded by Jarvis; unsupported on-device recognition fails with text-input guidance, never a cloud fallback.
+1. **Voice:** configure the ElevenLabs key and voice ID, relaunch, then explicitly enable **Cloud voice** for this session before Listen. Microphone PCM goes to Scribe, and spoken reply text goes to ElevenLabs v4 Turbo. The key stays in the bridge. Allow Microphone; optional local wake detection also needs Speech Recognition. If denied, use **System Settings → Privacy & Security → Microphone / Speech Recognition**, then relaunch. Missing/unsupported provider, voice or audio devices leaves typing available; there is no silent Apple/provider downgrade.
 2. **Screen and app control:** opt in via environment. In **Privacy & Security → Accessibility** and **Screen & System Audio Recording** (Screen Recording on macOS 14), grant the responsible JarvisControl/helper or launching terminal identity. The helper is bundled at `dist/Jarvis.app/Contents/Helpers/JarvisControl.app`, has a stable bundle ID and its own embedded/privacy metadata. Checks happen when an approved action runs, not on the configuration screen. No prompt bypass, automatic permission grant or background screen scraping. Ad-hoc signing is not a stable Developer ID signing identity; rebuilding/moving may require granting permissions again.
 3. **Apple services:** configure accounts in **Mail**, **Calendar**, and **Messages** yourself. Opt in, request a bounded account/calendar/service listing, approve it, then allow the actual responsible terminal/runtime under **Privacy & Security → Automation** for that app. OSA execution may be attributed to the launching terminal, not the SwiftUI bundle. Privacy declarations explain intent; they do **not** grant access or replace TCC prompts. A permission refusal is an error, not a successful connection.
 
@@ -89,14 +102,18 @@ Mail supports bounded recent inbox headers, explicit inbox message reads and sen
 
 ### Wake listening is not a dedicated low-power wake engine
 
-It uses rolling **on-device English-US speech recognition** with 45-second sessions, brief rearming gaps, a wake phrase at the start of an utterance, 1.5 seconds of command silence, a 20-second command bound and 5-second empty-wake timeout. Synthesis pauses capture. Boundary timing can shorten a command; fixed energy thresholds need real microphone tuning. Apple on-device availability varies by hardware, installed language resources and OS. Acoustic accuracy and battery use are not established by unit tests. Mute works while permission requests/retries are pending; Apple prompts themselves cannot be programmatically dismissed.
+Optional wake detection uses rolling **on-device English-US speech recognition**, brief rearming gaps and a wake phrase at the start of an utterance; the subsequent command is a bounded, consented Scribe turn. The fixed implementation pauses microphone capture during speech and supports explicit interruption. Apple on-device availability varies by hardware, installed language resources and OS. Acoustic accuracy, hands-free interruption and battery use are not established by unit tests. Mute invalidates late permission/transport results; Apple prompts themselves cannot be programmatically dismissed.
 
 ## Architecture and safety boundaries
 
 ```text
-SwiftUI → on-device voice + selected conversation + approval UI
+SwiftUI → Rooms / conversations / separate approval and question cards
   └─ authenticated 127.0.0.1:39202 bridge
        ├─ conversations/tasks/approvals/capabilities/memory
+       ├─ durable room kernel → validated author → explicit accepted-plan start
+       │    └─ trusted controller → credential-free, offline, bounded Docker workers
+       ├─ exact checkpoint questions / immutable scoped artifacts / cancellation
+       ├─ authenticated voice WS → ElevenLabs Scribe + v4 Turbo (explicit consent)
        └─ authenticated 127.0.0.1:39201 Eve runtime
             ├─ Gateway model (cloud), analyst (supplied evidence only)
             ├─ Tavily public research
@@ -112,7 +129,8 @@ Both local services remain loopback-only and bearer authenticated; the bridge re
 ## Privacy, persistence and migration
 
 - Cloud reasoning receives submitted text, prior turns, recalled memories and relevant tool results, **including approved screen/account content**. Review provider policies before using sensitive data. Redaction is best-effort, not a guarantee that private text is removed.
-- Microphone wake/transcription is local where supported; no background utterance is intentionally submitted. Screen images are not saved; recognized screen text can enter persisted/model context.
+- Wake detection is local where supported. Command microphone PCM and spoken reply text go to ElevenLabs only after session cloud consent. Do not speak secrets; provider retention is separate. Screen images are not saved; recognized screen text can enter persisted/model context.
+- Room state uses private local SQLite; inert checkpoints and immutable artifact bytes are private files. Restart reconciles resources without blindly replaying side effects. Room histories/artifacts are not encrypted; back them up before upgrades and use FileVault.
 - Task/conversation snapshots use private atomic version-2 storage, automatically migrating the old task-array format. Unavailable legacy user input is marked unavailable rather than invented. Opaque Eve session IDs remain server-side. Back up state before upgrading; do not run an old app against the migrated store.
 - Retention targets 100 tasks/conversations but protects active/unconfirmed work. This is not encrypted storage. Use FileVault and your macOS account boundary. Deleting a saved memory does not erase copies in history/provider logs.
 - To reset, quit the app **and launcher**, back up notes, then remove your configured Jarvis data directory and this checkout's `runtime/.eve`. This also removes deduplication markers; inspect uncertain actions before resetting. Provider-side retention is separate.
@@ -136,7 +154,9 @@ swift test --package-path macos-control
 swift test --package-path macos-control -c release
 ```
 
-CI uses **macos-15** to build both native executables and run native logic/integration tests. Linux runtime tests use isolated/injected transports: auth, migration, conversation isolation, approvals, cancellation, subprocess bounds, research/provider failures, connected-service guards and launcher environment filtering. Native tests exercise wake logic, thread/voice routing, Accessibility errors and validation scopes without live accounts or microphone permissions. There is no configured standalone lint script; TypeScript checks, shell syntax and whitespace checks supplement tests.
+CI uses **macos-15** to build both native executables and run native logic/integration tests. Linux runtime tests cover auth, migration, isolation, approvals/questions, cancellation, provider failures and launcher filtering. The separate `isolated-workers` job explicitly installs the pinned controller/image and runs real Docker controls plus HTTP → kernel → worker integration: two rooms, dependency artifact handoff, clarification/resume after restart and Stop all. Its model transport is deterministic, not live inference. Native tests exercise logic without live accounts or microphone permissions. There is no standalone lint script; TypeScript, shell syntax and whitespace checks supplement tests.
+
+Run real isolated tests locally with `JARVIS_WORKER_DOCKER_TESTS=1 JARVIS_WORKER_PYTHON="$PWD/runtime/workers/.venv/bin/python" npm --prefix runtime test`. Optional live fixtures spend provider credits and require explicit opt-in; see [worker tests](runtime/workers/README.md). Do not put production credentials in CI.
 
 **Verification levels:** compile/unit results are available in [Checks](https://github.com/Backpacked333/jarvis-roy/actions/workflows/checks.yml). Recorded Mac acceptance has verified real-model conversation continuity/isolation/restart, approval/denial/cancellation, missing-audio fallback, harmless terminal execution, TextEdit inspection/approved edits, refusal after a document changes, and screen OCR. These are bounded fixture results, not universal app compatibility. Desktop acceptance used existing OS trust, not a newly granted/denied permission flow. Actual microphone/synthesis, wake acoustics/battery, broader controls/menu targets/secure fields, TCC attribution, live Apple accounts/delivery, Tavily credentials and Home Assistant devices still require explicit hardware/provider acceptance. No live personal accounts, sends, purchases, terminal actions on a user's machine, or physical device changes are used as test fixtures.
 

@@ -103,9 +103,8 @@ final class RoomsModel: ObservableObject {
                 throw RoomsError.invalidResponse
             }
             if batch.resetRequired || batch.nextSequence < cursor { await refresh(reset: true); return }
-            if !isConnected || batch.events.contains(where: { $0.sequence > eventCursor }) || batch.nextSequence > eventCursor {
-                await refresh()
-            }
+            // Root Eve approval cards are projected outside the kernel event sequence.
+            await refresh()
         } catch is CancellationError { }
         catch { isConnected = false; self.error = error.localizedDescription }
     }

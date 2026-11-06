@@ -216,16 +216,17 @@ final class VoiceTransportTests: XCTestCase {
 }
 
 @MainActor
-private final class FixtureVoiceTransport: VoiceSocketTransporting {
+final class FixtureVoiceTransport: VoiceSocketTransporting {
     var onFrame: ((HarnessVoiceServerFrame) -> Void)?
     var onFailure: ((String) -> Void)?
     var availability = HarnessVoiceStatus(version: 1, provider: "elevenlabs", model: "eleven_v4_turbo", recognitionModel: "scribe_v2_realtime", status: "configured")
     var statusHandler: (() async -> HarnessVoiceStatus)?
     var frames: [HarnessVoiceClientFrame] = []
     var connections = 0
+    var disconnections = 0
     var statusCalls = 0
     func status() async throws -> HarnessVoiceStatus { statusCalls += 1; return await statusHandler?() ?? availability }
     func connect() throws { connections += 1 }
     func send(_ frame: HarnessVoiceClientFrame) throws { frames.append(frame) }
-    func disconnect() {}
+    func disconnect() { disconnections += 1 }
 }

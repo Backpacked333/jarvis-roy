@@ -113,7 +113,7 @@ class Runner implements WorkerRunner {
       let onAbort!: () => void;
       try {
         await Promise.race([
-          context.emit({ ...event, ref, sequence: ++sequence, at: new Date().toISOString() } as WorkerEvent),
+          context.emit({ ...event, ref, sequence: sequence++, at: new Date().toISOString() } as WorkerEvent),
           new Promise<never>((_resolve, reject) => {
             onAbort = () => reject(new Error("Event persistence interrupted by cancellation/deadline"));
             abort.signal.addEventListener("abort", onAbort, { once: true });
@@ -130,7 +130,11 @@ class Runner implements WorkerRunner {
       await this.ledgers.put(nodeKey(ref), ledger);
       await this.records.put(key, record);
     };
-    const persistUsage = async () => { await persist(); await emit({ type: "usage", usage: structuredClone(record!.usage) }); };
+    const persistUsage = async () => {
+      await persist();
+      // In-flight reservations remain in the journal; partial events mean irrecoverable uncertainty to the kernel.
+      if (record!.usage.accounting === "measured") await emit({ type: "usage", usage: structuredClone(record!.usage) });
+    };
     let result: WorkerResult;
     try {
       const binding = sha256(canonicalJson({ planDigest: spec.planDigest, node: spec.node, policy: spec.policy }));
@@ -245,7 +249,7 @@ class Runner implements WorkerRunner {
       }
       const artifacts = await this.artifacts.seal(spec, files, checkedSnapshot === sha256(canonicalJson(files)) ? checks : []);
       if (outcome.status === "waiting_question") {
-        const checkpoint = WorkerCheckpointSchema.parse({ version: 1, ref, sequence, createdAt: new Date().toISOString(), resumeMode: "continue_after_answer",
+        const checkpoint = WorkerCheckpointSchema.parse({ version: 1, ref, sequence: Math.max(0, sequence - 1), createdAt: new Date().toISOString(), resumeMode: "continue_after_answer",
           continuation: { version: 1, summary: `Paused after ${record.usage.steps} cumulative tool steps; continue without replay.`, history,
             completedStepIds, usage: record.usage }, artifacts, question });
         result = { status: "waiting_question", ref, usage: record.usage, checkpoint };
