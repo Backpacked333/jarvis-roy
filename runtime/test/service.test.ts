@@ -300,7 +300,7 @@ test("history pruning preserves interrupted tasks while trimming completed histo
     title: "Unconfirmed task",
     status: "interrupted",
     reply: "",
-    createdAt: new Date(start + 100_000).toISOString(),
+    createdAt: new Date(start - 1_000).toISOString(),
     events: [],
     approvals: [],
     sessionId: "persisted-session-id",
