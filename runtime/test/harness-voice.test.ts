@@ -154,6 +154,44 @@ test("TTD registers exactly one voice, streams text and splits exact PCM with tu
   assert.equal(chunks.every((chunk) => chunk.sampleRate === 24000 && Buffer.from(chunk.pcm, "base64").length <= 16000), true);
 });
 
+test("observed Scribe handshake can omit echoed commit_strategy without permitting unsolicited finals", async (t) => {
+  const observed = { message_type: "session_started", config: { model_id: "scribe_v2_realtime", audio_format: "pcm_16000", sample_rate: 16000 } };
+  for (const commit of [true, false]) {
+    const f = await fixture(t); f.send(start);
+    const peer = await f.peer(); peer.send(JSON.stringify(observed));
+    await until(() => f.frames.some((frame) => frame.type === "state" && frame.state === "listening"));
+    assert.equal(new URL(f.connections[0].url).searchParams.get("commit_strategy"), "manual");
+    if (commit) {
+      f.send({ ...header, type: "audio", sequence: 0, sampleRate: 16000, pcm });
+      f.send({ ...header, type: "commit" });
+      await until(() => f.providerFrames[0].length === 2);
+      assert.equal(f.providerFrames[0][1].commit, true);
+    }
+    peer.send(JSON.stringify({ message_type: "partial_transcript", text: "Jarvis, what's your-" }));
+    await until(() => f.frames.some((frame) => frame.type === "transcript" && !frame.final));
+    assert.equal(f.frames.some((frame) => frame.type === "transcript" && frame.final), false);
+    const corrected = "Jarvis, voice check. The website room needs one clarification.";
+    peer.send(JSON.stringify({ message_type: "committed_transcript", text: corrected }));
+    if (commit) {
+      await until(() => f.frames.some((frame) => frame.type === "transcript" && frame.final));
+      assert.deepEqual(f.frames.find((frame) => frame.type === "transcript" && frame.final), { ...header, type: "transcript", text: corrected, final: true, context });
+    }
+    else {
+      await f.frame("error");
+      assert.equal(f.frames.some((frame) => frame.type === "transcript" && frame.final), false);
+    }
+  }
+});
+
+test("Scribe still rejects explicitly non-manual or null commit strategy", async (t) => {
+  for (const commit_strategy of ["vad", null, false]) {
+    const f = await fixture(t); f.send(start);
+    (await f.peer()).send(JSON.stringify({ ...ready, config: { ...ready.config, commit_strategy } }));
+    await f.frame("error");
+    assert.equal(f.frames.some((frame) => frame.type === "state" && frame.state === "listening"), false);
+  }
+});
+
 test("interrupt tears down output and queued audio; stale callbacks cannot restart it", async (t) => {
   const f = await fixture(t); f.send(speak);
   const peer = await f.peer();

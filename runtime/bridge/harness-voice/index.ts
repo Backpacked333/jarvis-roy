@@ -20,7 +20,7 @@ const INPUT_WIRE_BYTES = 88_000;
 const websocketBounds = { maxFragments: 64, maxBufferedChunks: 256, closeTimeout: 1_000 };
 const sessionStarted = z.object({
   message_type: z.literal("session_started"),
-  config: z.object({ model_id: z.literal(RECOGNITION_MODEL), audio_format: z.literal("pcm_16000"), sample_rate: z.literal(16_000), commit_strategy: z.literal("manual") }),
+  config: z.object({ model_id: z.literal(RECOGNITION_MODEL), audio_format: z.literal("pcm_16000"), sample_rate: z.literal(16_000), commit_strategy: z.literal("manual").optional() }),
 });
 
 export interface VoiceTransportDependencies {

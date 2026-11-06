@@ -123,6 +123,36 @@ void JarvisStopPlayback(AVAudioEngine *engine, AVAudioPlayerNode *player, BOOL r
     }
 }
 
+BOOL JarvisDuplexIsHealthy(AVAudioEngine *engine) {
+    @try {
+        return JarvisHasAudioInput() && JarvisHasAudioOutput() && engine.isRunning &&
+            engine.inputNode.isVoiceProcessingEnabled && engine.outputNode.isVoiceProcessingEnabled &&
+            !engine.inputNode.isVoiceProcessingBypassed && !engine.inputNode.isVoiceProcessingInputMuted;
+    } @catch (NSException *exception) { return NO; }
+}
+
+BOOL JarvisConfigureDuplex(AVAudioEngine *engine, AVAudioPlayerNode *player, AVAudioNodeTapBlock input, AVAudioNodeTapBlock output) {
+    @try {
+        if (engine.isRunning || !JarvisHasAudioInput() || !JarvisHasAudioOutput()) return NO;
+        NSError *error = nil;
+        // AEC needs both I/O nodes in the SAME engine; a separate playback engine is not a reference.
+        if (![engine.inputNode setVoiceProcessingEnabled:YES error:&error] || error) return NO;
+        engine.inputNode.voiceProcessingBypassed = NO;
+        engine.inputNode.voiceProcessingInputMuted = NO;
+        if (!engine.inputNode.isVoiceProcessingEnabled || !engine.outputNode.isVoiceProcessingEnabled) return NO;
+        AVAudioFormat *format = [engine.inputNode outputFormatForBus:0];
+        // Refuse unexpected multichannel voice-processing layouts rather than mix an echo reference into speech.
+        if (format.channelCount != 1 || format.sampleRate < 8000 || format.sampleRate > 192000) return NO;
+        if (!JarvisConfigurePlayback(engine, player, output)) return NO;
+        [engine.inputNode installTapOnBus:0 bufferSize:1024 format:nil block:input];
+        return YES;
+    } @catch (NSException *exception) { return NO; }
+}
+
+void JarvisStopPlayer(AVAudioPlayerNode *player) {
+    @try { [player stop]; } @catch (NSException *exception) {}
+}
+
 @implementation JarvisPCMConverter {
     AVAudioConverter *_converter;
     AVAudioFormat *_source;
