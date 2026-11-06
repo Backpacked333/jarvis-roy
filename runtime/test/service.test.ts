@@ -50,6 +50,7 @@ test("tasks persist actual approval input, response, and completed result", asyn
   const task = await service.createTask("Please save this preference.");
   assert.equal(task.status, "starting");
   await waitFor(async () => (await service.state()).tasks[0]?.status === "waiting");
+  await service.waitForObservedDelivery(task.id);
   let state = await service.state();
   const waitingTask = state.tasks[0];
   assert.equal(waitingTask?.approvals[0]?.id, "interaction-1");
@@ -69,6 +70,7 @@ test("tasks persist actual approval input, response, and completed result", asyn
   releaseResponse();
   await response;
   await waitFor(async () => (await service.state()).tasks[0]?.status === "completed");
+  await service.waitForObservedDelivery(task.id);
   state = await service.state();
   assert.equal(state.tasks[0]?.reply, "Preference saved.");
   const persisted = JSON.parse(await readFile(path.join(setup.dataDirectory, "tasks.json"), "utf8"));
