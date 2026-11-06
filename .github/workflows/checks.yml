@@ -24,8 +24,41 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+  isolated-workers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      JARVIS_WORKER_DOCKER_TESTS: '1'
+      JARVIS_WORKER_CODING_TESTS: '1'
+      JARVIS_WORKER_KERNEL_TESTS: '1'
+      JARVIS_WORKER_IMAGE: python@sha256:2986c55feb36e6cae00fa1fefb454283e4b33f35e75ff8bdd123b134130be301
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: runtime/workers/requirements.txt
+      - run: npm --prefix runtime ci
+      - run: ./scripts/setup-workers.sh
+      - run: echo "JARVIS_WORKER_PYTHON=$PWD/runtime/workers/.venv/bin/python" >> "$GITHUB_ENV"
+      - run: docker pull "$JARVIS_WORKER_IMAGE"
+      - run: node runtime/workers/setup-image.ts coding --pull
+      - run: npm --prefix runtime test
+      - name: Check for leaked running workers
+        if: always()
+        run: test -z "$(docker ps -q --filter label=ai.jarvis.owner)"
   native-macos:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - run: ./scripts/build-macos.sh
+      - run: swift test --package-path macos
+      - run: swift test --package-path macos -c release
+      - run: swift test --package-path macos-control
+      - run: swift test --package-path macos-control -c release

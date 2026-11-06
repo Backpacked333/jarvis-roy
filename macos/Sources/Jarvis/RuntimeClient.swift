@@ -1,6 +1,13 @@
 import Foundation
 
-struct RuntimeClient {
+@MainActor
+protocol RuntimeServing {
+    func request(_ path: String, method: String, body: [String: String]?) async throws -> Data
+    func state() async throws -> RuntimeState
+    func capabilities() async throws -> CapabilityState
+}
+
+struct RuntimeClient: RuntimeServing {
     private let base = URL(string: "http://127.0.0.1:39202")!
     private let token = ProcessInfo.processInfo.environment["JARVIS_LOCAL_TOKEN"] ?? ""
 
@@ -37,5 +44,9 @@ struct RuntimeClient {
 
     func state() async throws -> RuntimeState {
         try JSONDecoder().decode(RuntimeState.self, from: await request("v1/state"))
+    }
+
+    func capabilities() async throws -> CapabilityState {
+        try JSONDecoder().decode(CapabilityState.self, from: await request("v1/capabilities"))
     }
 }

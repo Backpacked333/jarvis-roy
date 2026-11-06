@@ -12,9 +12,13 @@
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Jarvis uses your microphone only when you start voice input, to transcribe a task on this Mac.</string>
+    <string>Jarvis uses the microphone for local wake detection and voice controls. With your Cloud voice consent, command audio is sent to ElevenLabs for transcription. Hands-free is a separate opt-in. Mute or Stop all ends capture.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>Jarvis transcribes your voice on device. You review the text before sending it to the AI model.</string>
+    <string>Jarvis uses on-device speech recognition only to detect Hey Jarvis. Command transcription uses ElevenLabs after your explicit Cloud voice consent.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>With desktop access enabled and your approval, the JarvisControl helper reads text from the main screen. Approved text may be sent to the cloud model.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>With Apple services enabled and your approval, Jarvis asks Mail, Calendar and Messages to perform the exact account operation you approved.</string>
     <key>NSAppTransportSecurity</key>
     <dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict>

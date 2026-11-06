@@ -2,17 +2,42 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "eve/client";
+import { z } from "zod";
+import type { Duplex } from "node:stream";
 import { getDataDirectory } from "../agent/lib/persistence.ts";
 import { bearerTokenMatches, isValidLocalToken } from "../agent/lib/local-auth.ts";
 import { BridgeError, errorMessage } from "./errors.ts";
 import { redactText } from "./redaction.ts";
 import { JarvisService } from "./service.ts";
+import { capabilitiesStatus } from "./capabilities.ts";
 import type { EveClient } from "./types.ts";
+import { createHarnessRuntime, harnessRoute, stopHarness, type HarnessRuntime } from "./harness-runtime.ts";
 
 const BRIDGE_HOST = "127.0.0.1";
 const BRIDGE_PORT = 39_202;
 const MAX_BODY_BYTES = 32 * 1_024;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
+interface BridgeControl {
+  stopAll(): ReturnType<JarvisService["stop"]>;
+  isStopping(): boolean;
+  generation(): number;
+  dispatch<T>(generation: number, operation: () => Promise<T>, recovery?: boolean): Promise<T>;
+}
+
+function isCancellation(method: string, pathname: string): boolean {
+  return method === "POST" && (/^\/v1\/tasks\/[^/]+\/cancel$/.test(pathname) ||
+    /^\/v1\/harness\/rooms\/[^/]+\/(runs|authorings)\/[^/]+\/cancel$/.test(pathname));
+}
+
+async function boundedStop<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([operation, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new BridgeError("Stop is unconfirmed. Admission remains closed; inspect status and explicitly retry Stop all to reconcile.", 503)), timeoutMs);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, {
@@ -78,7 +103,10 @@ async function route(
   request: IncomingMessage,
   response: ServerResponse,
   service: JarvisService,
+  runtime: HarnessRuntime | undefined,
+  control: BridgeControl,
 ): Promise<void> {
+  const generation = control.generation();
   const host = request.headers.host;
   const remoteAddress = request.socket.remoteAddress;
   if (!isLoopbackHost(host) || (remoteAddress && remoteAddress !== "127.0.0.1" &&
@@ -104,7 +132,33 @@ async function route(
     return;
   }
   const method = request.method ?? "GET";
+  const recovery = isCancellation(method, pathname);
+  const dispatch = <T>(operation: () => Promise<T>) => control.dispatch(generation, operation, recovery);
   try {
+    if (control.isStopping() && method !== "GET" && pathname !== "/v1/stop" && !recovery) throw new BridgeError("Stop all is unconfirmed or in progress. Inspect status and explicitly retry Stop all before changing work.", 409);
+    if (pathname.startsWith("/v1/harness/")) {
+      if (!runtime) throw new BridgeError("Room runtime is unavailable.", 503);
+      const body = method === "GET" ? undefined : await readJson(request);
+      const operation = () => harnessRoute(method, new URL(request.url!, "http://127.0.0.1"), async () => body, runtime, service);
+      const result = await (method === "GET" ? operation() : dispatch(operation));
+      if ("bytes" in result) {
+        response.writeHead(result.status, { "content-type": "application/octet-stream", "content-disposition": 'attachment; filename="artifact.bin"',
+          "content-length": result.bytes.byteLength, "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" });
+        response.end(result.bytes);
+      } else json(response, result.status, result.body);
+      return;
+    }
+    if (pathname === "/v1/voice/status") {
+      if (method !== "GET") throw new BridgeError("Method not allowed.", 405);
+      if (!runtime) throw new BridgeError("Voice runtime is unavailable.", 503);
+      json(response, 200, runtime.voice.status());
+      return;
+    }
+    if (pathname === "/v1/capabilities") {
+      if (method !== "GET") throw new BridgeError("Method not allowed.", 405);
+      json(response, 200, capabilitiesStatus(runtime ? { worker: (await runtime.harness.state()).worker, voice: runtime.voice.status() } : undefined));
+      return;
+    }
     if (pathname === "/v1/state") {
       if (method !== "GET") throw new BridgeError("Method not allowed.", 405);
       json(response, 200, await service.state());
@@ -116,12 +170,26 @@ async function route(
       if (typeof body.message !== "string") {
         throw new BridgeError("message must be a string.", 400);
       }
-      json(response, 202, await service.createTask(body.message));
+      if (body.conversationId !== undefined && typeof body.conversationId !== "string") {
+        throw new BridgeError("conversationId must be a string.", 400);
+      }
+      const message = body.message, conversationId = body.conversationId;
+      json(response, 202, await dispatch(() => service.createTask(message, conversationId)));
+      return;
+    }
+    if (pathname === "/v1/conversations") {
+      if (method !== "POST") throw new BridgeError("Method not allowed.", 405);
+      const body = await readJson(request);
+      if (body.title !== undefined && typeof body.title !== "string") {
+        throw new BridgeError("title must be a string.", 400);
+      }
+      const title = body.title;
+      json(response, 201, await dispatch(() => service.createConversation(title)));
       return;
     }
     if (pathname === "/v1/stop") {
       if (method !== "POST") throw new BridgeError("Method not allowed.", 405);
-      json(response, 200, { tasks: await service.stop() });
+      json(response, 200, { tasks: await control.stopAll() });
       return;
     }
 
@@ -130,13 +198,16 @@ async function route(
       const taskId = decodePathSegment(taskAction[1]);
       if (method !== "POST") throw new BridgeError("Method not allowed.", 405);
       if (taskAction[2] === "cancel") {
-        json(response, 200, await service.cancel(taskId));
+        json(response, 200, await dispatch(() => service.cancel(taskId)));
       } else {
         const body = await readJson(request);
-        if (typeof body.interactionId !== "string" || typeof body.optionId !== "string") {
-          throw new BridgeError("interactionId and optionId must be strings.", 400);
+        if (typeof body.interactionId !== "string" || (typeof body.optionId === "string") === (typeof body.text === "string")) {
+          throw new BridgeError("interactionId and exactly one optionId or text answer are required.", 400);
         }
-        json(response, 200, await service.respond(taskId, body.interactionId, body.optionId));
+        const revision = typeof body.expectedRevision === "string" && /^\d+$/.test(body.expectedRevision) ? Number(body.expectedRevision) : body.expectedRevision;
+        if (!Number.isSafeInteger(revision) || Number(revision) < 1) throw new BridgeError("The exact card revision is required.", 400);
+        const interactionId = body.interactionId;
+        json(response, 200, await dispatch(() => service.respond(taskId, interactionId, typeof body.optionId === "string" ? body.optionId : "", Number(revision), typeof body.text === "string" ? body.text : undefined)));
       }
       return;
     }
@@ -148,17 +219,17 @@ async function route(
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
         throw new BridgeError("Memory not found.", 404);
       }
-      const deleted = await service.removeMemory(id);
+      const deleted = await dispatch(() => service.removeMemory(id));
       if (!deleted) throw new BridgeError("Memory not found.", 404);
       json(response, 200, { id, deleted: true });
       return;
     }
     throw new BridgeError("Not found.", 404);
   } catch (cause) {
-    const status = cause instanceof BridgeError ? cause.status : 500;
+    const status = cause instanceof BridgeError ? cause.status : cause instanceof z.ZodError || cause instanceof URIError ? 400 : 500;
     const message = cause instanceof BridgeError
       ? redactText(cause.message)
-      : "Internal server error.";
+      : status === 400 ? "Invalid request schema or path." : "Internal server error.";
     if (!response.headersSent) json(response, status, { error: message });
     else response.destroy();
   }
@@ -168,13 +239,89 @@ export function createBridgeServer(
   service: JarvisService,
   host = BRIDGE_HOST,
   port = BRIDGE_PORT,
+  runtime?: HarnessRuntime,
+  options: { stopTimeoutMs?: number } = {},
 ): Server {
-  return createServer((request, response) => {
-    void route(request, response, service).catch(() => {
+  if (host !== BRIDGE_HOST) throw new Error("The bridge must bind to 127.0.0.1.");
+  const voiceSockets = new Set<Duplex>();
+  let closing = false;
+  let stopping = false;
+  let generation = 0;
+  let admission = Promise.resolve();
+  let stopOperation: Promise<Awaited<ReturnType<JarvisService["stop"]>>> | undefined;
+  const stopTimeoutMs = options.stopTimeoutMs ?? 25_000;
+  const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = admission.then(operation);
+    admission = result.then(() => {}, () => {});
+    return result;
+  };
+  const stopVoice = () => { for (const socket of voiceSockets) socket.destroy(); voiceSockets.clear(); };
+  const control: BridgeControl = {
+    isStopping: () => stopping,
+    generation: () => generation,
+    dispatch: (expected, operation, recovery = false) => serialize(async () => {
+      if (closing || expected !== generation || (stopping && !recovery)) {
+        throw new BridgeError("Work was fenced by Stop all. Refresh and submit a new explicit request only after stop confirmation.", 409);
+      }
+      return operation();
+    }),
+    async stopAll() {
+      if (stopOperation) throw new BridgeError("Stop all is already in progress; admission remains closed.", 409);
+      stopping = true;
+      generation++;
+      stopVoice();
+      const operation = serialize(async () => {
+        const [tasks, rooms] = await Promise.allSettled([service.stop(), runtime ? stopHarness(runtime, stopTimeoutMs) : Promise.resolve()]);
+        if (tasks.status === "rejected" || rooms.status === "rejected" ||
+            tasks.value.some((task) => !["completed", "failed", "cancelled"].includes(task.status))) {
+          throw new BridgeError("Some stops are unconfirmed. Admission remains closed; inspect task and room status and explicitly retry Stop all to reconcile.", 503);
+        }
+        return tasks.value;
+      });
+      stopOperation = operation;
+      void operation.finally(() => { if (stopOperation === operation) stopOperation = undefined; }).catch(() => {});
+      const tasks = await boundedStop(operation, stopTimeoutMs);
+      stopping = false;
+      return tasks;
+    },
+  };
+  const server = createServer((request, response) => {
+    if (closing) { json(response, 503, { error: "Bridge is shutting down." }); return; }
+    void route(request, response, service, runtime, control).catch(() => {
       if (!response.headersSent) json(response, 500, { error: "Internal server error." });
       else response.destroy();
     });
-  }).listen(port, host);
+  });
+  server.on("upgrade", (request, socket, head) => {
+    const remote = request.socket.remoteAddress;
+    const reject = (status: number) => socket.end(`HTTP/1.1 ${status} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+    if (closing || stopping || !runtime || request.method !== "GET" || request.url !== "/v1/voice/stream") { reject(404); return; }
+    if (!isLoopbackHost(request.headers.host) || !["127.0.0.1", "::ffff:127.0.0.1"].includes(remote ?? "") || request.headers.origin !== undefined) { reject(403); return; }
+    if (!bearerTokenMatches(request.headers.authorization, process.env.JARVIS_LOCAL_TOKEN)) { reject(401); return; }
+    socket.on("error", () => socket.destroy());
+    voiceSockets.add(socket);
+    socket.once("close", () => voiceSockets.delete(socket));
+    try { runtime.voice.handleUpgrade(request, socket, head); } catch { socket.destroy(); }
+  });
+  let cleanup: Promise<void> | undefined;
+  const shutdown = () => cleanup ??= (async () => {
+    closing = true;
+    stopping = true;
+    generation++;
+    stopVoice();
+    const results = await serialize(() => Promise.allSettled([service.stop(), runtime?.voice.close(), runtime?.harness.shutdown()]));
+    if (results.some((result) => result.status === "rejected")) process.stderr.write("Some shutdown operations are unconfirmed; restart reconciliation is required.\n");
+  })();
+  shutdowns.set(server, shutdown);
+  server.once("close", () => { void shutdown(); });
+  return server.listen(port, host);
+}
+
+const shutdowns = new WeakMap<Server, () => Promise<void>>();
+export async function shutdownBridge(server: Server): Promise<void> {
+  await shutdowns.get(server)?.();
+  server.closeAllConnections();
+  if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
 export function isDirectEntrypoint(moduleUrl: string, argvPath: string | undefined): boolean {
@@ -206,7 +353,9 @@ export async function startJarvisBridge(): Promise<Server> {
     dataDirectory: getDataDirectory(),
     model: process.env.JARVIS_MODEL ?? "openai/gpt-4.1-mini",
   });
-  const server = createBridgeServer(service);
+  const runtime = await createHarnessRuntime(getDataDirectory(), service.model);
+  const server = createBridgeServer(service, BRIDGE_HOST, BRIDGE_PORT, runtime);
+  server.once("error", () => { void shutdownBridge(server); });
   server.on("listening", () => {
     process.stdout.write(`Jarvis bridge listening on http://${BRIDGE_HOST}:${BRIDGE_PORT}\n`);
   });
@@ -214,7 +363,11 @@ export async function startJarvisBridge(): Promise<Server> {
 }
 
 if (isDirectEntrypoint(import.meta.url, process.argv[1])) {
-  void startJarvisBridge().catch((cause) => {
+  void startJarvisBridge().then((server) => {
+    for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => {
+      void shutdownBridge(server).then(() => { process.exitCode = 0; });
+    });
+  }).catch((cause) => {
     process.stderr.write(`${redactText(errorMessage(cause))}\n`);
     process.exitCode = 1;
   });

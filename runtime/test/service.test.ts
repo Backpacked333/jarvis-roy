@@ -50,6 +50,7 @@ test("tasks persist actual approval input, response, and completed result", asyn
   const task = await service.createTask("Please save this preference.");
   assert.equal(task.status, "starting");
   await waitFor(async () => (await service.state()).tasks[0]?.status === "waiting");
+  await service.waitForObservedDelivery(task.id);
   let state = await service.state();
   const waitingTask = state.tasks[0];
   assert.equal(waitingTask?.approvals[0]?.id, "interaction-1");
@@ -69,11 +70,13 @@ test("tasks persist actual approval input, response, and completed result", asyn
   releaseResponse();
   await response;
   await waitFor(async () => (await service.state()).tasks[0]?.status === "completed");
+  await service.waitForObservedDelivery(task.id);
   state = await service.state();
   assert.equal(state.tasks[0]?.reply, "Preference saved.");
   const persisted = JSON.parse(await readFile(path.join(setup.dataDirectory, "tasks.json"), "utf8"));
-  assert.equal(persisted[0].reply, "Preference saved.");
-  assert.equal(persisted[0].status, "completed");
+  assert.equal(persisted.version, 2);
+  assert.equal(persisted.tasks[0].reply, "Preference saved.");
+  assert.equal(persisted.tasks[0].status, "completed");
 });
 
 test("cancellation waits for the eve turn-settled confirmation", async (t) => {
@@ -224,6 +227,32 @@ test("child-task and child-session lifecycle is represented in normalized progre
   assert.match(events, /Opened child session: analyst/);
   assert.match(events, /analyst completed/);
   assert.ok(task.id);
+});
+
+test("failed call activity preserves bounded sanitized errors without exposing other error fields or successful outputs", async (t) => {
+  const setup = await makeService();
+  t.after(setup.close);
+  setup.client.session.initial = new FakeDelivery([
+    event("turn.started", { turnId: "turn-1" }, 1),
+    event("call.requested", { callId: "failed-1", capability: { name: "control_app" }, input: {} }, 2),
+    event("call.settled", { callId: "failed-1", outcome: "failed", error: { message: "STALE_TARGET: changed target; token=fixture-secret", stack: "PRIVATE STACK" } }, 3),
+    event("call.requested", { callId: "failed-2", capability: { name: "inspect_app" }, input: {} }, 4),
+    event("call.settled", { callId: "failed-2", outcome: "failed", error: `AX_UNAVAILABLE: ${"x".repeat(3_000)}` }, 5),
+    event("call.settled", { callId: "ok-1", outcome: "completed", output: "PRIVATE OUTPUT" }, 6),
+    event("turn.settled", { turnId: "turn-1", outcome: "completed" }, 7),
+    event("delivery.settled", { deliveryId: "initial", outcome: "handled" }, 8),
+  ], { status: "completed", reply: "The tool failed safely." });
+  const task = await setup.service.createTask("Inspect the fixture.");
+  await waitFor(async () => (await setup.service.state()).tasks[0]?.status === "completed");
+  const events = (await setup.service.state()).tasks[0]!.events;
+  const text = events.join("\n");
+  assert.match(text, /control_app failed\. STALE_TARGET: changed target/);
+  assert.match(text, /token=\[REDACTED\]/);
+  assert.match(text, /inspect_app failed\. AX_UNAVAILABLE/);
+  assert.doesNotMatch(text, /fixture-secret|PRIVATE STACK|PRIVATE OUTPUT/);
+  assert.ok(events.every((item) => item.length <= 2_000));
+  const persisted = JSON.parse(await readFile(path.join(setup.dataDirectory, "tasks.json"), "utf8"));
+  assert.deepEqual(persisted.tasks.find((item: TaskRecord) => item.id === task.id).events, events);
 });
 
 test("active sessions from a previous process are marked interrupted, not cancelled", async (t) => {

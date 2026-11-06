@@ -1,133 +1,623 @@
 import AVFoundation
+import JarvisAudioSafety
 import Speech
 import SwiftUI
 
 @MainActor
-final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
-    @Published var isListening = false
-    @Published var isSpeaking = false
-    @Published var isRequestingPermission = false
+final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling {
+    @Published private(set) var isListening = false
+    @Published private(set) var isSpeaking = false
+    @Published private(set) var isRequestingPermission = false
     @Published var transcript = ""
-    @Published var error: String?
-    private let engine = AVAudioEngine()
-    private let synthesizer = AVSpeechSynthesizer()
-    private var recognizer: SFSpeechRecognizer?
-    private var request: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
-    private var hasTap = false
-    private var generation = 0
-    private var timeout: Task<Void, Never>?
+    @Published private(set) var error: String?
+    @Published private(set) var wakeWordEnabled = false
+    @Published private(set) var wakeStatus = "Wake listening is off"
+    @Published private(set) var isCapturingCommand = false
+    @Published private(set) var cloudConsentGranted = false
+    @Published private(set) var handsFreeEnabled = false
+    @Published private(set) var handsFreeStatus = "Hands-free is off"
+    @Published private(set) var state: HarnessVoiceState = .idle
 
-    override init() {
+    var capturedContext: HarnessVoiceContext? { turn.mode == .idle ? nil : turn.context }
+
+    var onCommand: ((String) -> Void)?
+    var onUtterance: ((HarnessVoiceUtterance) -> Void)?
+    var onAudioLevels: ((HarnessAudioLevels) -> Void)?
+    var onStateChange: ((HarnessVoiceState) -> Void)?
+    var contextProvider: (() -> HarnessVoiceContext)?
+
+    private let engine = AVAudioEngine()
+    private let playbackEngine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private let audioInputAvailable: () -> Bool
+    private let audioOutputAvailable: () -> Bool
+    private let transport: any VoiceSocketTransporting
+    private let microphonePermission: (() async -> Bool)?
+    private let duplex: any VoiceDuplexAudioServing
+    private let now: () -> TimeInterval
+    private var usingDuplex = false
+    private var handsFreeTurn = VoiceHandsFreeTurn()
+    private var pendingDuplexPCM = Data()
+    private var lastDuplexSpeechAt: TimeInterval?
+    private var duplexAnswerWindow = false
+    private var duplexFinishing = false
+    private var turn = VoiceTurnState()
+    private var wakeGate = WakeSessionGate()
+    private var wakeRetry = WakeRetryPolicy()
+    private var wakeTask: SFSpeechRecognitionTask?
+    private var wakeRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var wakeRecognizer: SFSpeechRecognizer?
+    private var monitor: Task<Void, Never>?
+    private var wakeRestart: Task<Void, Never>?
+    private var microphoneAuthorization: Task<Bool, Never>?
+    private var speechAuthorization: Task<Bool, Never>?
+    private var input: VoiceInputMailbox?
+    private var meter = VoiceOutputMeter()
+    private var hasInputTap = false
+    private var hasOutputTap = false
+    private var playbackDrain = VoicePlaybackDrain()
+    private var playbackBytes: Int { playbackDrain.pendingBytes }
+    private var inputSequence = 0
+    private var sentInputBytes = 0
+    private var captureStarted: TimeInterval = 0
+    private var lastPlaybackAt: TimeInterval = 0
+    private var fromWake = false
+    private var observers: [NSObjectProtocol] = []
+
+    init(audioInputAvailable: @escaping () -> Bool = { JarvisHasAudioInput() },
+         audioOutputAvailable: @escaping () -> Bool = { JarvisHasAudioOutput() },
+         transport: (any VoiceSocketTransporting)? = nil,
+         microphonePermission: (() async -> Bool)? = nil,
+         duplex: (any VoiceDuplexAudioServing)? = nil,
+         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.audioInputAvailable = audioInputAvailable
+        self.audioOutputAvailable = audioOutputAvailable
+        self.transport = transport ?? VoiceSocketTransport()
+        self.microphonePermission = microphonePermission
+        self.duplex = duplex ?? VoiceDuplexAudio()
+        self.now = now
         super.init()
-        synthesizer.delegate = self
+        self.transport.onFrame = { [weak self] frame in self?.receive(frame) }
+        self.transport.onFailure = { [weak self] message in self?.fail(message) }
+        for audioEngine in [engine, playbackEngine] {
+            observers.append(NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: audioEngine, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.hasInputTap || self.hasOutputTap else { return }
+                    self.fail("Audio hardware changed. Re-select your devices and explicitly start a new voice turn. Typing still works.")
+                }
+            })
+        }
+    }
+
+    deinit { for observer in observers { NotificationCenter.default.removeObserver(observer) } }
+
+    func setCloudConsent(_ granted: Bool) {
+        cloudConsentGranted = granted
+        if !granted { stopListening() }
+    }
+
+    func setHandsFreeEnabled(_ enabled: Bool) async {
+        guard enabled else { stopListening(); return }
+        guard !Task.isCancelled else { return }
+        cancelActive()
+        wakeGate.mute()
+        wakeWordEnabled = false
+        wakeStatus = "Wake listening is off"
+        guard cloudConsentGranted, audioInputAvailable(), audioOutputAvailable() else { fail(VoiceAcousticError.unavailable.localizedDescription); return }
+        let ticket = turn.begin(.capture, context: .init())
+        guard await authorizeMicrophone(ticket), current(ticket) else { return }
+        do {
+            try duplex.start()
+            duplex.stop()
+            turn.invalidate()
+            handsFreeEnabled = true
+            error = nil
+            handsFreeStatus = "Hands-free enabled · local AEC mic during replies · cloud reply/question answer windows"
+            wakeStatus = "Hands-free idle · microphone off · wake listening is off"
+            changeState(.idle)
+        } catch { fail(VoiceAcousticError.unavailable.localizedDescription) }
     }
 
     func startListening() async {
-        guard !isListening, !isRequestingPermission else { return }
-        stopSpeaking()
-        error = nil
-        generation += 1
-        let current = generation
-        isRequestingPermission = true
-        defer { isRequestingPermission = false }
-        let authorized = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0 == .authorized) }
-        }
-        guard current == generation else { return }
-        guard authorized else {
-            error = "Speech recognition permission is off. Enable Jarvis in System Settings → Privacy & Security → Speech Recognition. Typing still works."
+        let context = contextProvider?() ?? HarnessVoiceContext()
+        await beginCapture(context: context, fromWake: false)
+    }
+
+    private func beginCapture(context: HarnessVoiceContext, fromWake: Bool) async {
+        guard !Task.isCancelled else { return }
+        cancelActive()
+        guard audioInputAvailable() else {
+            fail("No usable microphone was found. Connect an input device in System Settings → Sound, then explicitly enable listening again. Typing still works.")
             return
         }
-        let microphone = await AVCaptureDevice.requestAccess(for: .audio)
-        guard current == generation else { return }
-        guard microphone else {
-            error = "Microphone permission is off. Enable Jarvis in System Settings → Privacy & Security → Microphone."
+        guard cloudConsentGranted else {
+            fail("Voice is off. Explicitly allow this session to send microphone audio and spoken reply text to ElevenLabs. Do not speak passwords or API keys. Typing still works.")
             return
         }
-        guard let recognizer = SFSpeechRecognizer(locale: .current), recognizer.isAvailable,
-              recognizer.supportsOnDeviceRecognition else {
-            error = "On-device speech recognition is unavailable for your current language. No audio was sent to a cloud service. Use text input instead."
-            return
-        }
-        self.recognizer = recognizer
+        self.fromWake = fromWake
+        let ticket = turn.begin(.capture, context: context)
         transcript = ""
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.requiresOnDeviceRecognition = true
-        request.shouldReportPartialResults = true
-        self.request = request
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            error = "No usable microphone was found. Connect a microphone and try again."
-            self.request = nil
+        error = nil
+        changeState(.connecting)
+        wakeStatus = "Connecting · cloud microphone capture not yet active"
+        do {
+            let status = try await transport.status()
+            guard current(ticket) else { if turn.current(ticket), Task.isCancelled { stopListening() }; return }
+            guard status.status != "unavailable" else { fail(status.reason ?? "ElevenLabs is unavailable. Typing still works."); return }
+            guard await authorizeMicrophone(ticket), current(ticket) else { if turn.current(ticket), Task.isCancelled { stopListening() }; return }
+            try transport.connect()
+            var frame = turn.frame("start")
+            frame.context = context
+            frame.cloudConsent = true
+            try transport.send(frame)
+            startMonitor(ticket)
+        } catch { if current(ticket) { fail("The ElevenLabs bridge is unavailable. Start a new turn explicitly. Typing still works.") } }
+    }
+
+    private func authorizeMicrophone(_ ticket: Int) async -> Bool {
+        isRequestingPermission = true
+        defer { if turn.current(ticket) { isRequestingPermission = false } }
+        let allowed: Bool
+        if let microphonePermission { allowed = await microphonePermission() }
+        else if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            if microphoneAuthorization == nil { microphoneAuthorization = Task { await AVCaptureDevice.requestAccess(for: .audio) } }
+            allowed = await microphoneAuthorization!.value
+        } else { allowed = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
+        guard current(ticket) else { return false }
+        microphoneAuthorization = nil
+        guard allowed else {
+            fail("Microphone permission is off. Enable Jarvis in System Settings → Privacy & Security → Microphone. Typing still works.")
+            return false
+        }
+        return true
+    }
+
+    private func startInput(_ ticket: Int) {
+        if usingDuplex {
+            guard current(ticket), cloudConsentGranted, handsFreeEnabled, turn.mode == .capture, !turn.committed, !duplexFinishing, !isListening else { return }
+            isListening = true; isCapturingCommand = true
+            wakeStatus = "Hands-free listening · audio sent to ElevenLabs"
+            changeState(.listening)
             return
         }
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            request.append(buffer)
+        guard current(ticket), cloudConsentGranted, !hasInputTap, !isSpeaking, turn.mode == .capture, !turn.committed else { return }
+        guard audioInputAvailable() else { fail("The microphone became unavailable. Reconnect it and start a new turn. Typing still works."); return }
+        let mailbox = VoiceInputMailbox()
+        let converter = JarvisPCMConverter()
+        input = mailbox
+        let installed = JarvisInstallInputTap(engine) { buffer, _ in
+            mailbox.offer(converter.convert(buffer), at: ProcessInfo.processInfo.systemUptime)
         }
-        hasTap = true
-        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, failure in
-            Task { @MainActor in
-                guard let self, self.generation == current else { return }
-                if let result {
-                    self.transcript = result.bestTranscription.formattedString
-                    if result.isFinal { self.stopListening() }
+        guard installed else { fail("The microphone format is unavailable or changed. Check System Settings → Sound. Typing still works."); return }
+        hasInputTap = true
+        guard JarvisStartAudioEngine(engine) else { fail("Could not safely start the microphone. Typing still works."); return }
+        captureStarted = now()
+        inputSequence = 0
+        sentInputBytes = 0
+        isListening = true
+        isCapturingCommand = true
+        wakeStatus = "Listening · audio sent to ElevenLabs · pauses while Jarvis speaks"
+        changeState(.listening)
+    }
+
+    // Finish is a commit. Stop/mute/interrupt discard partial recognition instead.
+    func finishListening() {
+        guard turn.mode == .capture, isListening, !turn.committed else { return }
+        if usingDuplex {
+            do {
+                if !duplexFinishing {
+                    let signal = try duplex.poll()
+                    guard pendingDuplexPCM.count + signal.pcm.count <= 64_000 else { throw VoiceTransportError.overflow }
+                    pendingDuplexPCM.append(signal.pcm)
+                    duplexFinishing = true
+                    duplex.stop()
+                    isListening = false; isCapturingCommand = false
+                    changeState(.thinking); emitLevels()
                 }
-                if let failure, self.isListening {
-                    self.error = failure.localizedDescription
-                    self.stopListening()
-                }
-            }
+                try finishDuplexWhenDrained()
+            } catch { fail(error.localizedDescription) }
+            return
         }
+        JarvisStopAudioEngine(engine, hasInputTap)
+        hasInputTap = false
+        isListening = false
+        isCapturingCommand = false
         do {
-            engine.prepare()
-            try engine.start()
-            isListening = true
-            timeout = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(55))
-                guard !Task.isCancelled else { return }
-                self?.stopListening()
-            }
-        } catch {
-            self.error = "Could not start the microphone: \(error.localizedDescription)"
-            stopListening()
+            while let input, input.pendingBytes > 0 { try pumpInput() }
+            guard sentInputBytes >= 8_000 else { stopListening(); return }
+            input = nil
+            try turn.commit()
+            try transport.send(turn.frame("commit"))
+            changeState(.thinking)
+            emitLevels()
+        } catch { fail(error.localizedDescription) }
+    }
+
+    private func pumpInput() throws {
+        guard let input else { return }
+        let (data, level, _) = try input.drain()
+        if !data.isEmpty {
+            var frame = turn.frame("audio")
+            frame.sequence = inputSequence
+            frame.pcm = data.base64EncodedString()
+            frame.sampleRate = 16_000
+            try transport.send(frame)
+            inputSequence += 1
+            sentInputBytes += data.count
         }
+        emitLevels(input: isListening ? level : 0)
     }
 
     func stopListening() {
-        generation += 1
-        timeout?.cancel()
-        timeout = nil
-        engine.stop()
-        if hasTap { engine.inputNode.removeTap(onBus: 0); hasTap = false }
-        request?.endAudio()
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        request = nil
-        isListening = false
+        handsFreeEnabled = false
+        handsFreeStatus = "Hands-free is off"
+        wakeGate.mute()
+        wakeWordEnabled = false
+        cancelActive()
+        wakeStatus = "Wake listening is off"
+        changeState(.idle)
     }
 
-    func speak(_ text: String) {
-        guard !isListening, !isRequestingPermission else { return }
-        stopSpeaking()
+    func interrupt() {
+        handsFreeEnabled = false
+        handsFreeStatus = "Hands-free is off"
+        cancelActive()
+        wakeStatus = wakeWordEnabled ? "Wake paused · explicitly rearm or start listening" : "Voice interrupted · microphone off"
+        changeState(.interrupted)
+    }
+
+    func revokeQuestion(_ binding: HarnessQuestionBinding) {
+        guard turn.mode != .idle, turn.context.question == binding else { return }
+        cancelActive()
+        wakeStatus = "Question ended · microphone off"
+        changeState(.idle)
+    }
+
+    func speak(_ text: String) { speak(text, context: contextProvider?() ?? HarnessVoiceContext()) }
+
+    func speak(_ text: String, context: HarnessVoiceContext) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        let utterance = AVSpeechUtterance(string: String(text.prefix(2400)))
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-GB")
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        cancelActive()
+        guard cloudConsentGranted else { fail("ElevenLabs voice is off until you explicitly allow cloud voice for this session. Typing still works."); return }
+        guard audioOutputAvailable() else { fail("No usable audio output was found. Connect speakers or headphones. The reply remains available as text."); return }
+        guard text.utf16.count <= 4_000 else { fail("This reply is too long for one voice turn. Read it as text or speak a shorter selection."); return }
+        let ticket = turn.begin(.playback, context: context)
+        error = nil
+        changeState(.connecting)
+        wakeStatus = "Microphone paused while Jarvis speaks"
+        monitor = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let status = try await self.transport.status()
+                guard self.current(ticket) else { return }
+                guard status.status != "unavailable" else { self.fail(status.reason ?? "ElevenLabs is unavailable. Read the reply as text."); return }
+                if self.handsFreeEnabled {
+                    guard await self.authorizeMicrophone(ticket), self.current(ticket) else { return }
+                    try self.duplex.start()
+                    self.usingDuplex = true
+                    self.handsFreeTurn.begin(context: context, generation: ticket)
+                    self.wakeStatus = "Speaking · local echo-cancelled speech detector active"
+                }
+                try self.transport.connect()
+                var frame = self.turn.frame("speak")
+                frame.context = context
+                frame.text = text
+                frame.final = true
+                try self.transport.send(frame)
+                self.monitor = nil
+                self.startMonitor(ticket)
+            } catch { if self.current(ticket) { self.fail("ElevenLabs speech is unavailable. Read the reply as text; no fallback voice was used.") } }
+        }
+    }
+
+    func stopSpeaking() { interrupt() }
+
+    private func receive(_ frame: HarnessVoiceServerFrame) {
+        guard turn.accepts(frame) else { return }
+        do {
+            guard frame.version == 1 else { throw VoiceTransportError.invalidFrame }
+            switch frame.type {
+            case "state":
+                guard let state = frame.state else { throw VoiceTransportError.invalidFrame }
+                if state == .unavailable { fail(frame.detail ?? "ElevenLabs is unavailable. Typing still works.") }
+                else if state == .listening { startInput(turn.generation) }
+                // Provider idle does not mean the native playback queue has drained.
+            case "transcript":
+                let utterance = try turn.transcript(frame)
+                transcript = frame.text ?? ""
+                if let utterance {
+                    let legacyWake = fromWake
+                    completeTurn()
+                    if !utterance.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if let onUtterance { onUtterance(utterance) }
+                        else if legacyWake && utterance.context.question == nil { onCommand?(utterance.text) }
+                    }
+                }
+            case "audio":
+                if let data = try turn.audio(frame) { try play(data, ticket: turn.generation) }
+            case "audio_end":
+                try turn.endAudio()
+                playbackDrain.end()
+                if playbackDrain.finished { completeTurn() }
+            case "error": fail(frame.message ?? "ElevenLabs voice failed. No fallback was used. Typing still works.")
+            default: throw VoiceTransportError.invalidFrame
+            }
+        } catch { fail(error.localizedDescription) }
+    }
+
+    private func play(_ data: Data, ticket: Int) throws {
+        guard !isListening, !hasInputTap, audioOutputAvailable() else { throw VoiceTransportError.disconnected }
+        try playbackDrain.scheduled(data.count)
+        if usingDuplex {
+            try duplex.play(data) { [weak self] in self?.played(data.count, ticket: ticket) }
+            lastPlaybackAt = now()
+            isSpeaking = true
+            changeState(.speaking)
+            return
+        }
+        if !hasOutputTap {
+            let meter = VoiceOutputMeter()
+            self.meter = meter
+            guard JarvisConfigurePlayback(playbackEngine, player, { buffer, _ in
+                if let samples = buffer.floatChannelData?[0] {
+                    meter.observe(UnsafeBufferPointer(start: samples, count: Int(buffer.frameLength) * buffer.stride), stride: buffer.stride, at: ProcessInfo.processInfo.systemUptime)
+                }
+            }) else { throw VoiceTransportError.disconnected }
+            hasOutputTap = true
+            guard JarvisStartAudioEngine(playbackEngine) else { throw VoiceTransportError.disconnected }
+        }
+        guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24_000, channels: 1, interleaved: false),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(data.count / 2)),
+              let samples = buffer.floatChannelData?[0] else { throw VoiceTransportError.invalidFrame }
+        buffer.frameLength = buffer.frameCapacity
+        data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            for i in 0..<Int(buffer.frameLength) {
+                samples[i] = Float(Int16(bitPattern: UInt16(bytes[i * 2]) | UInt16(bytes[i * 2 + 1]) << 8)) / 32768
+            }
+        }
+        lastPlaybackAt = now()
+        guard JarvisSchedulePlayback(player, buffer, { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.played(data.count, ticket: ticket)
+            }
+        }) else { throw VoiceTransportError.disconnected }
         isSpeaking = true
-        synthesizer.speak(utterance)
+        changeState(.speaking)
     }
 
-    func stopSpeaking() {
-        synthesizer.stopSpeaking(at: .immediate)
-        isSpeaking = false
+    private func played(_ bytes: Int, ticket: Int) {
+        guard turn.current(ticket), turn.mode == .playback else { return }
+        do {
+            try playbackDrain.played(bytes)
+            lastPlaybackAt = now()
+            if playbackDrain.finished { completeTurn() }
+        } catch { fail(error.localizedDescription) }
     }
 
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeaking = self.synthesizer.isSpeaking }
+    private func beginDuplexCapture(context: HarnessVoiceContext, preRoll: Data, answerWindow: Bool) throws {
+        guard usingDuplex, handsFreeEnabled, cloudConsentGranted else { throw VoiceAcousticError.unavailable }
+        duplex.interruptPlayback()
+        transport.disconnect()
+        monitor?.cancel()
+        let ticket = turn.begin(.capture, context: context)
+        handsFreeTurn.cancel()
+        playbackDrain = VoicePlaybackDrain()
+        pendingDuplexPCM = preRoll
+        inputSequence = 0; sentInputBytes = 0
+        isSpeaking = false; isListening = false; isCapturingCommand = false
+        transcript = ""
+        fromWake = false
+        duplexAnswerWindow = answerWindow
+        duplexFinishing = false
+        captureStarted = now()
+        lastDuplexSpeechAt = answerWindow ? nil : captureStarted
+        changeState(.connecting)
+        wakeStatus = answerWindow ? "Opening an eight-second answer window for the captured reply/question context" : "Interrupted · preserving your speech while Scribe connects"
+        try transport.connect()
+        var frame = turn.frame("start"); frame.context = context; frame.cloudConsent = true
+        try transport.send(frame)
+        startMonitor(ticket)
     }
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeaking = self.synthesizer.isSpeaking }
+
+    private func pumpDuplexPCM() throws {
+        guard isListening || duplexFinishing, !pendingDuplexPCM.isEmpty else { return }
+        let data = Data(pendingDuplexPCM.prefix(3_200))
+        var frame = turn.frame("audio")
+        frame.sequence = inputSequence; frame.pcm = data.base64EncodedString(); frame.sampleRate = 16_000
+        try transport.send(frame)
+        pendingDuplexPCM.removeFirst(data.count)
+        inputSequence += 1; sentInputBytes += data.count
+    }
+
+    private func finishDuplexWhenDrained() throws {
+        try pumpDuplexPCM()
+        guard pendingDuplexPCM.isEmpty else { return }
+        guard sentInputBytes >= 8_000, lastDuplexSpeechAt != nil else { completeTurn(); return }
+        usingDuplex = false; duplexFinishing = false
+        isListening = false; isCapturingCommand = false
+        try turn.commit(); try transport.send(turn.frame("commit"))
+        changeState(.thinking); emitLevels()
+    }
+
+    private func monitorDuplex(_ ticket: Int, now: TimeInterval) throws {
+        if duplexFinishing { try finishDuplexWhenDrained(); return }
+        let signal = try duplex.poll()
+        emitLevels(input: signal.inputRMS, playback: signal.playbackRMS)
+        if turn.mode == .playback {
+            handsFreeTurn.observe(signal.pcm, echo: signal.echo)
+            if let (context, preRoll) = handsFreeTurn.interrupt(generation: ticket, speech: signal.speech && !signal.echo) {
+                try beginDuplexCapture(context: context, preRoll: preRoll, answerWindow: false)
+            }
+        } else if turn.mode == .capture, !turn.committed {
+            guard pendingDuplexPCM.count + signal.pcm.count <= 64_000 else { throw VoiceTransportError.overflow }
+            pendingDuplexPCM.append(signal.pcm)
+            if signal.speech && !signal.echo { lastDuplexSpeechAt = now }
+            try pumpDuplexPCM()
+            if duplexAnswerWindow, lastDuplexSpeechAt == nil, now - captureStarted > 8 { completeTurn(); return }
+            if now - captureStarted > 45 || lastDuplexSpeechAt.map({ now - $0 > 1.2 }) == true { finishListening() }
+        }
+    }
+
+    private func startMonitor(_ ticket: Int) {
+        let began = now()
+        monitor = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
+                guard let self, self.current(ticket) else { return }
+                let now = self.now()
+                if now - began > 90 || self.state == .connecting && now - began > 10 {
+                    self.fail("Voice timed out. Start a new turn explicitly. Nothing was replayed."); return
+                }
+                do {
+                    if self.usingDuplex {
+                        try self.monitorDuplex(ticket, now: now)
+                        guard self.current(ticket) else { return }
+                    }
+                    if !self.usingDuplex, self.isListening, self.turn.mode == .capture {
+                        guard self.audioInputAvailable() else { throw VoiceTransportError.disconnected }
+                        try self.pumpInput()
+                        if let input = self.input {
+                            let lastVoice = input.voiceActivity
+                            if now - self.captureStarted > 45 || (lastVoice != nil && now - lastVoice! > 1.2) || (lastVoice == nil && now - self.captureStarted > 8) { self.finishListening() }
+                        }
+                    }
+                    if self.isSpeaking {
+                        guard self.audioOutputAvailable(), self.playbackBytes == 0 || now - self.lastPlaybackAt < 3 else { throw VoiceTransportError.disconnected }
+                        if !self.usingDuplex { self.emitLevels(playback: self.meter.read(at: now)) }
+                    }
+                } catch { self.fail(error.localizedDescription); return }
+            }
+        }
+    }
+
+    private func completeTurn() {
+        if usingDuplex, handsFreeEnabled, cloudConsentGranted, turn.mode == .playback,
+           let context = handsFreeTurn.answer(generation: turn.generation, drain: playbackDrain) {
+            do { try beginDuplexCapture(context: context, preRoll: Data(), answerWindow: true) }
+            catch { fail(error.localizedDescription) }
+            return
+        }
+        cancelActive()
+        changeState(.idle)
+        if wakeWordEnabled { scheduleWake(after: 0.6) }
+        else { wakeStatus = "Voice idle · microphone off" }
+    }
+
+    private func cancelActive() {
+        turn.invalidate()
+        wakeGate.begin(.idle)
+        monitor?.cancel(); monitor = nil
+        wakeRestart?.cancel(); wakeRestart = nil
+        transport.disconnect()
+        duplex.stop(); usingDuplex = false
+        handsFreeTurn.cancel(); pendingDuplexPCM.removeAll(); lastDuplexSpeechAt = nil; duplexAnswerWindow = false; duplexFinishing = false
+        JarvisStopAudioEngine(engine, hasInputTap)
+        JarvisStopPlayback(playbackEngine, player, hasOutputTap)
+        hasInputTap = false; hasOutputTap = false
+        wakeRequest?.endAudio(); wakeRequest = nil
+        wakeTask?.cancel(); wakeTask = nil; wakeRecognizer = nil
+        input = nil; playbackDrain = VoicePlaybackDrain()
+        isListening = false; isSpeaking = false; isCapturingCommand = false; isRequestingPermission = false
+        emitLevels()
+    }
+
+    private func current(_ ticket: Int) -> Bool { turn.current(ticket) && !Task.isCancelled }
+    private func changeState(_ state: HarnessVoiceState) { self.state = state; onStateChange?(state) }
+    private func emitLevels(input: Double = 0, playback: Double = 0) {
+        onAudioLevels?(.init(inputRMS: input, playbackRMS: playback, generation: turn.generation))
+    }
+    private func fail(_ message: String) {
+        stopListening()
+        error = String(message.prefix(2_000))
+        wakeStatus = "Unavailable · \(error!)"
+        changeState(.unavailable)
+    }
+
+    func setWakeWordEnabled(_ enabled: Bool) async {
+        guard enabled else { stopListening(); return }
+        guard !Task.isCancelled, !wakeWordEnabled else { return }
+        cancelActive()
+        guard audioInputAvailable() else { fail("No usable microphone was found. Connect an input device and explicitly enable wake listening again. Typing still works."); return }
+        guard cloudConsentGranted else { fail("Allow ElevenLabs cloud voice before arming wake. The wake phrase stays on-device; only the subsequent active command is uploaded. Typing still works."); return }
+        wakeWordEnabled = true
+        wakeGate.enableWake()
+        wakeRetry.reset()
+        await beginWake()
+    }
+
+    private func beginWake() async {
+        guard wakeWordEnabled, !isSpeaking, turn.mode == .idle, !Task.isCancelled else { return }
+        let ticket = wakeGate.begin(.wake)
+        isRequestingPermission = true
+        let speechAllowed: Bool
+        if SFSpeechRecognizer.authorizationStatus() == .notDetermined {
+            if speechAuthorization == nil {
+                speechAuthorization = Task { await withCheckedContinuation { continuation in SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0 == .authorized) } } }
+            }
+            speechAllowed = await speechAuthorization!.value
+        } else { speechAllowed = SFSpeechRecognizer.authorizationStatus() == .authorized }
+        guard wakeGate.accepts(ticket), wakeWordEnabled, !Task.isCancelled else { return }
+        speechAuthorization = nil
+        guard speechAllowed else { fail("On-device wake recognition permission is off. Enable Speech Recognition or use push-to-talk. Typing still works."); return }
+        let microphoneAllowed: Bool
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            if microphoneAuthorization == nil { microphoneAuthorization = Task { await AVCaptureDevice.requestAccess(for: .audio) } }
+            microphoneAllowed = await microphoneAuthorization!.value
+        } else { microphoneAllowed = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
+        guard wakeGate.accepts(ticket), wakeWordEnabled, !Task.isCancelled else { return }
+        microphoneAuthorization = nil
+        isRequestingPermission = false
+        guard microphoneAllowed else { fail("Microphone permission is off. Enable it in System Settings → Privacy & Security. Typing still works."); return }
+        guard audioInputAvailable(), let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")), recognizer.isAvailable, recognizer.supportsOnDeviceRecognition else {
+            fail("On-device English wake recognition or microphone is unavailable. Use explicit push-to-talk; no cloud wake fallback is used."); return
+        }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.requiresOnDeviceRecognition = true
+        request.shouldReportPartialResults = true
+        request.taskHint = .unspecified
+        wakeRequest = request
+        wakeRecognizer = recognizer
+        guard JarvisInstallInputTap(engine, { buffer, _ in request.append(buffer) }) else { fail("Wake microphone format is unavailable. Typing still works."); return }
+        hasInputTap = true
+        wakeTask = recognizer.recognitionTask(with: request) { [weak self] result, failure in
+            let woke = result.map { WakePhrase.command(in: $0.bestTranscription.formattedString) != nil } ?? false
+            let final = result?.isFinal ?? false
+            let failed = failure != nil
+            Task { @MainActor [weak self] in
+                guard let self, self.wakeGate.accepts(ticket), self.wakeWordEnabled else { return }
+                if woke {
+                    let context = self.contextProvider?() ?? HarnessVoiceContext()
+                    self.wakeRetry.reset()
+                    // Discard Apple's transcript. The command starts only after Scribe is ready.
+                    await self.beginCapture(context: context, fromWake: true)
+                } else if final || failed {
+                    guard let delay = self.wakeRetry.nextDelay() else { self.fail("On-device wake stopped after repeated failures. Explicitly rearm it or use text."); return }
+                    self.scheduleWake(after: delay)
+                }
+            }
+        }
+        guard JarvisStartAudioEngine(engine) else { fail("Could not safely start on-device wake listening. Typing still works."); return }
+        error = nil
+        wakeStatus = "Armed · on-device wake only · say Hey Jarvis, then wait for Listening"
+        changeState(.idle)
+        monitor = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(40)) } catch { return }
+            guard let self, self.wakeGate.accepts(ticket), self.wakeWordEnabled else { return }
+            self.wakeRetry.reset()
+            self.scheduleWake(after: 0.1)
+        }
+    }
+
+    private func scheduleWake(after delay: TimeInterval) {
+        cancelActive()
+        guard wakeWordEnabled else { return }
+        let ticket = wakeGate.generation
+        wakeStatus = "Rearming on-device wake · cloud microphone off"
+        wakeRestart = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self, self.wakeGate.canRestart(ticket), !Task.isCancelled else { return }
+            await self.beginWake()
+        }
     }
 }

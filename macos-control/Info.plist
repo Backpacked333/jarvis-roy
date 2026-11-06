@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleName</key><string>JarvisControl</string>
+    <key>CFBundleDisplayName</key><string>Jarvis Control</string>
+    <key>CFBundleIdentifier</key><string>ai.backpacked.jarvisroy.control</string>
+    <key>CFBundleExecutable</key><string>JarvisControl</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>LSUIElement</key><true/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>After your explicit Jarvis approval, read text on the main screen using on-device OCR. Approved text can be sent to your cloud model; no screenshot is saved.</string>
+</dict></plist>

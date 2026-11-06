@@ -1,0 +1,705 @@
+{
+  "state": {
+    "version": 1,
+    "sequence": 5,
+    "ready": true,
+    "defaultPolicy": {
+      "revision": 1,
+      "maxConcurrentWorkers": 2,
+      "maxNodes": 8,
+      "maxDependenciesPerNode": 4,
+      "runBudget": {
+        "maxSteps": 12, "maxModelCalls": 6, "maxTokens": 12000,
+        "maxOutputTokensPerCall": 1024, "maxWallTimeMs": 180000, "estimatedUsdLimit": null
+      },
+      "authoringBudget": {
+        "maxSteps": 4, "maxModelCalls": 2, "maxTokens": 4000,
+        "maxOutputTokensPerCall": 1024, "maxWallTimeMs": 60000, "estimatedUsdLimit": null
+      },
+      "sandbox": {
+        "backend": "docker", "image": null, "network": "none", "cpus": 1,
+        "memoryMiB": 256, "pidsLimit": 64, "workspaceMiB": 64,
+        "maxArtifactBytes": 1048576, "maxArtifactFiles": 16, "maxLogBytes": 16384
+      },
+      "hostActions": "approval_only", "attention": "normal"
+    },
+    "worker": {
+      "available": false,
+      "reason": "Fixture has no configured Docker image."
+    },
+    "rooms": [
+      {
+        "version": 1,
+        "id": "room_fixture",
+        "title": "Offline website exercise",
+        "description": "Protocol fixture only; not evidence of worker execution.",
+        "status": "active",
+        "revision": 1,
+        "policy": {
+          "revision": 1,
+          "maxConcurrentWorkers": 2,
+          "maxNodes": 8,
+          "maxDependenciesPerNode": 4,
+          "runBudget": {
+            "maxSteps": 12,
+            "maxModelCalls": 6,
+            "maxTokens": 12000,
+            "maxOutputTokensPerCall": 1024,
+            "maxWallTimeMs": 180000,
+            "estimatedUsdLimit": null
+          },
+          "authoringBudget": {
+            "maxSteps": 4,
+            "maxModelCalls": 2,
+            "maxTokens": 4000,
+            "maxOutputTokensPerCall": 1024,
+            "maxWallTimeMs": 60000,
+            "estimatedUsdLimit": null
+          },
+          "sandbox": {
+            "backend": "docker",
+            "image": null,
+            "network": "none",
+            "cpus": 1,
+            "memoryMiB": 256,
+            "pidsLimit": 64,
+            "workspaceMiB": 64,
+            "maxArtifactBytes": 1048576,
+            "maxArtifactFiles": 16,
+            "maxLogBytes": 16384
+          },
+          "hostActions": "approval_only",
+          "attention": "normal"
+        },
+        "createdAt": "2026-11-06T17:00:00.000Z",
+        "updatedAt": "2026-11-06T17:00:00.000Z"
+      }
+    ],
+    "plans": [
+      {
+        "version": 1,
+        "id": "plan_fixture",
+        "roomId": "room_fixture",
+        "revision": 1,
+        "policyRevision": 1,
+        "status": "accepted",
+        "digest": "7503f55e4dc30250eb9ef4a078ba15f971b40cb66027aae7c0b87789fb1acfbf",
+        "goal": "Build and verify a small offline website.",
+        "nodes": [
+          {
+            "id": "copy",
+            "title": "Draft copy",
+            "role": "researcher",
+            "instructions": "Draft offline copy from the supplied goal. Do not browse the network.",
+            "dependencies": [],
+            "inputFrom": [],
+            "outputPaths": [
+              "copy.txt"
+            ],
+            "limits": {
+              "maxSteps": 4,
+              "maxModelCalls": 2,
+              "maxTokens": 4000,
+              "maxOutputTokensPerCall": 1024,
+              "maxWallTimeMs": 60000,
+              "estimatedUsdLimit": null
+            }
+          },
+          {
+            "id": "build",
+            "title": "Build page",
+            "role": "builder",
+            "instructions": "Ask for the desired theme, then build an offline HTML page.",
+            "dependencies": [],
+            "inputFrom": [],
+            "outputPaths": [
+              "index.html"
+            ],
+            "limits": {
+              "maxSteps": 4,
+              "maxModelCalls": 2,
+              "maxTokens": 4000,
+              "maxOutputTokensPerCall": 1024,
+              "maxWallTimeMs": 60000,
+              "estimatedUsdLimit": null
+            }
+          },
+          {
+            "id": "verify",
+            "title": "Verify output",
+            "role": "tester",
+            "instructions": "Read exact upstream artifact revisions and write verification evidence.",
+            "dependencies": [
+              "copy",
+              "build"
+            ],
+            "inputFrom": [
+              "copy",
+              "build"
+            ],
+            "outputPaths": [
+              "verification.txt"
+            ],
+            "limits": {
+              "maxSteps": 4,
+              "maxModelCalls": 2,
+              "maxTokens": 4000,
+              "maxOutputTokensPerCall": 1024,
+              "maxWallTimeMs": 60000,
+              "estimatedUsdLimit": null
+            }
+          }
+        ],
+        "createdAt": "2026-11-06T17:00:00.000Z",
+        "acceptedAt": "2026-11-06T17:00:00.000Z"
+      }
+    ],
+    "authorings": [],
+    "runs": [
+      {
+        "version": 1,
+        "id": "run_fixture",
+        "roomId": "room_fixture",
+        "planId": "plan_fixture",
+        "planRevision": 1,
+        "planDigest": "7503f55e4dc30250eb9ef4a078ba15f971b40cb66027aae7c0b87789fb1acfbf",
+        "policy": {
+          "revision": 1,
+          "maxConcurrentWorkers": 2,
+          "maxNodes": 8,
+          "maxDependenciesPerNode": 4,
+          "runBudget": {
+            "maxSteps": 12,
+            "maxModelCalls": 6,
+            "maxTokens": 12000,
+            "maxOutputTokensPerCall": 1024,
+            "maxWallTimeMs": 180000,
+            "estimatedUsdLimit": null
+          },
+          "authoringBudget": {
+            "maxSteps": 4,
+            "maxModelCalls": 2,
+            "maxTokens": 4000,
+            "maxOutputTokensPerCall": 1024,
+            "maxWallTimeMs": 60000,
+            "estimatedUsdLimit": null
+          },
+          "sandbox": {
+            "backend": "docker",
+            "image": null,
+            "network": "none",
+            "cpus": 1,
+            "memoryMiB": 256,
+            "pidsLimit": 64,
+            "workspaceMiB": 64,
+            "maxArtifactBytes": 1048576,
+            "maxArtifactFiles": 16,
+            "maxLogBytes": 16384
+          },
+          "hostActions": "approval_only",
+          "attention": "normal"
+        },
+        "revision": 3,
+        "status": "waiting_question",
+        "nodes": [
+          {
+            "nodeId": "copy",
+            "status": "completed",
+            "attemptId": "attempt_copy_1",
+            "attemptNumber": 1,
+            "startedAt": "2026-11-06T17:00:00.000Z",
+            "finishedAt": "2026-11-06T17:00:00.000Z",
+            "operation": null,
+            "artifactIds": [
+              "artifact_copy"
+            ],
+            "usage": {
+              "steps": 0,
+              "modelCalls": 0,
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "reservedTokens": 0,
+              "accounting": "measured",
+              "estimatedUsd": null
+            },
+            "error": null
+          },
+          {
+            "nodeId": "build",
+            "status": "waiting_question",
+            "attemptId": "attempt_build_1",
+            "attemptNumber": 1,
+            "startedAt": "2026-11-06T17:00:00.000Z",
+            "finishedAt": null,
+            "operation": null,
+            "artifactIds": [],
+            "usage": {
+              "steps": 0,
+              "modelCalls": 0,
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "reservedTokens": 0,
+              "accounting": "measured",
+              "estimatedUsd": null
+            },
+            "error": null
+          },
+          {
+            "nodeId": "verify",
+            "status": "queued",
+            "attemptId": null,
+            "attemptNumber": 0,
+            "startedAt": null,
+            "finishedAt": null,
+            "operation": null,
+            "artifactIds": [],
+            "usage": {
+              "steps": 0,
+              "modelCalls": 0,
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "reservedTokens": 0,
+              "accounting": "measured",
+              "estimatedUsd": null
+            },
+            "error": null
+          }
+        ],
+        "usage": {
+          "steps": 0,
+          "modelCalls": 0,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "reservedTokens": 0,
+          "accounting": "measured",
+          "estimatedUsd": null
+        },
+        "createdAt": "2026-11-06T17:00:00.000Z",
+        "updatedAt": "2026-11-06T17:00:00.000Z",
+        "cancelConfirmed": false
+      }
+    ],
+    "questions": [
+      {
+        "kind": "question",
+        "id": "question_fixture",
+        "revision": 1,
+        "target": {
+          "scope": "node",
+          "roomId": "room_fixture",
+          "runId": "run_fixture",
+          "nodeId": "build",
+          "attemptId": "attempt_build_1"
+        },
+        "question": {
+          "prompt": "Which theme should the page use?",
+          "choices": [
+            {
+              "id": "dark",
+              "label": "Dark"
+            },
+            {
+              "id": "light",
+              "label": "Light"
+            }
+          ],
+          "allowText": false
+        },
+        "status": "pending",
+        "createdAt": "2026-11-06T17:00:00.000Z",
+        "expiresAt": "2026-11-07T17:00:00.000Z",
+        "answer": null
+      }
+    ],
+    "approvals": [
+      {
+        "kind": "approval",
+        "id": "approval_fixture",
+        "roomId": "room_fixture",
+        "runId": null,
+        "nodeId": null,
+        "taskId": "task_fixture",
+        "interactionId": "eve_interaction_fixture",
+        "revision": 1,
+        "title": "Review host operation",
+        "detail": "Synthetic approval-card fixture. No operation is authorized.",
+        "status": "pending",
+        "reviewable": false,
+        "blockedReason": "Fixture only",
+        "options": [
+          {
+            "id": "deny",
+            "label": "Deny"
+          }
+        ]
+      }
+    ],
+    "artifacts": [
+      {
+        "version": 1,
+        "id": "artifact_copy",
+        "roomId": "room_fixture",
+        "runId": "run_fixture",
+        "nodeId": "copy",
+        "attemptId": "attempt_copy_1",
+        "planDigest": "7503f55e4dc30250eb9ef4a078ba15f971b40cb66027aae7c0b87789fb1acfbf",
+        "createdAt": "2026-11-06T17:00:00.000Z",
+        "files": [
+          {
+            "path": "copy.txt",
+            "sha256": "875b79cc5e094596707c16ba7484438d08134a19ed159a717392b86303d1fc0d",
+            "bytes": 22,
+            "mediaType": "text/plain"
+          }
+        ],
+        "inputDigests": [],
+        "verification": "unverified",
+        "verificationSummary": "Contract fixture; not runtime evidence.",
+        "digest": "c45b5afa754e79aa07eff9397498c57d6b93eaef5a96d122d874d7e40e361fc5"
+      }
+    ]
+  },
+  "draft": {
+    "version": 1,
+    "id": "plan_fixture",
+    "roomId": "room_fixture",
+    "revision": 1,
+    "policyRevision": 1,
+    "status": "draft",
+    "digest": null,
+    "goal": "Build and verify a small offline website.",
+    "nodes": [
+      {
+        "id": "copy",
+        "title": "Draft copy",
+        "role": "researcher",
+        "instructions": "Draft offline copy from the supplied goal. Do not browse the network.",
+        "dependencies": [],
+        "inputFrom": [],
+        "outputPaths": [
+          "copy.txt"
+        ],
+        "limits": {
+          "maxSteps": 4,
+          "maxModelCalls": 2,
+          "maxTokens": 4000,
+          "maxOutputTokensPerCall": 1024,
+          "maxWallTimeMs": 60000,
+          "estimatedUsdLimit": null
+        }
+      },
+      {
+        "id": "build",
+        "title": "Build page",
+        "role": "builder",
+        "instructions": "Ask for the desired theme, then build an offline HTML page.",
+        "dependencies": [],
+        "inputFrom": [],
+        "outputPaths": [
+          "index.html"
+        ],
+        "limits": {
+          "maxSteps": 4,
+          "maxModelCalls": 2,
+          "maxTokens": 4000,
+          "maxOutputTokensPerCall": 1024,
+          "maxWallTimeMs": 60000,
+          "estimatedUsdLimit": null
+        }
+      },
+      {
+        "id": "verify",
+        "title": "Verify output",
+        "role": "tester",
+        "instructions": "Read exact upstream artifact revisions and write verification evidence.",
+        "dependencies": [
+          "copy",
+          "build"
+        ],
+        "inputFrom": [
+          "copy",
+          "build"
+        ],
+        "outputPaths": [
+          "verification.txt"
+        ],
+        "limits": {
+          "maxSteps": 4,
+          "maxModelCalls": 2,
+          "maxTokens": 4000,
+          "maxOutputTokensPerCall": 1024,
+          "maxWallTimeMs": 60000,
+          "estimatedUsdLimit": null
+        }
+      }
+    ],
+    "createdAt": "2026-11-06T17:00:00.000Z",
+    "acceptedAt": null
+  },
+  "authoringQuestion": {
+    "kind": "question",
+    "id": "question_authoring",
+    "revision": 1,
+    "target": {
+      "scope": "authoring",
+      "roomId": "room_fixture",
+      "authoringId": "authoring_fixture"
+    },
+    "question": {
+      "prompt": "What should the room build?",
+      "choices": [],
+      "allowText": true
+    },
+    "status": "pending",
+    "createdAt": "2026-11-06T17:00:00.000Z",
+    "expiresAt": "2026-11-07T17:00:00.000Z",
+    "answer": null
+  },
+  "answer": {
+    "binding": {
+      "questionId": "question_fixture",
+      "revision": 1,
+      "target": {
+        "scope": "node",
+        "roomId": "room_fixture",
+        "runId": "run_fixture",
+        "nodeId": "build",
+        "attemptId": "attempt_build_1"
+      }
+    },
+    "source": "voice",
+    "text": null,
+    "choiceId": "dark"
+  },
+  "checkpoint": {
+    "version": 1,
+    "ref": {
+      "roomId": "room_fixture",
+      "runId": "run_fixture",
+      "nodeId": "build",
+      "attemptId": "attempt_build_1"
+    },
+    "sequence": 1,
+    "createdAt": "2026-11-06T17:00:00.000Z",
+    "resumeMode": "continue_after_answer",
+    "continuation": {
+      "version": 1,
+      "summary": "Awaiting theme before writing the page.",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Which theme should the page use?"
+        }
+      ],
+      "completedStepIds": [],
+      "usage": {
+        "steps": 0,
+        "modelCalls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "reservedTokens": 0,
+        "accounting": "measured",
+        "estimatedUsd": null
+      }
+    },
+    "artifacts": [],
+    "question": {
+      "prompt": "Which theme should the page use?",
+      "choices": [
+        {
+          "id": "dark",
+          "label": "Dark"
+        },
+        {
+          "id": "light",
+          "label": "Light"
+        }
+      ],
+      "allowText": false
+    }
+  },
+  "events": {
+    "version": 1,
+    "events": [
+      {
+        "version": 1,
+        "sequence": 5,
+        "at": "2026-11-06T17:00:00.000Z",
+        "roomId": "room_fixture",
+        "runId": "run_fixture",
+        "entityId": "question_fixture",
+        "revision": 1,
+        "type": "question.updated"
+      }
+    ],
+    "nextSequence": 5,
+    "resetRequired": false
+  },
+  "voiceClientFrames": [
+    {
+      "version": 1,
+      "sessionId": "voice_fixture",
+      "generation": 3,
+      "type": "start",
+      "context": {
+        "roomId": "room_fixture",
+        "conversationId": null,
+        "question": {
+          "questionId": "question_fixture",
+          "revision": 1,
+          "target": {
+            "scope": "node",
+            "roomId": "room_fixture",
+            "runId": "run_fixture",
+            "nodeId": "build",
+            "attemptId": "attempt_build_1"
+          }
+        }
+      },
+      "cloudConsent": true
+    },
+    {
+      "version": 1,
+      "sessionId": "voice_fixture",
+      "generation": 3,
+      "type": "audio",
+      "sequence": 0,
+      "pcm": "AAAAAA==",
+      "sampleRate": 16000
+    },
+    {
+      "version": 1,
+      "sessionId": "voice_fixture",
+      "generation": 3,
+      "type": "commit"
+    },
+    {
+      "version": 1,
+      "sessionId": "voice_fixture",
+      "generation": 3,
+      "type": "speak",
+      "context": {
+        "roomId": "room_fixture",
+        "conversationId": null,
+        "question": {
+          "questionId": "question_fixture",
+          "revision": 1,
+          "target": {
+            "scope": "node",
+            "roomId": "room_fixture",
+            "runId": "run_fixture",
+            "nodeId": "build",
+            "attemptId": "attempt_build_1"
+          }
+        }
+      },
+      "text": "Which theme should the page use?",
+      "final": true
+    },
+    {
+      "version": 1,
+      "sessionId": "voice_fixture",
+      "generation": 4,
+      "type": "interrupt"
+    },
+    {
+      "version": 1,
+      "sessionId": "voice_fixture",
+      "generation": 5,
+      "type": "stop"
+    }
+  ],
+  "voiceServerFrames": [
+    {
+      "version": 1,
+      "sessionId": "voice_fixture",
+      "generation": 3,
+      "type": "state",
+      "state": "listening",
+      "detail": null
+    },
+    {
+      "version": 1,
+      "sessionId": "voice_fixture",
+      "generation": 3,
+      "type": "transcript",
+      "text": "Dark",
+      "final": true,
+      "context": {
+        "roomId": "room_fixture",
+        "conversationId": null,
+        "question": {
+          "questionId": "question_fixture",
+          "revision": 1,
+          "target": {
+            "scope": "node",
+            "roomId": "room_fixture",
+            "runId": "run_fixture",
+            "nodeId": "build",
+            "attemptId": "attempt_build_1"
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "sessionId": "voice_fixture",
+      "generation": 3,
+      "type": "audio",
+      "sequence": 0,
+      "pcm": "AAAAAA==",
+      "sampleRate": 24000
+    },
+    {
+      "version": 1,
+      "sessionId": "voice_fixture",
+      "generation": 3,
+      "type": "audio_end"
+    },
+    {
+      "version": 1,
+      "sessionId": "voice_fixture",
+      "generation": 3,
+      "type": "error",
+      "code": "unavailable",
+      "message": "Fixture has no provider credentials.",
+      "retryable": false
+    }
+  ],
+  "providerExamples": {
+    "ttdInitialize": {
+      "voices": [
+        "fixture-voice"
+      ]
+    },
+    "ttdText": {
+      "inputs": [
+        {
+          "text": "Which theme should the page use?",
+          "voice_id": "fixture-voice",
+          "new_turn": true
+        }
+      ],
+      "flush": true
+    },
+    "ttdAudio": {
+      "audio": "AAAAAA==",
+      "alignment": null,
+      "normalized_alignment": null
+    },
+    "ttdEnd": {
+      "is_final_audio_for_turn": true
+    },
+    "ttdClosed": {
+      "is_final": true
+    },
+    "sttPartial": {
+      "message_type": "partial_transcript",
+      "text": "Dar"
+    },
+    "sttCommitted": {
+      "message_type": "committed_transcript",
+      "text": "Dark"
+    }
+  }
+}
