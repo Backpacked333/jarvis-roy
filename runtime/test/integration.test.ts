@@ -17,6 +17,14 @@ test("exact review keeps long escaped command arguments complete", () => {
   assert.equal(review.detail, `Tool: run_terminal\nExact arguments (JSON): ${JSON.stringify(input)}`);
 });
 
+test("control approvals disclose target activation without changing exact arguments", () => {
+  const input = { action: "click", bundleId: "com.example.Fixture", observationId: "fixture", elementId: "root/0" };
+  const review = reviewArguments("control_app", input);
+  assert.equal(review.reviewable, true);
+  assert.match(review.detail, /activates the named app/);
+  assert.ok(review.detail.endsWith(`Exact arguments (JSON): ${JSON.stringify(input)}`));
+});
+
 test("missing, redacted and oversized approval arguments are deny-only on the server", async (t) => {
   for (const input of [undefined, null, "unparsed", { password: "fixture-private-value" }, { text: "x".repeat(MAX_APPROVAL_CHARACTERS) }]) {
     const directory = await mkdtemp(path.join(tmpdir(), "jarvis-integration-"));

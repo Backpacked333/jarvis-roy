@@ -4,9 +4,10 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { z } from "zod";
 import { setTimeout as delay } from "node:timers/promises";
 import {
-  controlApp, controlInputSchema, desktopStatus, inspectApp, isDesktopEnabled, isTerminalEnabled,
+  controlApp, controlInputSchema, controlToolSchema, desktopStatus, inspectApp, isDesktopEnabled, isTerminalEnabled,
   readScreen, runTerminal, terminalInputSchema, type DesktopOptions,
 } from "../agent/lib/desktop.ts";
 import { redactDesktopText, sanitizedEnvironment } from "../agent/lib/desktop-process.ts";
@@ -68,6 +69,38 @@ test("all four tools require always approval, remain unavailable in subagents, a
   }
   assert.equal(controlInputSchema.safeParse({ action: "focus", bundleId, helper: "/bin/echo" }).success, false);
   assert.equal(controlInputSchema.safeParse({ action: "click", bundleId, path: [0] }).success, false);
+});
+
+test("desktop tools expose object-root model schemas without top-level unions", () => {
+  assert.equal(controlTool.inputSchema, controlToolSchema);
+  for (const tool of [controlTool, inspectTool, screenTool, terminalTool]) {
+    const json = z.toJSONSchema(tool.inputSchema as z.ZodType);
+    assert.equal(json.type, "object");
+    assert.equal("oneOf" in json, false);
+    assert.equal("anyOf" in json, false);
+  }
+});
+
+test("the model-facing control schema preserves exact per-action validation", () => {
+  const observed = { bundleId, observationId: "e1d9b622-4a2a-4f4d-9444-fb0df45dc4c7", elementId: "root/0" };
+  const valid = [
+    { action: "focus", bundleId },
+    { action: "click", ...observed },
+    { action: "set_text", ...observed, text: "Exact fixture text" },
+    { action: "press_key", ...observed, stroke: "tab", modifiers: [] },
+  ];
+  for (const input of valid) assert.deepEqual(controlToolSchema.parse(input), controlInputSchema.parse(input));
+  for (const input of [
+    { action: "click", bundleId }, { action: "set_text", ...observed },
+    { action: "press_key", ...observed, stroke: "tab" },
+    { action: "press_key", ...observed, stroke: "unknown", modifiers: [] },
+    { action: "focus", ...observed }, { ...valid[1], text: "unrelated" },
+    { ...valid[2], stroke: "return" }, { ...valid[3], script: "unrelated" },
+    { ...valid[2], text: "password=not-reviewable" },
+  ]) {
+    assert.equal(controlInputSchema.safeParse(input).success, false);
+    assert.equal(controlToolSchema.safeParse(input).success, false);
+  }
 });
 
 test("terminal forwards the exact approved argument array and cwd without shell expansion", async () => {

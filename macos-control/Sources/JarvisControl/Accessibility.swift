@@ -152,15 +152,30 @@ func resolve(_ root: AXUIElement, path: [Int], deadline: Deadline) throws -> AXU
 }
 
 @MainActor
-func verifyIdentity(_ app: NSRunningApplication, _ request: Request) throws {
+func verifyIdentity(_ app: NSRunningApplication, _ request: Request, requireFrontmost: Bool = true) throws {
     guard !app.isTerminated, app.bundleIdentifier == request.bundleId,
           app.processIdentifier == request.expectedProcessId,
           app.launchDate?.timeIntervalSince1970 == request.expectedLaunchTimestamp else {
         throw ControlFailure("STALE_APP", "The application restarted or changed identity. Inspect again.")
     }
-    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
+    guard !requireFrontmost || NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
         throw ControlFailure("APP_NOT_FRONTMOST", "Focus the explicit app, then inspect it again before controlling an element. Jarvis will not send keys to a different app.")
     }
+}
+
+@MainActor
+func activateApprovedApplication(_ app: NSRunningApplication, deadline: Deadline) async throws {
+    if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier { return }
+    guard app.activate(options: [.activateAllWindows]) else {
+        throw ControlFailure("FOCUS_FAILED", "The approved application did not accept activation. No element action was performed.")
+    }
+    for _ in 0..<20 {
+        try deadline.check()
+        guard !app.isTerminated else { throw ControlFailure("APP_CHANGED", "The approved application exited during activation. Inspect again.") }
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier { return }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+    throw ControlFailure("FOCUS_FAILED", "The approved application did not become frontmost. No element action was performed.")
 }
 
 @MainActor
@@ -175,16 +190,8 @@ func controlApplication(_ request: Request, deadline: Deadline) async throws -> 
         let app = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
         try deadline.check()
         guard app.bundleIdentifier == bundleId, !app.isTerminated else { throw ControlFailure("APP_CHANGED", "The launched app did not match the requested bundleId.") }
-        guard app.activate(options: [.activateAllWindows]) else { throw ControlFailure("FOCUS_FAILED", "The app did not accept activation. Focus it manually and inspect again.") }
-        // Activation is asynchronous; verify it rather than reporting a requested focus as complete.
-        for _ in 0..<20 {
-            if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier {
-                return ["kind": "control", "action": "focus", "bundleId": bundleId]
-            }
-            try await Task.sleep(nanoseconds: 50_000_000)
-            try deadline.check()
-        }
-        throw ControlFailure("FOCUS_FAILED", "The app did not become frontmost. Focus it manually and inspect again.")
+        try await activateApprovedApplication(app, deadline: deadline)
+        return ["kind": "control", "action": "focus", "bundleId": bundleId]
     }
     guard let action = request.action, ["click", "set_text", "press_key"].contains(action),
           let path = request.path, path.count <= 8, path.allSatisfy({ $0 >= 0 && $0 < 100 }),
@@ -192,10 +199,12 @@ func controlApplication(_ request: Request, deadline: Deadline) async throws -> 
         throw ControlFailure("INVALID_TARGET", "An observation-bound element path, process identity and tree digest are required.")
     }
     let app = try runningApplication(bundleId: bundleId)
+    try verifyIdentity(app, request, requireFrontmost: false)
+    try await activateApprovedApplication(app, deadline: deadline)
     try verifyIdentity(app, request)
     let inspection = try inspectApplication(app, deadline: deadline)
     guard inspection.digest == expectedDigest, let node = inspection.nodes.first(where: { $0.path == path }), !node.secure else {
-        throw ControlFailure("STALE_TARGET", "The accessible tree/target changed or is secure. Inspect again; no action was performed.")
+        throw ControlFailure("STALE_TARGET", "The accessible tree/target changed or is secure. The approved app may have been activated, but no element action was performed. Inspect again.")
     }
     let root = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetMessagingTimeout(root, 0.5)

@@ -44,6 +44,20 @@ export const controlInputSchema = z.discriminatedUnion("action", [
     modifiers: z.array(z.enum(["command", "shift", "option", "control"])).max(4),
   }).strict(),
 ]);
+export const controlToolSchema = z.object({
+  action: z.enum(["focus", "click", "set_text", "press_key"]),
+  bundleId: bundleIdSchema,
+  observationId: observedTarget.observationId.optional(),
+  elementId: observedTarget.elementId.optional(),
+  text: controlInputSchema.options[2].shape.text.optional(),
+  stroke: controlInputSchema.options[3].shape.stroke.optional(),
+  modifiers: controlInputSchema.options[3].shape.modifiers.optional(),
+}).strict().superRefine((input, context) => {
+  const result = controlInputSchema.safeParse(input);
+  if (!result.success) {
+    for (const issue of result.error.issues) context.addIssue({ code: "custom", path: issue.path, message: issue.message });
+  }
+});
 type ControlInput = z.infer<typeof controlInputSchema>;
 const elementSchema = z.object({
   elementId: z.string().max(128), path: z.array(z.number().int().min(0).max(99)).max(8),

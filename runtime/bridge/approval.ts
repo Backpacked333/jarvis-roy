@@ -13,7 +13,8 @@ export function reviewArguments(name: string | undefined, input: unknown) {
       : raw.length + name.length > MAX_APPROVAL_CHARACTERS
         ? "Exact arguments exceed the review display limit. Deny this request and request a smaller action."
         : undefined;
+  const activation = name === "control_app" ? "\nThis action activates the named app before attempting the approved control interaction." : "";
   return reason
     ? { reviewable: false, blockedReason: reason, detail: reason }
-    : { reviewable: true, detail: `Tool: ${name}\nExact arguments (JSON): ${raw}` };
+    : { reviewable: true, detail: `Tool: ${name}${activation}\nExact arguments (JSON): ${raw}` };
 }
