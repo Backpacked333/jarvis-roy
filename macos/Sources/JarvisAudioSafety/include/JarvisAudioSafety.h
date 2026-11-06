@@ -11,5 +11,6 @@ BOOL JarvisSchedulePlayback(AVAudioPlayerNode * _Nonnull player, AVAudioPCMBuffe
 void JarvisStopPlayback(AVAudioEngine * _Nonnull engine, AVAudioPlayerNode * _Nonnull player, BOOL removeTap);
 
 @interface JarvisPCMConverter : NSObject
+@property(nonatomic, readonly) NSInteger failureCode;
 - (NSData * _Nullable)convertBuffer:(AVAudioPCMBuffer * _Nonnull)buffer NS_RETURNS_RETAINED NS_SWIFT_NAME(convert(_:));
 @end

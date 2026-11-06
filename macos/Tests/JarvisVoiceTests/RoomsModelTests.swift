@@ -67,20 +67,20 @@ final class RoomsModelTests: XCTestCase {
         XCTAssertFalse(model.isRefreshing)
     }
 
-    func testEventDedupeAndCompactionRefreshAuthoritativeState() async throws {
+    func testProjectedApprovalsRefreshWithoutKernelEventsAndCompactionResetsCursor() async throws {
         let (model, service) = try make()
         await model.refresh()
         service.batch.nextSequence = service.snapshot.sequence
         service.batch.events = []
         await model.pollOnce()
-        XCTAssertEqual(service.stateCalls, 1)
+        XCTAssertEqual(service.stateCalls, 2)
         service.snapshot.sequence += 1
         service.batch.nextSequence = service.snapshot.sequence
         service.batch.events = []
         await model.pollOnce()
-        XCTAssertEqual(service.stateCalls, 2)
+        XCTAssertEqual(service.stateCalls, 3)
         await model.pollOnce()
-        XCTAssertEqual(service.stateCalls, 2)
+        XCTAssertEqual(service.stateCalls, 4)
         service.batch.resetRequired = true
         service.snapshot.sequence = 1
         await model.pollOnce()

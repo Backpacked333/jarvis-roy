@@ -104,7 +104,8 @@ final class VoiceTransportTests: XCTestCase {
         let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_800))
         buffer.frameLength = 4_800
         for channel in 0..<2 { for index in 0..<4_800 { buffer.floatChannelData![channel][index] = 0.1 } }
-        let pcm = try XCTUnwrap(converter.convert(buffer))
+        let converted = converter.convert(buffer)
+        let pcm = try XCTUnwrap(converted, "PCM conversion failed with code \(converter.failureCode)")
         XCTAssertGreaterThan(pcm.count, 0)
         XCTAssertLessThanOrEqual(pcm.count, 3_264)
         XCTAssertEqual(pcm.count % 2, 0)

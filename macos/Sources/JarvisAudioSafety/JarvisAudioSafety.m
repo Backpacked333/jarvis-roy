@@ -126,23 +126,30 @@ void JarvisStopPlayback(AVAudioEngine *engine, AVAudioPlayerNode *player, BOOL r
 @implementation JarvisPCMConverter {
     AVAudioConverter *_converter;
     AVAudioFormat *_source;
+    NSInteger _failureCode;
 }
+- (NSInteger)failureCode { return _failureCode; }
 - (NSData *)convertBuffer:(AVAudioPCMBuffer *)buffer {
     @autoreleasepool {
         @try {
             AVAudioFormat *format = buffer.format;
+            _failureCode = 1;
             if (format.sampleRate < 8000 || format.sampleRate > 192000 || format.channelCount < 1 || format.channelCount > 8 || buffer.frameLength == 0 || buffer.frameLength > 8192) return nil;
+            _failureCode = 2;
             if (_source && ![_source isEqual:format]) return nil;
             if (!_converter) {
+                _failureCode = 3;
                 AVAudioFormat *target = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatInt16 sampleRate:16000 channels:1 interleaved:YES];
 #if !__has_feature(objc_arc)
                 [target autorelease];
 #endif
                 _converter = [[AVAudioConverter alloc] initFromFormat:format toFormat:target];
+                _failureCode = 4;
                 _converter.downmix = YES;
                 _source = [format copy];
             }
             if (!_converter) return nil;
+            _failureCode = 5;
             AVAudioFrameCount capacity = (AVAudioFrameCount)ceil(buffer.frameLength * 16000.0 / format.sampleRate) + 32;
             if (capacity > 16384) return nil;
             AVAudioPCMBuffer *output = [[AVAudioPCMBuffer alloc] initWithPCMFormat:_converter.outputFormat frameCapacity:capacity];
@@ -151,13 +158,17 @@ void JarvisStopPlayback(AVAudioEngine *engine, AVAudioPlayerNode *player, BOOL r
 #endif
             __block BOOL supplied = NO;
             NSError *error = nil;
+            _failureCode = 6;
             AVAudioConverterOutputStatus status = [_converter convertToBuffer:output error:&error withInputFromBlock:^AVAudioBuffer *(AVAudioPacketCount packets, AVAudioConverterInputStatus *inputStatus) {
                 if (supplied) { *inputStatus = AVAudioConverterInputStatus_NoDataNow; return nil; }
                 supplied = YES;
                 *inputStatus = AVAudioConverterInputStatus_HaveData;
                 return buffer;
             }];
-            if (error || status == AVAudioConverterOutputStatus_Error || !output.int16ChannelData) return nil;
+            if (error || status == AVAudioConverterOutputStatus_Error) { _failureCode = error ? error.code : 7; return nil; }
+            _failureCode = 8;
+            if (!output.int16ChannelData) return nil;
+            _failureCode = 0;
             return [[NSData alloc] initWithBytes:output.int16ChannelData[0] length:output.frameLength * sizeof(int16_t)];
         } @catch (NSException *exception) { return nil; }
     }

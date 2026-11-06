@@ -118,7 +118,7 @@ final class AppModel: ObservableObject {
     var canSend: Bool { sendBlockReason == nil && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draft.count <= 8000 }
 
     func selectConversation(_ id: String) {
-        guard conversations.contains(where: { $0.id == id }), id != selectedConversationID else { return }
+        guard conversations.contains(where: { $0.id == id }), id != selectedConversationID || tab != .workspace else { return }
         if voiceOwner != nil {
             voice.stopListening()
             voiceNotice = "Microphone muted on thread switch. Captured text remains in its original thread for review; enable listening again here when ready."

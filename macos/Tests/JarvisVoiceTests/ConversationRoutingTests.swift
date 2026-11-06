@@ -97,6 +97,8 @@ final class ConversationRoutingTests: XCTestCase {
         runtime.tasks = [runtime.pending("a", status: "interrupted")]
         let model = AppModel(client: runtime)
         await model.refresh()
+        model.selectConversation("a")
+        XCTAssertEqual(model.tab, .workspace)
         XCTAssertTrue(model.prepareVoiceCapture())
         model.receiveVoiceCommand("First retained command")
         model.receiveVoiceCommand("Second retained command")
@@ -118,6 +120,7 @@ final class ConversationRoutingTests: XCTestCase {
         let runtime = FixtureRuntime()
         let model = AppModel(client: runtime)
         await model.refresh()
+        model.selectConversation("a")
         XCTAssertTrue(model.prepareVoiceCapture())
         model.receiveVoiceCommand("A command for Alpha")
         model.selectConversation("b")
@@ -133,6 +136,7 @@ final class ConversationRoutingTests: XCTestCase {
         let runtime = FixtureRuntime()
         let model = AppModel(client: runtime)
         await model.refresh()
+        model.selectConversation("a")
         XCTAssertTrue(model.prepareVoiceCapture())
         model.receiveVoiceCommand("Ready command")
         for _ in 0..<20 { await Task.yield() }
@@ -148,6 +152,7 @@ final class ConversationRoutingTests: XCTestCase {
         let runtime = FixtureRuntime()
         let model = AppModel(client: runtime)
         await model.refresh()
+        model.selectConversation("a")
         model.draft = "Typed text"
         XCTAssertTrue(model.prepareVoiceCapture())
         model.receiveVoiceCommand("Voice text")
