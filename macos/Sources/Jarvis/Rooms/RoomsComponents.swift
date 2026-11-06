@@ -97,25 +97,33 @@ struct RoomsSignalCore: View {
     let levels: HarnessAudioLevels
     let history: [Double]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var amplitude: Double { max(levels.inputRMS, levels.playbackRMS) }
+    @Environment(\.scenePhase) private var scenePhase
+    private var amplitude: Double { scenePhase == .active ? max(levels.inputRMS, levels.playbackRMS) : 0 }
+    private var motionAmplitude: Double { reduceMotion ? 0 : amplitude }
+    private var tint: Color { state == .unavailable || state == .interrupted ? RoomsPalette.muted : RoomsPalette.cyan }
 
     var body: some View {
         VStack(spacing: 16) {
             ZStack {
-                Circle().fill(RadialGradient(colors: [RoomsPalette.cyan.opacity(0.13), .clear], center: .center, startRadius: 16, endRadius: 98))
+                Circle().fill(RadialGradient(colors: [tint.opacity(0.15 + amplitude * 0.15), .clear], center: .center, startRadius: 16, endRadius: 98))
                 Circle().stroke(RoomsPalette.line, lineWidth: 1).padding(6)
                 Circle().trim(from: 0.04, to: 0.39).stroke(RoomsPalette.cyan.opacity(0.45), style: StrokeStyle(lineWidth: 1, lineCap: .round)).padding(6)
                 Circle().trim(from: 0.54, to: 0.89).stroke(RoomsPalette.cyan.opacity(0.45), style: StrokeStyle(lineWidth: 1, lineCap: .round)).padding(6)
-                Circle().stroke(RoomsPalette.cyan.opacity(0.13 + amplitude * 0.6), lineWidth: 1).padding(25 - amplitude * 10)
-                Circle().stroke(RoomsPalette.cyan.opacity(0.28), lineWidth: 1).padding(43)
-                Circle().fill(RoomsPalette.cyan.opacity(0.08 + amplitude * 0.2)).padding(47 - amplitude * 14)
+                Circle().stroke(tint.opacity(0.13 + amplitude * 0.6), lineWidth: 1).padding(25 - motionAmplitude * 10)
+                Circle().fill(RadialGradient(colors: [tint.opacity(0.45 + amplitude * 0.35), RoomsPalette.panel, RoomsPalette.background], center: .topLeading, startRadius: 0, endRadius: 128))
+                    .padding(43 - motionAmplitude * 7)
+                    .overlay(Circle().stroke(tint.opacity(0.32), lineWidth: 0.7).padding(43 - motionAmplitude * 7))
+                Ellipse().stroke(tint.opacity(0.3 + amplitude * 0.4), lineWidth: 0.8)
+                    .frame(width: 94 + motionAmplitude * 22, height: 29 + (reduceMotion || scenePhase != .active ? 0 : levels.inputRMS * 24)).rotationEffect(.degrees(-28))
+                Ellipse().stroke(Color.white.opacity(0.10 + amplitude * 0.25), lineWidth: 0.7)
+                    .frame(width: 90 + motionAmplitude * 18, height: 23 + (reduceMotion || scenePhase != .active ? 0 : levels.playbackRMS * 30)).rotationEffect(.degrees(34))
                 Image(systemName: state == .unavailable ? "mic.slash" : "waveform")
-                    .font(.system(size: 29, weight: .ultraLight)).foregroundStyle(RoomsPalette.cyan)
+                    .font(.system(size: 22, weight: .ultraLight)).foregroundStyle(tint.opacity(0.85))
             }.frame(width: 182, height: 182)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.09), value: amplitude)
+                .animation(reduceMotion || scenePhase != .active ? nil : .easeOut(duration: 0.09), value: amplitude)
                 .accessibilityHidden(true)
             Canvas { context, size in
-                let samples = history.isEmpty ? [0.0] : history
+                let samples = history.isEmpty || scenePhase != .active ? [0.0] : reduceMotion ? [history.last ?? 0] : history
                 let width = size.width / CGFloat(max(48, samples.count))
                 for (index, value) in samples.enumerated() {
                     let height = max(1, CGFloat(value) * size.height)
@@ -123,10 +131,24 @@ struct RoomsSignalCore: View {
                     context.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(RoomsPalette.cyan.opacity(0.65)))
                 }
             }.frame(width: 190, height: 26).accessibilityHidden(true)
+            HStack(spacing: 16) {
+                level("MIC", value: levels.inputRMS)
+                level("PLAYBACK", value: levels.playbackRMS)
+            }.accessibilityHidden(true)
             Text(state.rawValue.uppercased()).font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(3).foregroundStyle(RoomsPalette.muted)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Premium voice: \(state.rawValue). Input level \(Int(levels.inputRMS * 100)), playback level \(Int(levels.playbackRMS * 100)).")
+    }
+
+    private func level(_ label: String, value: Double) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 7, weight: .medium, design: .monospaced)).tracking(1).foregroundStyle(RoomsPalette.muted)
+            ZStack(alignment: .leading) {
+                Capsule().fill(RoomsPalette.line)
+                Capsule().fill(tint).frame(width: 70 * (scenePhase == .active ? value : 0))
+            }.frame(width: 70, height: 2)
+        }
     }
 }
 
@@ -136,7 +158,7 @@ struct RoomsDependencyGraph: View {
     var body: some View {
         if let layers = try? RoomsStateRules.layers(nodes) {
             ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: 16) {
+                HStack(alignment: .top, spacing: 48) {
                     ForEach(Array(layers.enumerated()), id: \.offset) { index, layer in
                         VStack(alignment: .leading, spacing: 10) {
                             Text(index == 0 ? "INDEPENDENT" : "STAGE \(index + 1)")
@@ -155,21 +177,61 @@ struct RoomsDependencyGraph: View {
                                     }
                                 }.padding(13).frame(width: 170, alignment: .leading)
                                     .background(RoomsPalette.elevated, in: RoundedRectangle(cornerRadius: 11))
-                                    .overlay(RoundedRectangle(cornerRadius: 11).stroke(RoomsPalette.line, lineWidth: 1))
+                                    .overlay(RoundedRectangle(cornerRadius: 11).stroke(RoomsPalette.status(states.first(where: { $0.nodeId == node.id })?.status ?? "planned").opacity(0.25), lineWidth: 1))
+                                    .anchorPreference(key: RoomsGraphAnchors.self, value: .bounds) { [node.id: $0] }
                                     .accessibilityElement(children: .combine)
                             }
                         }
-                        if index < layers.count - 1 {
-                            Image(systemName: "arrow.right").foregroundStyle(RoomsPalette.cyan.opacity(0.5)).padding(.top, 66).accessibilityHidden(true)
-                        }
                     }
+                }
+                .backgroundPreferenceValue(RoomsGraphAnchors.self) { anchors in
+                    GeometryReader { geometry in
+                        Canvas { context, _ in
+                            for edge in RoomsGraphEdge.edges(nodes) {
+                                guard let startAnchor = anchors[edge.source], let endAnchor = anchors[edge.destination] else { continue }
+                                let start = geometry[startAnchor], end = geometry[endAnchor]
+                                var path = Path()
+                                path.move(to: CGPoint(x: start.maxX, y: start.midY))
+                                path.addCurve(to: CGPoint(x: end.minX, y: end.midY), control1: CGPoint(x: start.maxX + 24, y: start.midY), control2: CGPoint(x: end.minX - 24, y: end.midY))
+                                context.stroke(path, with: .color(RoomsPalette.cyan.opacity(edge.artifact ? 0.55 : 0.25)), style: StrokeStyle(lineWidth: 1, dash: edge.artifact ? [] : [3, 4]))
+                            }
+                        }
+                    }.allowsHitTesting(false).accessibilityHidden(true)
                 }.padding(.bottom, 5)
             }.accessibilityLabel("Dependency graph. Nodes in each stage can run independently after their dependencies succeed.")
+            Text("Solid connection: immutable artifact input · dashed: dependency only")
+                .font(.system(size: 9)).foregroundStyle(RoomsPalette.muted)
         } else {
             Label("Invalid dependency graph. Execution must remain blocked.", systemImage: "exclamationmark.triangle").foregroundStyle(RoomsPalette.red)
         }
     }
     private func icon(_ role: String) -> String {
         switch role { case "builder": return "hammer"; case "researcher": return "magnifyingglass"; case "tester": return "checkmark.seal"; default: return "eye" }
+    }
+}
+
+private struct RoomsGraphAnchors: PreferenceKey {
+    static var defaultValue: [String: Anchor<CGRect>] { [:] }
+    static func reduce(value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+    }
+}
+
+struct RoomsWorkerCensus: View {
+    let nodes: [HarnessNodeState]
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 20) { counts }
+            VStack(alignment: .leading, spacing: 10) { counts }
+        }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoomsPalette.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+    }
+    private var counts: some View {
+        ForEach(["running", "queued", "waiting_question", "blocked", "completed", "failed"], id: \.self) { status in
+            VStack(alignment: .leading, spacing: 5) {
+                Text("\(nodes.filter { $0.status == status }.count)").font(.system(size: 21, weight: .light, design: .monospaced))
+                Text(status.replacingOccurrences(of: "_", with: " ").uppercased()).font(.system(size: 7, weight: .medium)).tracking(0.5)
+            }.foregroundStyle(RoomsPalette.status(status)).accessibilityElement(children: .combine)
+        }
     }
 }

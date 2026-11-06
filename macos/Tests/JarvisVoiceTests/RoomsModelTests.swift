@@ -206,6 +206,7 @@ final class RoomsModelTests: XCTestCase {
         let (model, service) = try make()
         let fixture = try RoomsFixture.load()
         service.snapshot.questions.append(fixture.authoringQuestion)
+        service.snapshot.authorings[0].status = "waiting_question"
         await model.refresh()
         model.updateVoiceState(.idle)
         XCTAssertNil(model.nextSpokenQuestion())

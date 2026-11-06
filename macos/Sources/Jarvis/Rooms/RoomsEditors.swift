@@ -1,5 +1,36 @@
 import SwiftUI
 
+struct RoomsPlanReuseView: View {
+    @ObservedObject var model: RoomsModel
+    let plan: HarnessPlan
+    @State private var goal: String
+    @Environment(\.dismiss) private var dismiss
+
+    init(model: RoomsModel, plan: HarnessPlan) {
+        self.model = model; self.plan = plan; _goal = State(initialValue: plan.goal)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Draft a variation").font(.title2)
+            Text("Reuse this goal in its original room. Jarvis authors a new draft under the current policy; the old plan stays immutable. Review, accept and Start are still separate steps.")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("Source: \(plan.id) · revision \(plan.revision)").font(.caption.monospaced()).textSelection(.enabled)
+            TextField("Goal for the new draft", text: $goal, axis: .vertical).lineLimit(5...12).textFieldStyle(.roundedBorder)
+            if let error = model.error { Text(error).font(.caption).foregroundStyle(.red) }
+            HStack {
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Author new draft") {
+                    let capturedGoal = goal
+                    Task { if await model.authorGoal(capturedGoal, roomId: plan.roomId) { dismiss() } }
+                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .disabled(!model.canMutate || model.pendingActions.contains("author:\(plan.roomId)") || goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }.padding(28).frame(width: 560)
+    }
+}
+
 struct RoomsRoomEditor: View {
     @ObservedObject var model: RoomsModel
     let room: HarnessRoom?

@@ -12,7 +12,10 @@ struct RoomsAttentionView: View {
                 Text("\(model.questions.count + model.approvals.count)").font(.system(size: 13, design: .monospaced)).foregroundStyle(RoomsPalette.amber)
             }
             Toggle("Read new questions aloud", isOn: $model.spokenAttentionEnabled).font(.caption)
-                .help("Opt-in spoken attention, not microphone consent. Quiet rooms stay in this inbox. One exact question at a time.")
+                .help("May read questions aloud while using other apps. This is not microphone consent. Quiet rooms stay in this inbox; one exact question at a time.")
+            Toggle("Pause room alerts", isOn: $model.attentionMuted).font(.caption)
+                .help("Pauses proactive speech and notifications, not workers or microphone capture. The text inbox stays available.")
+            RoomsNotificationSettings(notifications: model.notifications)
             Text("QUESTIONS · INFORMATION ONLY").font(.system(size: 9, weight: .semibold)).tracking(1.3).foregroundStyle(RoomsPalette.amber)
             if model.questions.isEmpty {
                 Text("No pending clarifications. Questions will appear here with their exact room and attempt.")
@@ -91,10 +94,26 @@ private struct RoomsQuestionCard: View {
                     .help("Binds the next capture to this exact question. Microphone consent is separate.")
                 Button { model.focus(question); onSpeak(question) } label: { Image(systemName: "speaker.wave.2") }
                     .accessibilityLabel("Read this question aloud")
-                    .disabled(model.voiceState == .unavailable || model.voiceState == .connecting || !model.canMutate)
+                    .disabled(model.voiceState != .idle || !model.canMutate)
             }.font(.caption)
         }.padding(15).frame(maxWidth: .infinity, alignment: .leading)
             .background(RoomsPalette.amber.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(model.focusedQuestion == question.binding ? RoomsPalette.amber.opacity(0.6) : RoomsPalette.amber.opacity(0.18)))
+    }
+}
+
+private struct RoomsNotificationSettings: View {
+    @ObservedObject var notifications: RoomsNotifications
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Toggle("Private macOS notifications", isOn: Binding(
+                get: { notifications.enabled || notifications.isRequesting },
+                set: { enabled in if enabled { Task { await notifications.enable() } } else { notifications.disable() } }
+            )).font(.caption)
+            if notifications.isRequesting { ProgressView("Waiting for permission…").font(.caption) }
+            Text("Generic notice only. No room names, prompts, operation details or answer buttons appear on the lock screen.")
+                .font(.caption2).foregroundStyle(RoomsPalette.muted)
+            if let error = notifications.error { Text(error).font(.caption2).foregroundStyle(RoomsPalette.amber) }
+        }
     }
 }

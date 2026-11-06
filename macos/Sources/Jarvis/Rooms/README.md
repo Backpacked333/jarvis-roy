@@ -36,7 +36,8 @@ RoomsWorkspaceView(
         // Navigate to the EXISTING card for taskId + interactionId + revision.
         // Do not answer or approve here. Revalidate the original card there.
         showExistingApproval(approval)
-    }
+    },
+    observationOwnership: .application
 )
 ```
 
@@ -46,11 +47,116 @@ SwiftPM discovers the `.swift` sources automatically. Exclude `Rooms/README.md`
 from the executable target's resources, or relocate this document into `docs/`
 during integration, to avoid SwiftPM's unhandled-file warning.
 
-The view polls only while it is mounted and its scene is active: 2 seconds with
-active work, 6 seconds idle, backoff up to 15 seconds disconnected. Do not start a
-second polling timer in AppModel. Parent may explicitly call `refresh()` after
-external approval changes. Events are bounded invalidations; the model never
-reconstructs state from event payloads. Duplicate cursors do not replay speech.
+### One observer across navigation and other apps
+
+The app shell owns the durable model, not the Rooms destination. Start exactly
+one application owner after wiring its callbacks:
+
+```swift
+rooms.startObserving() // default owner: .application; repeated starts are idempotent
+rooms.setApplicationActive(isApplicationActive)
+// Forward subsequent app/scene activation changes to setApplicationActive.
+// At app shutdown:
+rooms.shutdown()
+```
+
+Use `observationOwnership: .application` as above. The view then neither starts
+nor stops observation and never overrides the app's foreground state. Do not
+create another timer. `startObserving(owner:)`/`stopObserving(owner:)` share one
+loop, so even a legacy workspace owner cannot stop an application owner. The
+default `.workspace` view ownership remains usable standalone, but it ends when
+the view disappears. Background polling is 15 seconds; foreground polling is
+2 seconds with active work or 6 seconds idle, with disconnected backoff capped at
+30 seconds. Activation refreshes immediately. Local Mac sleep still stops work
+and delivery; these are not remote or guaranteed real-time notifications.
+
+Parent may explicitly call `refresh()` after external approvals. Events are
+bounded invalidations, not another durable store. Unchanged-event polls still
+expire/revoke attention. Background RMS callbacks do not publish UI history.
+
+### Exact proactive attention callback
+
+Wire these on the main actor before calling `startObserving()`:
+
+```swift
+rooms.onQuestionAttention = { [weak rooms] notice in
+    guard let rooms, rooms.canSpeak(notice) else { return false }
+    // Track this exact binding as the owner of this playback in the app shell.
+    currentQuestionPlayback = notice.binding
+    voice.speak(notice.question.question.prompt, context: notice.context)
+    return true
+}
+rooms.onQuestionAttentionRevoked = { binding in
+    // Never stop unrelated conversation speech or a newer question's playback.
+    if currentQuestionPlayback == binding {
+        currentQuestionPlayback = nil
+        voice.interrupt()
+    }
+}
+rooms.onAttentionNavigation = { target in
+    switch target {
+    case .question:
+        showRoomsAttention() // question is already exactly focused after refresh
+    case .approval(let approval):
+        showExistingApproval(approval) // existing card revalidates before approval
+    }
+}
+```
+
+`currentQuestionPlayback` and the navigation functions are parent-owned hooks.
+Clear/update the playback marker whenever any other speech or capture starts.
+The callback is synchronous: return true only when this exact playback was
+accepted. Returning false leaves it eligible for a later idle poll. Do not queue
+an asynchronous `speak` after returning true. A delayed action must revalidate
+`canSpeak(notice)` and the actual voice state immediately before playback.
+`RoomsQuestionAttention` is a value snapshot containing the exact question,
+binding and context. It never selects a new room or changes the original target.
+
+The model invokes it only after explicit `spokenAttentionEnabled` opt-in, with
+idle voice and no mute, while connected/ready. Quiet/archived rooms, expired or
+cancelled questions, old attempts and cancelled runs cannot announce. Waiting
+questions remain in the text inbox; only one is spoken until resolved or cleared.
+`attentionMuted = true` pauses proactive speech and notifications, not workers
+or microphone capture. Wire a global voice mute/consent revocation to this flag
+as well as stopping the real voice port. Exact revocation callbacks occur on
+mute, opt-out, expiry, cancellation, quiet policy, disconnect and observer stop.
+Rooms never calls a new hands-free setter or implicitly opens an answer window.
+The voice lane owns any separately opted-in answer-window behavior.
+
+With an external callback installed, the view's legacy automatic speech hook is
+disabled to avoid double delivery. Manual read-aloud controls also require idle
+voice; they never interrupt listening/speaking. All received answers still pass
+through exact server-bound validation, and approval cards are never spoken
+authorization requests.
+
+### Private native notifications
+
+The Attention panel exposes **Private macOS notifications**, default off each
+session. `rooms.notifications.enable()` must only be called from an explicit
+user toggle/action. It uses `UNUserNotificationCenter.requestAuthorization` with
+`.alert` only, after inspecting standard system permission. It does not prompt
+on launch, silently re-request denial, add sound/badges, install response actions,
+change TCC, or bypass the OS. The packaged `Jarvis.app` with its bundle identifier
+is required; an unbundled executable reports unavailable. Denial/error leaves
+the full text inbox usable. Permission is rechecked during bounded polling.
+
+Lock-screen content is always **Jarvis needs your attention / Open Jarvis to
+review a pending item.** No room name, goal, prompt, operation, token, target ID
+or answer is included in content/userInfo. An opaque per-session UUID maps to
+the original question binding or full approval snapshot in memory, capped at
+32 outstanding notices. Clicks only refresh and navigate after exact revalidation;
+stale/unknown clicks never retarget. There are no approval/answer buttons.
+Mute/disable/stale state removes owned pending/delivered notices, including late
+async posts; unmute does not replay already announced items. Old session notices
+are removed on first explicit enable, and old clicks are ignored after relaunch.
+
+The default adapter refuses to replace an existing `UNUserNotificationCenter`
+delegate. Applications already using that delegate should inject
+`RoomsNotifications(service:)` with a composed `RoomsNotificationServing`
+adapter. A delegate replacement during a post fails closed.
+No package dependency, entitlement, or Package.swift linker addition is required
+by this module beyond the existing documentation exclusion. Normal bundle/signing
+and notification delivery must still be verified on the parent Mac.
 
 ## Voice wiring and consent
 
@@ -95,8 +201,31 @@ voice control must not imply the room UI has started capturing.
 The model resets its level generation on `.connecting`; the transport must still
 reject old-session callbacks before forwarding levels (the frozen level DTO has
 no session ID). Audio history/rings are driven solely by actual RMS callbacks,
-never a timer or a task-progress value. Reduced motion disables level interpolation.
-Idle rendering has no animation clock.
+never a timer or a task-progress value. Reduced motion fixes orb geometry,
+disables interpolation and replaces the moving history with a current-level bar.
+Background rendering drops level history. Idle rendering has no animation clock.
+
+## Compatible reference ideas and plan reuse
+
+The compatible ideas adopted from the reference brief are a distinct voice core
+versus long-running worker floor, independent microphone/playback meters, visible
+runtime worker census, exact graph connections, proactive but revocable attention,
+and repeatable accepted plans. The visual implementation is original SwiftUI:
+layered radial orb lighting, actual RMS-driven rings/meters, and anchor-based DAG
+connections (solid artifact handoffs, dashed ordering-only dependencies). There
+is no copied React/LiveKit shader, auto-running demo, fabricated spectrum or
+pretend worker percentage. Public visual reference pages could not be fetched in
+this lane; no claim is made to have copied or audited their source.
+
+Accepted plan cards expose **Review & run again** when real prior runs exist.
+The existing exact revision/digest Start API creates a fresh run only after an
+explicit confirmation; policy mismatch remains blocked. **Draft a variation**
+copies only the existing goal into an editable, original-room-bound authoring
+form. It calls the existing author API and still requires separate review,
+acceptance and Start. It does not clone an accepted graph as trusted executable
+state or copy approvals/artifacts. Named persistent cross-room templates,
+parameters, versioning and playbook management need new kernel APIs; this module
+does not fake those capabilities in UserDefaults or a second store.
 
 ## Safety and lifecycle
 
@@ -136,7 +265,10 @@ swift test --package-path macos
 Run the app's ordinary consent/approval flow; never bypass TCC. The native suite
 includes client decoding/URL/null/hash checks and injected-service model tests for
 stale responses, cursor reset/dedupe, captured context, pending confirmation,
-quiet attention, explicit controls and actual audio-level state. The synthetic
+quiet attention, explicit controls and actual audio-level state. Follow-up tests
+cover shared observer owners, background/mute/expiry/cancellation, exact attention
+and notification navigation, denied/revoked permissions and late post cleanup,
+accepted-plan re-runs, real graph edges and bounded polling. The synthetic
 shared fixture exists only in tests; it is never seeded into the UI.
 
 Linux syntax parsing and Foundation-only state tests do **not** verify SwiftUI,

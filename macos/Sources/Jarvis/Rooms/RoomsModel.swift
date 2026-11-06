@@ -18,7 +18,16 @@ final class RoomsModel: ObservableObject {
     @Published private(set) var audioLevels = HarnessAudioLevels(inputRMS: 0, playbackRMS: 0, generation: 0)
     @Published private(set) var audioHistory: [Double] = []
     @Published private(set) var focusedQuestion: HarnessQuestionBinding?
-    @Published var spokenAttentionEnabled = false
+    @Published var spokenAttentionEnabled = false { didSet { reconcileAttention() } }
+    @Published var attentionMuted = false { didSet { reconcileAttention() } }
+    @Published private(set) var isApplicationActive = true
+    @Published private(set) var isObserving = false
+    @Published private(set) var queuedQuestionAttention: [RoomsQuestionAttention] = []
+    @Published private(set) var attentionNavigation: RoomsAttentionTarget?
+    var onQuestionAttention: ((RoomsQuestionAttention) -> Bool)? { didSet { reconcileAttention() } }
+    var onQuestionAttentionRevoked: ((HarnessQuestionBinding) -> Void)?
+    var onAttentionNavigation: ((RoomsAttentionTarget) -> Void)?
+    let notifications: RoomsNotifications
     @Published private(set) var lastVoiceGoal: String?
     @Published private(set) var lastUpdated: Date?
 
@@ -31,13 +40,23 @@ final class RoomsModel: ObservableObject {
     private var utterances: [String] = []
     private var requestIds: [String: String] = [:]
     private var activeSpokenQuestion: HarnessQuestionBinding?
+    private var observationOwners = Set<RoomsObservationOwner>()
+    private var observationTask: Task<Void, Never>?
+    private var observationGeneration = 0
+    private var observationFailures = 0
+    private var reconcilingAttention = false
+    private var attentionSuspended = false
 
     init(client: any HarnessServing, now: @escaping () -> Date = Date.init,
-         selectionStore: UserDefaults? = .standard) {
+         selectionStore: UserDefaults? = .standard, notifications: RoomsNotifications? = nil) {
         self.client = client
         self.now = now
         self.selectionStore = selectionStore
+        self.notifications = notifications ?? RoomsNotifications()
         selectedRoomId = selectionStore?.string(forKey: "jarvis.rooms.selected")
+        self.notifications.onOpen = { [weak self] target in
+            Task { await self?.openAttention(target) }
+        }
     }
 
     var selectedRoom: HarnessRoom? { state?.rooms.first { $0.id == selectedRoomId } }
@@ -46,7 +65,7 @@ final class RoomsModel: ObservableObject {
     var authorings: [HarnessAuthoring] { (state?.authorings ?? []).filter { $0.roomId == selectedRoomId }.sorted { $0.createdAt > $1.createdAt } }
     var artifacts: [HarnessArtifact] { (state?.artifacts ?? []).filter { $0.roomId == selectedRoomId }.sorted { $0.createdAt > $1.createdAt } }
     var questions: [HarnessQuestion] {
-        (state?.questions ?? []).filter { RoomsStateRules.pending($0, now: now()) }
+        (state?.questions ?? []).filter { RoomsStateRules.pending($0, now: now()) && isLiveQuestion($0) }
             .sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }
     }
     var approvals: [HarnessApproval] { (state?.approvals ?? []).filter { $0.kind == "approval" && $0.status == "pending" } }
@@ -59,13 +78,26 @@ final class RoomsModel: ObservableObject {
         HarnessVoiceContext(roomId: focusedQuestion?.target.roomId ?? selectedRoomId, conversationId: nil, question: focusedQuestion)
     }
 
+    private func isLiveQuestion(_ question: HarnessQuestion) -> Bool {
+        switch question.target {
+        case .authoring(let room, let id):
+            return state?.authorings.contains { $0.id == id && $0.roomId == room && $0.status == "waiting_question" } == true
+        case .node(let room, let runID, let nodeID, let attempt):
+            guard let run = state?.runs.first(where: { $0.id == runID && $0.roomId == room }),
+                  !RoomsStateRules.terminal(run.status), run.status != "cancel_requested", run.status != "interrupted" else { return false }
+            return run.nodes.contains { $0.nodeId == nodeID && $0.attemptId == attempt && $0.status == "waiting_question" }
+        }
+    }
+
     func refresh() async { await refresh(reset: false) }
 
     private func refresh(reset: Bool) async {
         refreshGeneration += 1
         let generation = refreshGeneration
         isRefreshing = true
-        defer { if generation == refreshGeneration { isRefreshing = false } }
+        defer {
+            if generation == refreshGeneration { isRefreshing = false; reconcileAttention() }
+        }
         do {
             let snapshot = try await client.state()
             try Task.checkCancellation()
@@ -82,7 +114,6 @@ final class RoomsModel: ObservableObject {
                 selectedRoomId = snapshot.rooms.first(where: { $0.status != "archived" })?.id ?? snapshot.rooms.first?.id
             }
             if let focusedQuestion, !questions.contains(where: { $0.binding == focusedQuestion }) { self.focusedQuestion = nil }
-            if let activeSpokenQuestion, !questions.contains(where: { $0.binding == activeSpokenQuestion }) { self.activeSpokenQuestion = nil }
             let validSpeech = Set(questions.map { speechKey($0.binding) })
             spoken.formIntersection(validSpeech)
         } catch is CancellationError { }
@@ -94,10 +125,12 @@ final class RoomsModel: ObservableObject {
     }
 
     func pollOnce() async {
+        defer { reconcileAttention() }
         guard state != nil else { await refresh(); return }
         do {
             let cursor = eventCursor
             let batch = try await client.events(after: cursor, roomId: nil)
+            try Task.checkCancellation()
             guard batch.version == 1, batch.events.count <= 1_000,
                   batch.events.allSatisfy({ $0.version == 1 && $0.sequence <= batch.nextSequence }) else {
                 throw RoomsError.invalidResponse
@@ -110,16 +143,59 @@ final class RoomsModel: ObservableObject {
         catch { isConnected = false; self.error = error.localizedDescription }
     }
 
-    func observe() async {
-        await refresh()
-        var failures = 0
-        while !Task.isCancelled {
-            failures = isConnected ? 0 : min(failures + 1, 4)
-            let seconds = isConnected ? (hasActiveWork ? 2 : 6) : min(15, 2 << failures)
-            do { try await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000) }
-            catch { return }
-            await pollOnce()
+    var observationInterval: Int {
+        RoomsObservationSchedule.seconds(active: isApplicationActive, connected: isConnected,
+                                         working: hasActiveWork, failures: observationFailures)
+    }
+
+    func startObserving(owner: RoomsObservationOwner = .application) {
+        attentionSuspended = false
+        observationOwners.insert(owner)
+        guard observationTask == nil else { return }
+        observationGeneration += 1
+        let generation = observationGeneration
+        isObserving = true
+        observationTask = Task { [weak self] in
+            await self?.refresh()
+            while !Task.isCancelled {
+                guard let seconds = self?.observationInterval else { return }
+                do { try await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000) }
+                catch { return }
+                guard self?.observationGeneration == generation else { return }
+                await self?.pollOnce()
+                self?.recordObservationResult()
+            }
         }
+    }
+
+    private func recordObservationResult() {
+        observationFailures = isConnected ? 0 : min(4, observationFailures + 1)
+    }
+
+    func stopObserving(owner: RoomsObservationOwner = .application) {
+        observationOwners.remove(owner)
+        guard observationOwners.isEmpty else { return }
+        observationGeneration += 1
+        observationTask?.cancel()
+        observationTask = nil
+        isObserving = false
+        attentionSuspended = true
+        revokeSpokenQuestion()
+        notifications.update([], suppressed: true)
+    }
+
+    func setApplicationActive(_ active: Bool) {
+        guard isApplicationActive != active else { return }
+        isApplicationActive = active
+        if !active { audioLevels.inputRMS = 0; audioLevels.playbackRMS = 0; audioHistory = [] }
+        if active { Task { [weak self] in await self?.refresh() } }
+    }
+
+    func shutdown() {
+        observationOwners.removeAll()
+        stopObserving()
+        spokenAttentionEnabled = false
+        notifications.disable()
     }
 
     func clearError() { error = nil }
@@ -226,7 +302,67 @@ final class RoomsModel: ObservableObject {
         selectedRoomId = question.target.roomId
         focusedQuestion = question.binding
     }
-    func clearQuestionFocus() { focusedQuestion = nil; activeSpokenQuestion = nil }
+    func clearQuestionFocus() { focusedQuestion = nil; revokeSpokenQuestion() }
+    private func revokeSpokenQuestion() {
+        guard let binding = activeSpokenQuestion else { return }
+        activeSpokenQuestion = nil
+        if focusedQuestion == binding { focusedQuestion = nil }
+        onQuestionAttentionRevoked?(binding)
+    }
+
+    func isCurrent(_ attention: RoomsQuestionAttention) -> Bool {
+        canMutate && questions.contains { $0 == attention.question }
+    }
+
+    func canSpeak(_ attention: RoomsQuestionAttention) -> Bool {
+        isCurrent(attention) && spokenAttentionEnabled && !attentionMuted && !attentionSuspended && voiceState == .idle &&
+        state?.rooms.contains(where: { $0.id == attention.binding.target.roomId && $0.policy.attention != "quiet" && $0.status != "archived" }) == true
+    }
+
+    func openAttention(_ target: RoomsAttentionTarget) async {
+        await refresh()
+        guard canMutate, !isRefreshing else { return }
+        switch target {
+        case .question(let binding):
+            guard let question = questions.first(where: { $0.binding == binding }) else {
+                error = "This notification's exact question expired or changed. Nothing was answered or redirected."
+                return
+            }
+            focus(question)
+        case .approval(let approval):
+            guard approvals.contains(approval) else {
+                error = "This notification's exact approval is no longer pending. Nothing was authorized."
+                return
+            }
+        }
+        attentionNavigation = target
+        onAttentionNavigation?(target)
+    }
+
+    func clearAttentionNavigation() { attentionNavigation = nil }
+
+    private func reconcileAttention() {
+        guard !reconcilingAttention else { return }
+        reconcilingAttention = true
+        defer { reconcilingAttention = false }
+        let quiet = Set((state?.rooms ?? []).filter { $0.policy.attention == "quiet" || $0.status == "archived" }.map(\.id))
+        let eligible = questions.filter { !quiet.contains($0.target.roomId) }
+        let queue = Array(eligible.filter { !spoken.contains(speechKey($0.binding)) }.prefix(256)).map { RoomsQuestionAttention(question: $0) }
+        if queuedQuestionAttention != queue { queuedQuestionAttention = queue }
+        if let binding = activeSpokenQuestion,
+           !spokenAttentionEnabled || attentionMuted || !canMutate || !eligible.contains(where: { $0.binding == binding }) {
+            revokeSpokenQuestion()
+        }
+        let targets = eligible.map { RoomsAttentionTarget.question($0.binding) } + approvals
+            .filter { $0.roomId.map { !quiet.contains($0) } ?? true }.map { RoomsAttentionTarget.approval($0) }
+        notifications.update(targets, suppressed: attentionMuted || attentionSuspended || !canMutate)
+        guard let callback = onQuestionAttention, let question = nextSpokenQuestion() else { return }
+        let attention = RoomsQuestionAttention(question: question)
+        if !callback(attention) {
+            spoken.remove(speechKey(attention.binding))
+            revokeSpokenQuestion()
+        }
+    }
     private func speechKey(_ binding: HarnessQuestionBinding) -> String {
         let prefix = "\(binding.questionId):\(binding.revision):\(binding.target.roomId)"
         switch binding.target {
@@ -235,11 +371,12 @@ final class RoomsModel: ObservableObject {
         }
     }
     func nextSpokenQuestion() -> HarnessQuestion? {
-        guard spokenAttentionEnabled, canMutate, activeSpokenQuestion == nil,
+        guard spokenAttentionEnabled, !attentionMuted, !attentionSuspended, canMutate, activeSpokenQuestion == nil,
               voiceState == .idle else { return nil }
-        let quiet = Set((state?.rooms ?? []).filter { $0.policy.attention == "quiet" }.map(\.id))
+        let quiet = Set((state?.rooms ?? []).filter { $0.policy.attention == "quiet" || $0.status == "archived" }.map(\.id))
         guard let question = questions.first(where: { !quiet.contains($0.target.roomId) && !spoken.contains(speechKey($0.binding)) }) else { return nil }
         spoken.insert(speechKey(question.binding))
+        queuedQuestionAttention.removeAll { $0.binding == question.binding }
         activeSpokenQuestion = question.binding
         focusedQuestion = question.binding
         return question
@@ -257,7 +394,7 @@ final class RoomsModel: ObservableObject {
             throw RoomsError.invalidResponse
         }
         if focusedQuestion == binding { focusedQuestion = nil }
-        if activeSpokenQuestion == binding { activeSpokenQuestion = nil }
+        if activeSpokenQuestion == binding { revokeSpokenQuestion() }
     }
     func answer(_ binding: HarnessQuestionBinding, text: String? = nil, choiceId: String? = nil) async -> Bool {
         await perform("answer:\(binding.questionId)") {
@@ -297,6 +434,7 @@ final class RoomsModel: ObservableObject {
     }
 
     func updateAudioLevels(_ levels: HarnessAudioLevels) {
+        guard isApplicationActive else { return }
         guard levels.generation >= audioLevels.generation else { return }
         func clamp(_ value: Double) -> Double { value.isFinite ? min(1, max(0, value)) : 0 }
         let active = [.listening, .speaking].contains(voiceState)
@@ -311,6 +449,7 @@ final class RoomsModel: ObservableObject {
         if ![.speaking, .listening].contains(state) {
             audioLevels.inputRMS = 0; audioLevels.playbackRMS = 0; audioHistory = []
         }
+        reconcileAttention()
     }
     func loadArtifact(_ artifact: HarnessArtifact, path: String) async throws -> Data {
         guard let current = state?.artifacts.first(where: { $0.id == artifact.id }), current == artifact else {
