@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { setTimeout as delay } from "node:timers/promises";
 import { BridgeError } from "./errors.ts";
 import { createHarnessKernel } from "./harness-kernel/index.ts";
 import { createWorkerRunner } from "./harness-worker/index.ts";
@@ -32,34 +33,68 @@ export async function createHarnessRuntime(dataDirectory: string, model: string)
     voice: createVoiceBridge({ apiKey: process.env.ELEVENLABS_API_KEY, voiceId: process.env.ELEVENLABS_VOICE_ID }) };
 }
 
-export async function stopHarness(runtime: HarnessRuntime): Promise<void> {
-  if (runtime.stopping) throw new BridgeError("Stop is already in progress; refresh for confirmation.", 409);
+const roomStops = new WeakSet<HarnessRuntime>();
+
+export async function stopHarness(runtime: HarnessRuntime, timeoutMs = 20_000): Promise<void> {
+  if (roomStops.has(runtime)) throw new BridgeError("Stop is already in progress; refresh for confirmation.", 409);
+  roomStops.add(runtime);
   runtime.stopping = true;
+  const deadline = performance.now() + timeoutMs;
+  const unconfirmed = () => new BridgeError("Room cleanup is unconfirmed. Admission remains closed; inspect runs and explicitly retry Stop all to reconcile.", 503);
+  const bounded = async <T>(operation: () => Promise<T>): Promise<T> => {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) throw unconfirmed();
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([operation(), new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(unconfirmed()), remaining);
+      })]);
+    } finally { clearTimeout(timer); }
+  };
+  const settledRun = (run: Awaited<ReturnType<HarnessService["state"]>>["runs"][number]) =>
+    run.status === "completed" || (run.status === "cancelled" && run.cancelConfirmed);
+  const authoritativeState = async () => {
+    const state = await bounded(() => runtime.harness.state());
+    if (!state.ready) throw unconfirmed();
+    return state;
+  };
   try {
-    const initial = await runtime.harness.state();
+    const initial = await authoritativeState();
     const targets = [
       ...initial.authorings.filter((a) => ["authoring", "waiting_question"].includes(a.status)).map((a) => ({ kind: "author" as const, id: a.id })),
-      ...initial.runs.filter((r) => !["completed", "failed", "cancelled"].includes(r.status)).map((r) => ({ kind: "run" as const, id: r.id })),
+      ...initial.runs.filter((r) => !settledRun(r)).map((r) => ({ kind: "run" as const, id: r.id })),
     ];
     const results = await Promise.allSettled(targets.map(async (target) => {
       for (let attempt = 0; attempt < 8; attempt++) {
-        const state = await runtime.harness.state();
+        const state = await authoritativeState();
         const value = target.kind === "author" ? state.authorings.find((a) => a.id === target.id) : state.runs.find((r) => r.id === target.id);
-        if (!value || ["completed", "failed", "cancelled"].includes(value.status)) return;
+        if (!value) throw unconfirmed();
+        if (target.kind === "author" ? ["completed", "failed", "cancelled"].includes(value.status) : settledRun(state.runs.find((r) => r.id === target.id)!)) return;
         try {
-          if (target.kind === "author") await runtime.harness.cancelAuthoring(value.roomId, value.id, { expectedRevision: value.revision });
-          else await runtime.harness.cancelRun(value.roomId, value.id, { expectedRevision: value.revision });
+          if (target.kind === "author") await bounded(() => runtime.harness.cancelAuthoring(value.roomId, value.id, { expectedRevision: value.revision }));
+          else await bounded(() => runtime.harness.cancelRun(value.roomId, value.id, { expectedRevision: value.revision }));
           return;
         } catch (error) { if (!(error instanceof BridgeError) || error.status !== 409 || attempt === 7) throw error; }
       }
     }));
-    if (results.some((r) => r.status === "rejected")) throw new BridgeError("Some room stops are unconfirmed. Refresh and inspect each run before retrying.", 503);
-  } finally { runtime.stopping = false; }
+    if (results.some((r) => r.status === "rejected")) throw unconfirmed();
+    while (true) {
+      const state = await authoritativeState();
+      const confirmed = targets.every((target) => target.kind === "run"
+        ? state.runs.some((run) => run.id === target.id && settledRun(run))
+        : state.authorings.some((author) => author.id === target.id && ["completed", "failed", "cancelled"].includes(author.status)));
+      if (confirmed) break;
+      await bounded(() => delay(25));
+    }
+    runtime.stopping = false;
+  } finally { roomStops.delete(runtime); }
 }
 
 type Reply = { status: number; body: unknown } | { status: number; bytes: Uint8Array };
 export async function harnessRoute(method: string, url: URL, body: () => Promise<unknown>, runtime: HarnessRuntime, service: JarvisService): Promise<Reply> {
-  if (runtime.stopping && method !== "GET") throw new BridgeError("Rooms are stopping. Wait for confirmation before changing work.", 409);
+  if (runtime.stopping && method !== "GET" && !(method === "POST" && /^\/v1\/harness\/rooms\/[^/]+\/(runs|authorings)\/[^/]+\/cancel$/.test(url.pathname))) {
+    throw new BridgeError("Rooms are stopping or cleanup is unconfirmed. Inspect status and explicitly retry Stop all.", 409);
+  }
   const h = runtime.harness;
   const reply = (body: unknown, status = 200): Reply => ({ status, body });
   const parts = url.pathname.split("/").filter(Boolean).slice(2).map((p) => IdSchema.parse(decodeURIComponent(p)));
