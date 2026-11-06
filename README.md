@@ -130,6 +130,12 @@ Both local services remain loopback-only and bearer authenticated; the bridge re
 
 **Stop all / ⌘. immediately mutes capture and interrupts speech before asking for cancellation.** Cancellation needs runtime confirmation; unconfirmed threads stay blocked. Late output is labeled separately. Already-completed effects remain; cancellation is **not rollback**, and deliberately detached terminal descendants may escape cleanup. Do not repeat uncertain sends or mutations: inspect the target app/device. Hashed operation markers persist uncertain writes across sessions; there is no automatic retry/reset button.
 
+Stop all fences requests admitted before the stop, including slowly uploaded request bodies, and waits for authoritative room cleanup rather than just a cancellation request. Failed, missing, unavailable or timed-out cleanup returns an explicit unconfirmed error and keeps new work/voice connections blocked. Inspect status and explicitly retry **Stop all** after resources settle; an eventual background result alone never reopens admission. Read-only status and exact cancellation remain available. A genuinely hanging admitted operation cannot safely be bypassed; restart still requires reconciliation.
+
+Clarification cards are not credential-entry forms. Known credential patterns and requests for secrets are rejected in root questions, author/worker questions and text/voice answers. Worker guards run before private checkpoint persistence, and exact rejected answers do not consume the pending question. These are conservative checks, not universal secret detection. Legacy unsafe room snapshots refuse startup for offline data review; old journals/backups are not automatically erased.
+
+Optional authoring dollar thresholds now participate in admission: zero permits no model call, supported Gateway catalog prices reserve each bounded call, and cumulative estimates survive correction/resume. Missing pricing, unidentified returned models or uncertain prior costs fail closed when a threshold is configured. Token/call/wall-time limits remain separate. Estimates are conservative—not provider invoices or hard account billing caps; set provider-side limits as well.
+
 ## Privacy, persistence and migration
 
 - Cloud reasoning receives submitted text, prior turns, recalled memories and relevant tool results, **including approved screen/account content**. Review provider policies before using sensitive data. Redaction is best-effort, not a guarantee that private text is removed.

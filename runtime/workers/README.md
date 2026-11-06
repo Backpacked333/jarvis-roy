@@ -313,6 +313,13 @@ then regression-tested and the complete enhancement/rebuild/export passed.
 
 ## Inspected sources
 
+Clarification safety is checked before an `ask_question` is appended to worker
+history or persisted, and before a resumed answer/checkpoint can reach the model.
+Credential-bearing continuation text is rejected before sealing a private
+checkpoint. The authoritative kernel independently repeats these checks. Unsafe
+legacy worker journals fail closed and retain their bytes for offline review;
+this is not historical secure erasure or a guarantee of recognizing every secret.
+
 - HF release API/source: https://github.com/huggingface/smolagents/tree/v1.26.0
 - License: https://github.com/huggingface/smolagents/blob/v1.26.0/LICENSE
 - Distribution/dependencies: https://pypi.org/pypi/smolagents/1.26.0/json
