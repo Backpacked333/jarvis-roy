@@ -72,8 +72,10 @@ final class RoomsModelTests: XCTestCase {
         await model.refresh()
         service.batch.nextSequence = service.snapshot.sequence
         service.batch.events = []
+        service.snapshot.approvals[0].title = "Updated root approval"
         await model.pollOnce()
         XCTAssertEqual(service.stateCalls, 2)
+        XCTAssertEqual(model.approvals.first?.title, "Updated root approval")
         service.snapshot.sequence += 1
         service.batch.nextSequence = service.snapshot.sequence
         service.batch.events = []

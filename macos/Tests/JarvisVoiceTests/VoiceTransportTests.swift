@@ -116,6 +116,30 @@ final class VoiceTransportTests: XCTestCase {
         XCTAssertNil(converter.convert(changedBuffer))
     }
 
+    func testStreamingConverterPreservesRateAndMixesBothStereoChannels() throws {
+        for (rate, channels) in [(16_000.0, AVAudioChannelCount(1)), (44_100.0, 2), (48_000.0, 2)] {
+            let converter = JarvisPCMConverter()
+            let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: channels, interleaved: false))
+            var pcm = Data()
+            for _ in 0..<12 {
+                let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_024))
+                buffer.frameLength = 1_024
+                for channel in 0..<Int(channels) {
+                    let value: Float = channels == 1 ? 0.1 : (channel == 0 ? 0.3 : -0.1)
+                    for frame in 0..<1_024 { buffer.floatChannelData![channel][frame] = value }
+                }
+                let converted = converter.convert(buffer)
+                pcm.append(try XCTUnwrap(converted, "Rate \(rate), code \(converter.failureCode)"))
+            }
+            let expectedFrames = 12 * 1_024 * 16_000.0 / rate
+            XCTAssertEqual(pcm.count % 2, 0)
+            XCTAssertGreaterThan(Double(pcm.count / 2), expectedFrames - 512)
+            XCTAssertLessThanOrEqual(Double(pcm.count / 2), expectedFrames + 2)
+            XCTAssertEqual(VoicePCM.rms(pcm), 0.1, accuracy: 0.01)
+            XCTAssertEqual(converter.failureCode, 0)
+        }
+    }
+
     @MainActor
     func testConsentAndNoKeyFailBeforeMicrophonePermissionsOrSocketConnect() async {
         let fake = FixtureVoiceTransport()

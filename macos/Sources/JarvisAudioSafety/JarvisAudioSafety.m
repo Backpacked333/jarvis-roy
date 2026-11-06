@@ -146,7 +146,10 @@ void JarvisStopPlayback(AVAudioEngine *engine, AVAudioPlayerNode *player, BOOL r
                 _converter = [[AVAudioConverter alloc] initFromFormat:format toFormat:target];
                 _failureCode = 4;
                 _converter.downmix = YES;
-                _source = [format copy];
+                _source = format;
+#if !__has_feature(objc_arc)
+                [_source retain];
+#endif
             }
             if (!_converter) return nil;
             _failureCode = 5;
