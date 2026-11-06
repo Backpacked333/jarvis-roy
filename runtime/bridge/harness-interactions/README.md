@@ -49,6 +49,34 @@ to supplied material; workers have no network by default.
   estimates, **not a provider tokenizer or provider-enforced billing cap**.
   Cancellation disconnects the request but cannot guarantee the provider stops
   billing immediately. Dollar limits remain estimates; no price is fabricated.
+- A configured authoring `estimatedUsdLimit` now gates every call, including
+  correction retries and clarification resumes. Zero refuses all model calls
+  without a catalog lookup. For a positive limit, the built-in Gateway adapter
+  fetches the public `/v1/models` catalog once per author invocation (including
+  resumes), within the active deadline and an 8 MB response limit, with no
+  authorization header. Rates are **USD per token**, not per million tokens.
+  It uses the maximum supported base/context-tier/cache-write/service-tier/
+  regional rate for conservative input/output reservations. Before dispatch,
+  cumulative cost plus the entire next-call reservation must fit the threshold.
+  Reported token counts replace the corresponding reservation after the call;
+  missing counts retain it. These are catalog-based inference estimates, not
+  measured invoices or guarantees about provider-side routing, surcharges or
+  cancellation. Token, step and call limits remain primary controls.
+- Missing/malformed/unsupported prices, variable-provider prices, unknown fee
+  shapes and injected `modelClient` pricing fail closed when a dollar threshold
+  is configured. No hardcoded prices or zero-cost assumptions are used. A
+  completion must identify the exact catalog model; a missing/different model
+  fails with unknown total cost and retained token reservations. Model aliases
+  that do not round-trip that exact ID are therefore unsupported for this mode.
+  There is no silent fallback or automatic retry. Without a threshold, no price
+  lookup is made and costs remain unknown (`null`), as before.
+- Cumulative dollar estimates survive checkpoint merging alongside token/call
+  counters; a higher stored estimate is not discarded. Prior usage with unknown
+  cost, partial accounting or outstanding token reservations cannot finance a
+  fresh call under a configured dollar threshold, even after restart or an
+  answer. Legacy checkpoints without known cost fail closed rather than acquire
+  a new budget. A known pre-dispatch failure releases only its own reservation;
+  a dispatched failure retains uncertainty.
 - The active-generation deadline is the lower of the room limit and two minutes,
   cumulative across clarification checkpoints. Time spent waiting for the user
   is excluded. Oversized context fails rather than silently dropping constraints.
@@ -168,3 +196,5 @@ operated always-on worker.
 - [Gateway Chat Completions REST](https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions/rest-api)
 - [Gateway JSON response formats](https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions/structured-outputs)
 - [Current model catalog](https://ai-gateway.vercel.sh/v1/models)
+- [Gateway model pricing fields and token tiers](https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api#list-models)
+- [Gateway pricing and inference cost limitations](https://vercel.com/docs/ai-gateway/pricing)

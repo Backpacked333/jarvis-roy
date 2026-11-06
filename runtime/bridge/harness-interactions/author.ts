@@ -71,7 +71,10 @@ function maximumUsage(a: Usage, b: Usage): Usage {
   for (const key of ["steps", "modelCalls", "inputTokens", "outputTokens", "reservedTokens"] as const) result[key] = Math.max(a[key], b[key]);
   result.accounting = a.accounting === "unknown" || b.accounting === "unknown" ? "unknown" :
     a.accounting === "partial" || b.accounting === "partial" ? "partial" : "measured";
-  result.estimatedUsd = null;
+  const unknown = [a, b].some((value) => value.estimatedUsd === null &&
+    (value.modelCalls > 0 || value.inputTokens + value.outputTokens + value.reservedTokens > 0));
+  result.estimatedUsd = unknown || (a.estimatedUsd === null && b.estimatedUsd === null) ? null :
+    Math.max(a.estimatedUsd ?? 0, b.estimatedUsd ?? 0);
   return result;
 }
 
@@ -85,7 +88,8 @@ async function abortable<T>(operation: () => Promise<T>, signal: AbortSignal): P
 }
 
 export function createPlanAuthor(options: PlanAuthorOptions): PlanAuthor {
-  const model = options.modelClient ?? createGatewayAuthorModel(options);
+  const gateway = options.modelClient ? null : createGatewayAuthorModel(options);
+  const model = options.modelClient ?? gateway!;
   return { async author(raw, context) {
     let usage = { ...EMPTY_USAGE };
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -123,8 +127,23 @@ export function createPlanAuthor(options: PlanAuthorOptions): PlanAuthor {
       const deadline = new AbortController();
       timer = setTimeout(() => deadline.abort(), remainingMs);
       const signal = AbortSignal.any([context.signal, deadline.signal]);
+      const estimateLimit = limits.estimatedUsdLimit;
+      const checkEstimate = () => {
+        if (estimateLimit === null) return;
+        if (estimateLimit === 0 || (usage.estimatedUsd !== null && usage.estimatedUsd >= estimateLimit)) {
+          throw new Error("Authoring estimated-dollar budget exhausted");
+        }
+        if (usage.accounting !== "measured" || usage.reservedTokens > 0 ||
+            (usage.estimatedUsd === null && (usage.modelCalls > 0 || usage.inputTokens + usage.outputTokens > 0))) {
+          throw new Error("Prior authoring cost is uncertain; estimated-dollar admission refused");
+        }
+        if (!gateway) throw new Error("Configured authoring estimated-dollar limit requires supported Gateway pricing; custom model pricing is unavailable");
+      };
+      checkEstimate();
+      const prices = estimateLimit === null ? null : await abortable(() => gateway!.prices(signal), signal);
       for (let attempt = 0; attempt < MAX_CALLS; attempt++) {
         signal.throwIfAborted();
+        checkEstimate();
         if (usage.steps >= limits.maxSteps || usage.modelCalls >= Math.min(MAX_CALLS, limits.maxModelCalls)) throw new Error("Authoring step/call budget exhausted");
         const prompt = buildAuthorPrompt(input, attempt > 0);
         // UTF-8 byte allowance deliberately over-reserves ordinary text; provider counts remain authoritative when supplied.
@@ -133,13 +152,25 @@ export function createPlanAuthor(options: PlanAuthorOptions): PlanAuthor {
         const outputAllowance = Math.min(limits.maxOutputTokensPerCall, remaining - inputAllowance);
         if (outputAllowance < 64) throw new Error("Authoring token budget cannot fit the scoped context and output");
         const reservation = inputAllowance + outputAllowance;
+        const previousEstimate = usage.estimatedUsd;
+        const priorEstimate = previousEstimate ?? 0;
+        const costReservation = prices ? inputAllowance * prices.input + outputAllowance * prices.output : null;
+        if (costReservation !== null && priorEstimate + costReservation > estimateLimit!) {
+          throw new Error("Authoring estimated-dollar budget cannot fit the next call reservation");
+        }
         usage = { ...usage, steps: usage.steps + 1, modelCalls: usage.modelCalls + 1, reservedTokens: usage.reservedTokens + reservation };
+        usage.estimatedUsd = costReservation === null ? null : priorEstimate + costReservation;
         let response;
-        try { response = await abortable(() => model.complete({ ...prompt, maxOutputTokens: outputAllowance, signal }), signal); }
+        try { response = await abortable(() => {
+          const request = { ...prompt, maxOutputTokens: outputAllowance, signal };
+          return prices ? gateway!.complete(request, true) : model.complete(request);
+        }, signal); }
         catch (error) {
           if (error instanceof GatewayError && !error.dispatched) {
             usage.steps--; usage.modelCalls--; usage.reservedTokens -= reservation;
+            usage.estimatedUsd = previousEstimate;
           } else usage.accounting = usage.inputTokens + usage.outputTokens > 0 ? "partial" : "unknown";
+          if (error instanceof GatewayError && error.unknownPrice) usage.estimatedUsd = null;
           throw new Error(error instanceof GatewayError ? error.message : "Authoring model failed or cancelled; usage is uncertain");
         }
         const knownInput = Number.isSafeInteger(response.inputTokens) && response.inputTokens !== null && response.inputTokens >= 0;
@@ -148,6 +179,11 @@ export function createPlanAuthor(options: PlanAuthorOptions): PlanAuthor {
         usage.outputTokens += knownOutput ? response.outputTokens! : 0;
         usage.reservedTokens -= (knownInput ? inputAllowance : 0) + (knownOutput ? outputAllowance : 0);
         if (!knownInput || !knownOutput) usage.accounting = usage.inputTokens + usage.outputTokens > 0 ? "partial" : "unknown";
+        if (prices) usage.estimatedUsd = priorEstimate + (knownInput ? response.inputTokens! : inputAllowance) * prices.input +
+          (knownOutput ? response.outputTokens! : outputAllowance) * prices.output;
+        if (estimateLimit !== null && usage.estimatedUsd! > estimateLimit) {
+          throw new Error("Provider exceeded authoring estimated-dollar allowance; further calls stopped");
+        }
         if (usage.inputTokens + usage.outputTokens + usage.reservedTokens > limits.maxTokens || (knownOutput && response.outputTokens! > outputAllowance)) {
           throw new Error("Provider exceeded authoring token allowance; further calls stopped");
         }

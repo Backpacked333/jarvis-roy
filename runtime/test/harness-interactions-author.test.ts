@@ -262,3 +262,229 @@ test("clarification resumes preserve missing usage reservations and active time 
   const expired = await createPlanAuthor({ model: "unused", modelClient: { async complete() { assert.fail("deadline must survive resume"); } } }).author(source, context());
   assert.equal(expired.status, "failed"); if (expired.status === "failed") assert.match(expired.error, /deadline/);
 });
+
+async function withGatewayKey(run: () => Promise<void>) {
+  const prior = process.env.AI_GATEWAY_API_KEY; process.env.AI_GATEWAY_API_KEY = "fixture-not-a-real-credential";
+  try { await run(); }
+  finally { if (prior === undefined) delete process.env.AI_GATEWAY_API_KEY; else process.env.AI_GATEWAY_API_KEY = prior; }
+}
+function pricedFixture(pricing: unknown = { input: "0.000001", output: "0.000002" }, result: () => object = () => ({
+  model: "test/model", choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ kind: "question", question }) } }],
+  usage: { prompt_tokens: 100, completion_tokens: 200 },
+})) {
+  const counts = { catalogs: 0, calls: 0 };
+  const author = createPlanAuthor({ model: "test/model", fetch: async (url, init) => {
+    assert.equal(init?.redirect, "error");
+    if (url === "https://ai-gateway.vercel.sh/v1/models") {
+      counts.catalogs++; assert.equal(init?.headers, undefined);
+      return Response.json({ data: [{ id: "test/model", type: "language", pricing }] });
+    }
+    assert.equal(url, "https://ai-gateway.vercel.sh/v1/chat/completions");
+    counts.calls++; return Response.json(result());
+  } });
+  return { author, counts };
+}
+function clarificationResume(source: AuthoringInput, result: Awaited<ReturnType<ReturnType<typeof createPlanAuthor>["author"]>>) {
+  assert.equal(result.status, "waiting_question"); if (result.status !== "waiting_question") throw new Error("Expected question");
+  return { ...source, checkpoint: result.checkpoint, answer: {
+    binding: { questionId: "question-id", revision: 1, target: { scope: "authoring" as const, roomId: source.room.id, authoringId: source.authoring.id } },
+    source: "text" as const, text: null, choiceId: "markdown",
+  } };
+}
+
+test("zero authoring dollar threshold refuses injected and Gateway models before any request", async () => {
+  const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 0;
+  let calls = 0;
+  const injected = createPlanAuthor({ model: "fixture", modelClient: { async complete() {
+    calls++; return { text: JSON.stringify({ kind: "question", question }), inputTokens: 100, outputTokens: 100 };
+  } } });
+  const gateway = pricedFixture();
+  for (const author of [injected, gateway.author]) {
+    const result = await author.author(source, context());
+    assert.equal(result.status, "failed"); if (result.status === "failed") assert.match(result.error, /estimated-dollar budget exhausted/);
+    assert.deepEqual(result.usage, zero());
+  }
+  assert.equal(calls, 0); assert.deepEqual(gateway.counts, { catalogs: 0, calls: 0 });
+});
+
+test("custom model cannot silently ignore a positive dollar threshold or invent prices", async () => {
+  const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 1;
+  const result = await createPlanAuthor({ model: "fixture", modelClient: { async complete() { assert.fail("unpriced model must not run"); } } }).author(source, context());
+  assert.equal(result.status, "failed"); if (result.status === "failed") assert.match(result.error, /custom model pricing is unavailable/);
+  assert.deepEqual(result.usage, zero());
+});
+
+test("Gateway catalog USD-per-token units account measured use and persist estimate in checkpoint", () => withGatewayKey(async () => {
+  const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 0.01;
+  const fixture = pricedFixture(); const result = await fixture.author.author(source, context());
+  assert.equal(result.status, "waiting_question");
+  assert.ok(Math.abs(result.usage.estimatedUsd! - 0.0005) < 1e-12);
+  assert.equal(result.usage.accounting, "measured"); assert.equal(result.usage.reservedTokens, 0);
+  if (result.status === "waiting_question") assert.equal(result.checkpoint.continuation.usage.estimatedUsd, result.usage.estimatedUsd);
+  assert.deepEqual(fixture.counts, { catalogs: 1, calls: 1 });
+}));
+
+test("conservative pricing includes token tiers, cache-write and supported service/region variants", async () => {
+  const rates = await createGatewayAuthorModel({ model: "test/model", fetch: async () => Response.json({ data: [{
+    id: "test/model", type: "language", pricing: { input: "0.000001", output: "0.000002",
+      input_tiers: [{ cost: "0.000003", min: 0 }], output_tiers: [{ cost: "0.000004", min: 0 }],
+      input_cache_write_tiers: [{ cost: "0.000007", min: 0 }],
+      service_tiers: { priority: { input: "0.000005", output: "0.000006" } },
+      regional: { us: { input: "0.000002", output: "0.000008" } },
+      fast: { input: "0.000006", output: "0.000007" } },
+  }] }) }).prices(context().signal);
+  assert.deepEqual(rates, { input: 0.000007, output: 0.000008 });
+});
+
+test("insufficient next-call dollar reservation stops before inference", () => withGatewayKey(async () => {
+  const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 0.000001;
+  const fixture = pricedFixture(); const result = await fixture.author.author(source, context());
+  assert.equal(result.status, "failed"); if (result.status === "failed") assert.match(result.error, /next call reservation/);
+  assert.deepEqual(result.usage, zero()); assert.deepEqual(fixture.counts, { catalogs: 1, calls: 0 });
+}));
+
+test("nonzero dollar exhaustion survives question resume without a fresh budget", () => withGatewayKey(async () => {
+  const source = input(); source.room.policy.authoringBudget.maxTokens = 30_000;
+  const reservation = (value: AuthoringInput) => {
+    const prompt = buildAuthorPrompt(value);
+    return (Buffer.byteLength(prompt.system) + Buffer.byteLength(prompt.prompt) + 128 + value.room.policy.authoringBudget.maxOutputTokensPerCall) * 0.001;
+  };
+  source.room.policy.authoringBudget.estimatedUsdLimit = reservation(source) + 1.25;
+  const fixture = pricedFixture({ input: "0.001", output: "0.001" }, () => ({
+    model: "test/model", choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ kind: "question", question }) } }],
+    usage: { prompt_tokens: 1000, completion_tokens: 1000 },
+  }));
+  const first = await fixture.author.author(source, context());
+  assert.equal(first.usage.estimatedUsd, 2);
+  const resumed = clarificationResume(source, first);
+  assert.ok(reservation(resumed) < source.room.policy.authoringBudget.estimatedUsdLimit);
+  const result = await fixture.author.author(resumed, context());
+  assert.equal(result.status, "failed"); if (result.status === "failed") assert.match(result.error, /next call reservation/);
+  assert.equal(result.usage.estimatedUsd, 2); assert.equal(result.usage.modelCalls, 1); assert.equal(fixture.counts.calls, 1);
+}));
+
+test("cost merge retains the higher stored estimate instead of discarding either cumulative record", () => withGatewayKey(async () => {
+  const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 1;
+  const fixture = pricedFixture(); const first = await fixture.author.author(source, context());
+  const resumed = clarificationResume(source, first);
+  resumed.authoring = { ...source.authoring, usage: { ...first.usage, estimatedUsd: 1 } };
+  const result = await fixture.author.author(resumed, context());
+  assert.equal(result.status, "failed"); assert.equal(result.usage.estimatedUsd, 1); assert.equal(fixture.counts.calls, 1);
+}));
+
+test("partial usage retains dollar reservation and cannot finance another call after clarification", () => withGatewayKey(async () => {
+  const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 1;
+  const fixture = pricedFixture(undefined, () => ({ model: "test/model",
+    choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ kind: "question", question }) } }], usage: { prompt_tokens: 100 } }));
+  const first = await fixture.author.author(source, context());
+  assert.equal(first.usage.accounting, "partial"); assert.ok(first.usage.reservedTokens > 0);
+  assert.ok(Math.abs(first.usage.estimatedUsd! - (100 * 0.000001 + source.room.policy.authoringBudget.maxOutputTokensPerCall * 0.000002)) < 1e-12);
+  const result = await fixture.author.author(clarificationResume(source, first), context());
+  assert.equal(result.status, "failed"); if (result.status === "failed") assert.match(result.error, /cost is uncertain/);
+  assert.deepEqual(result.usage, first.usage); assert.deepEqual(fixture.counts, { catalogs: 1, calls: 1 });
+}));
+
+test("fallback or missing model identity marks cost unknown and never silently renews budget", () => withGatewayKey(async () => {
+  for (const model of [undefined, "other/model"]) {
+    const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 1;
+    const fixture = pricedFixture(undefined, () => ({ model,
+      choices: [{ finish_reason: "stop", message: { content: planText() } }], usage: { prompt_tokens: 100, completion_tokens: 200 } }));
+    const first = await fixture.author.author(source, context());
+    assert.equal(first.status, "failed"); assert.equal(first.usage.estimatedUsd, null);
+    assert.equal(first.usage.accounting, "unknown"); assert.ok(first.usage.reservedTokens > 0);
+    const second = await fixture.author.author({ ...source, authoring: { ...source.authoring, usage: first.usage } }, context());
+    assert.equal(second.status, "failed"); assert.deepEqual(second.usage, first.usage);
+    assert.deepEqual(fixture.counts, { catalogs: 1, calls: 1 });
+  }
+}));
+
+test("legacy or contradictory checkpoints with unknown prior dollar cost fail closed", () => withGatewayKey(async () => {
+  const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 1;
+  const fixture = pricedFixture(); const first = await fixture.author.author(source, context());
+  const resumed = clarificationResume(source, first);
+  resumed.authoring = { ...source.authoring, usage: { ...first.usage, estimatedUsd: null } };
+  const result = await fixture.author.author(resumed, context());
+  assert.equal(result.status, "failed"); assert.equal(result.usage.estimatedUsd, null);
+  assert.deepEqual(fixture.counts, { catalogs: 1, calls: 1 });
+}));
+
+test("malformed or unsupported prices never become invented zero cost", () => withGatewayKey(async () => {
+  const prices = [undefined, { input: "", output: "0.01" }, { input: "-1", output: "0.01" },
+    { input: "NaN", output: "0.01" }, { input: "Infinity", output: "0.01" }, { input: "1000000", output: "0.01" },
+    { input: "1e-999", output: "0.01" },
+    { input: "0.000001", output: "0.000002", varies_by_provider: true },
+    { input: "0.000001", output: "0.000002", request: "0.01" },
+    { input: "0.000001", output: "0.000002", unknown_fee: "0.01" }];
+  for (const pricing of prices) {
+    const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 1;
+    const fixture = pricedFixture(pricing === undefined ? null : pricing);
+    const result = await fixture.author.author(source, context());
+    assert.equal(result.status, "failed"); if (result.status === "failed") assert.match(result.error, /pricing unavailable or unsupported/);
+    assert.deepEqual(result.usage, zero()); assert.equal(fixture.counts.calls, 0);
+  }
+}));
+
+test("catalog failures and cancellation remain bounded with no charged model call", () => withGatewayKey(async () => {
+  for (const response of [new Response("private provider detail", { status: 503 }), Response.json({ data: [] }),
+    new Response("not JSON"), new Response(new Uint8Array(8_000_001))]) {
+    const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 1;
+    const result = await createPlanAuthor({ model: "test/model", fetch: async (url) => {
+      assert.equal(url, "https://ai-gateway.vercel.sh/v1/models"); return response;
+    } }).author(source, context());
+    assert.equal(result.status, "failed"); assert.deepEqual(result.usage, zero());
+    if (result.status === "failed") assert.doesNotMatch(result.error, /private provider detail/);
+  }
+  const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 1;
+  const controller = new AbortController();
+  const pending = createPlanAuthor({ model: "test/model", fetch: async () => {
+    controller.abort(); return new Promise<Response>(() => {});
+  } }).author(source, { signal: controller.signal });
+  const result = await pending; assert.equal(result.status, "failed"); assert.deepEqual(result.usage, zero());
+}));
+
+test("successful priced resume adds cost and refreshes public rates rather than retaining stale prices", () => withGatewayKey(async () => {
+  const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 1;
+  const pricing = { input: "0.000001", output: "0.000002" };
+  const fixture = pricedFixture(pricing); const first = await fixture.author.author(source, context());
+  pricing.input = "0.000003";
+  const second = await fixture.author.author(clarificationResume(source, first), context());
+  assert.equal(second.status, "waiting_question"); assert.equal(second.usage.modelCalls, 2);
+  assert.ok(Math.abs(second.usage.estimatedUsd! - 0.0012) < 1e-12);
+  assert.deepEqual(fixture.counts, { catalogs: 2, calls: 2 });
+}));
+
+test("priced provider overrun is accounted honestly then stops without correction retries", () => withGatewayKey(async () => {
+  const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 0.01;
+  const fixture = pricedFixture(undefined, () => ({ model: "test/model",
+    choices: [{ finish_reason: "stop", message: { content: "not valid JSON" } }], usage: { prompt_tokens: 20_000, completion_tokens: 100 } }));
+  const result = await fixture.author.author(source, context());
+  assert.equal(result.status, "failed"); if (result.status === "failed") assert.match(result.error, /exceeded authoring estimated-dollar allowance/);
+  assert.ok(Math.abs(result.usage.estimatedUsd! - 0.0202) < 1e-12);
+  assert.equal(result.usage.inputTokens, 20_000); assert.equal(fixture.counts.calls, 1);
+}));
+
+test("priced correction calls reserve from cumulative cost, not a new per-retry budget", () => withGatewayKey(async () => {
+  const source = input(); source.room.policy.authoringBudget.maxTokens = 30_000;
+  const prompt = buildAuthorPrompt(source);
+  source.room.policy.authoringBudget.estimatedUsdLimit = (Buffer.byteLength(prompt.system) + Buffer.byteLength(prompt.prompt) + 128 + 2048) * 0.001 + 1;
+  const fixture = pricedFixture({ input: "0.001", output: "0.001" }, () => ({ model: "test/model",
+    choices: [{ finish_reason: "stop", message: { content: "not valid JSON" } }], usage: { prompt_tokens: 1000, completion_tokens: 1000 } }));
+  const result = await fixture.author.author(source, context());
+  assert.equal(result.status, "failed"); if (result.status === "failed") assert.match(result.error, /next call reservation/);
+  assert.equal(result.usage.estimatedUsd, 2); assert.equal(fixture.counts.calls, 1);
+}));
+
+test("known pre-dispatch failure releases dollar reservation but dispatched failure retains uncertainty", () => withGatewayKey(async () => {
+  const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 1;
+  delete process.env.AI_GATEWAY_API_KEY;
+  const noKey = pricedFixture(); const refused = await noKey.author.author(source, context());
+  assert.equal(refused.status, "failed"); assert.deepEqual(refused.usage, zero()); assert.equal(noKey.counts.calls, 0);
+  process.env.AI_GATEWAY_API_KEY = "fixture-not-a-real-credential";
+  const failed = pricedFixture(undefined, () => { throw new Error("provider-private-detail"); });
+  const result = await failed.author.author(source, context());
+  assert.equal(result.status, "failed"); assert.equal(result.usage.modelCalls, 1);
+  assert.equal(result.usage.accounting, "unknown"); assert.ok(result.usage.estimatedUsd! > 0); assert.ok(result.usage.reservedTokens > 0);
+  if (result.status === "failed") assert.doesNotMatch(result.error, /provider-private-detail/);
+  const resumed = await failed.author.author({ ...source, authoring: { ...source.authoring, usage: result.usage } }, context());
+  assert.equal(resumed.status, "failed"); assert.deepEqual(resumed.usage, result.usage); assert.equal(failed.counts.calls, 1);
+}));
