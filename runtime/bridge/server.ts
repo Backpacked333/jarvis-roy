@@ -82,8 +82,8 @@ async function route(
   request: IncomingMessage,
   response: ServerResponse,
   service: JarvisService,
-  runtime?: HarnessRuntime,
-  stopVoice: () => void = () => {},
+  runtime: HarnessRuntime | undefined,
+  control: { stopAll: () => ReturnType<JarvisService["stop"]>; isStopping: () => boolean },
 ): Promise<void> {
   const host = request.headers.host;
   const remoteAddress = request.socket.remoteAddress;
@@ -111,6 +111,7 @@ async function route(
   }
   const method = request.method ?? "GET";
   try {
+    if (control.isStopping() && method !== "GET") throw new BridgeError("Stop all is in progress. Wait for confirmation before changing work.", 409);
     if (pathname.startsWith("/v1/harness/")) {
       if (!runtime) throw new BridgeError("Room runtime is unavailable.", 503);
       const result = await harnessRoute(method, new URL(request.url!, "http://127.0.0.1"), () => readJson(request), runtime, service);
@@ -160,10 +161,7 @@ async function route(
     }
     if (pathname === "/v1/stop") {
       if (method !== "POST") throw new BridgeError("Method not allowed.", 405);
-      stopVoice();
-      const [tasks, rooms] = await Promise.allSettled([service.stop(), runtime ? stopHarness(runtime) : Promise.resolve()]);
-      if (tasks.status === "rejected" || rooms.status === "rejected") throw new BridgeError("Some stops are unconfirmed. Refresh task and room status before retrying.", 503);
-      json(response, 200, { tasks: tasks.value });
+      json(response, 200, { tasks: await control.stopAll() });
       return;
     }
 
@@ -217,10 +215,24 @@ export function createBridgeServer(
   if (host !== BRIDGE_HOST) throw new Error("The bridge must bind to 127.0.0.1.");
   const voiceSockets = new Set<Duplex>();
   let closing = false;
+  let stopping = false;
   const stopVoice = () => { for (const socket of voiceSockets) socket.destroy(); voiceSockets.clear(); };
+  const control = {
+    isStopping: () => stopping,
+    async stopAll() {
+      if (stopping) throw new BridgeError("Stop all is already in progress.", 409);
+      stopping = true;
+      try {
+        stopVoice();
+        const [tasks, rooms] = await Promise.allSettled([service.stop(), runtime ? stopHarness(runtime) : Promise.resolve()]);
+        if (tasks.status === "rejected" || rooms.status === "rejected") throw new BridgeError("Some stops are unconfirmed. Refresh task and room status before retrying.", 503);
+        return tasks.value;
+      } finally { stopping = false; }
+    },
+  };
   const server = createServer((request, response) => {
     if (closing) { json(response, 503, { error: "Bridge is shutting down." }); return; }
-    void route(request, response, service, runtime, stopVoice).catch(() => {
+    void route(request, response, service, runtime, control).catch(() => {
       if (!response.headersSent) json(response, 500, { error: "Internal server error." });
       else response.destroy();
     });
@@ -228,7 +240,7 @@ export function createBridgeServer(
   server.on("upgrade", (request, socket, head) => {
     const remote = request.socket.remoteAddress;
     const reject = (status: number) => socket.end(`HTTP/1.1 ${status} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-    if (closing || !runtime || request.method !== "GET" || request.url !== "/v1/voice/stream") { reject(404); return; }
+    if (closing || stopping || !runtime || request.method !== "GET" || request.url !== "/v1/voice/stream") { reject(404); return; }
     if (!isLoopbackHost(request.headers.host) || !["127.0.0.1", "::ffff:127.0.0.1"].includes(remote ?? "") || request.headers.origin !== undefined) { reject(403); return; }
     if (!bearerTokenMatches(request.headers.authorization, process.env.JARVIS_LOCAL_TOKEN)) { reject(401); return; }
     socket.on("error", () => socket.destroy());

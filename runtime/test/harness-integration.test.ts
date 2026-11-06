@@ -218,6 +218,30 @@ test("generic Eve questions have exact card text responses; ambient text and spe
   assert.equal(root.tasks[0].status, "completed");
 });
 
+test("Stop all holds a common admission barrier until both roots and rooms finish", async (t) => {
+  const f = await fixture(t);
+  let release!: () => void, began!: () => void;
+  const stopped = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { began = resolve; });
+  const original = f.service.stop.bind(f.service);
+  f.service.stop = async () => { began(); await stopped; return original(); };
+  const stopping = f.request("/v1/stop", "POST");
+  await started;
+  try {
+    await f.request("/v1/harness/rooms", "POST", { requestId: "race", title: "Blocked room" }, 409);
+    await f.request("/v1/tasks", "POST", { message: "Blocked task" }, 409);
+    await f.request("/v1/stop", "POST", undefined, 409);
+    await f.request("/v1/state");
+    const socket = new WebSocket(f.base.replace("http:", "ws:") + "/v1/voice/stream", { headers: { authorization: `Bearer ${token}` } });
+    socket.on("error", () => {});
+    const [, response] = await once(socket, "unexpected-response");
+    socket.terminate();
+    assert.equal(response.statusCode, 404);
+  } finally { release(); await stopping; }
+  assert.equal((await f.state()).rooms.length, 0);
+  await f.createRoom("after-stop");
+});
+
 test("real HTTP → kernel → smolagents → Docker: two rooms, DAG handoff, exact question resume across restart, cancellation", { skip: !enabled, timeout: 180_000 }, async (t) => {
   const f = await fixture(t);
   assert.equal((await f.state()).worker.available, true);
