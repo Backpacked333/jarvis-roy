@@ -16,7 +16,7 @@ struct JarvisApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
-        WindowGroup("Jarvis") {
+        Window("Jarvis", id: "main") {
             WorkspaceView(model: model, voice: model.voice)
                 .frame(minWidth: 1050, minHeight: 720)
                 .preferredColorScheme(.dark)

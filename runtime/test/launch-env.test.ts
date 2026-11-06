@@ -32,3 +32,16 @@ test("launcher uses filtered environments and the absolute bundled helper", asyn
   assert.match(script, /JARVIS_NATIVE_HELPER="\$ROOT\/dist\/Jarvis.app\/Contents\/Helpers\/JarvisControl.app\/Contents\/MacOS\/JarvisControl"/);
   for (const target of ["ui", "runtime", "bridge"]) assert.ok(script.includes(`launch-env.mjs" ${target}`));
 });
+
+test("native permission disclosures distinguish local wake detection from cloud transcription", async () => {
+  const plist = await readFile(new URL("../../macos/Info.plist", import.meta.url), "utf8");
+  const usage = (key: string) => plist.match(new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`))?.[1] ?? "";
+  const microphone = usage("NSMicrophoneUsageDescription");
+  assert.match(microphone, /local wake detection/);
+  assert.match(microphone, /Cloud voice consent/);
+  assert.match(microphone, /command audio is sent to ElevenLabs/);
+  assert.match(microphone, /Hands-free is a separate opt-in/);
+  const speech = usage("NSSpeechRecognitionUsageDescription");
+  assert.match(speech, /on-device speech recognition only to detect Hey Jarvis/);
+  assert.match(speech, /Command transcription uses ElevenLabs/);
+});
