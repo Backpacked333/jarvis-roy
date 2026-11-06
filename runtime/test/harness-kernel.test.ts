@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, stat, symlink } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { defaultRoomPolicy, type ArtifactManifest, type AttemptRef, type PlanDraft, type Room, type Run, type Usage } from "../bridge/harness-contracts/domain.ts";
-import { questionBinding, type AnswerQuestionRequest } from "../bridge/harness-contracts/interactions.ts";
+import { questionBinding, type AnswerQuestionRequest, type QuestionPrompt } from "../bridge/harness-contracts/interactions.ts";
 import type { AuthoringResult, HarnessService, PlanAuthor } from "../bridge/harness-contracts/service.ts";
 import { artifactDigest, sha256 } from "../bridge/harness-contracts/validation.ts";
 import type { Cancellation, Reconciliation, WorkerContext, WorkerResult, WorkerRunner, WorkerSpec } from "../bridge/harness-contracts/worker.ts";
@@ -14,6 +14,7 @@ import { createHarnessKernel } from "../bridge/harness-kernel/index.ts";
 import { HarnessKernel } from "../bridge/harness-kernel/kernel.ts";
 import { zeroUsage, type Database } from "../bridge/harness-kernel/model.ts";
 import { SqliteKernelStore, type KernelStore } from "../bridge/harness-kernel/store.ts";
+import { createQuestionRouter } from "../bridge/harness-interactions/questions.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -56,10 +57,12 @@ class ControlledWorker implements WorkerRunner {
 class ObservedStore implements KernelStore {
   readonly actual: SqliteKernelStore;
   value!: Database;
+  beforeSave: ((value: Database) => void) | null = null;
   private waiters: { predicate: (db: Database) => boolean; resolve: (db: Database) => void }[] = [];
   constructor(directory: string) { this.actual = new SqliteKernelStore(directory); }
   async open(initial: Database) { this.value = await this.actual.open(initial); return this.value; }
   save(value: Database) {
+    this.beforeSave?.(value);
     this.actual.save(value);
     this.value = structuredClone(value);
     for (const waiter of this.waiters.filter((w) => w.predicate(this.value))) waiter.resolve(this.value);
@@ -100,11 +103,11 @@ function complete(call: Call, used = usage()): WorkerResult {
   call.result.resolve(result);
   return result;
 }
-function question(call: Call, used = usage()): WorkerResult {
+function question(call: Call, used = usage(), prompt: QuestionPrompt = { prompt: "Which color?", choices: [{ id: "blue", label: "Blue" }], allowText: true }): WorkerResult {
   const result: WorkerResult = { status: "waiting_question", ref: call.spec.ref, usage: used,
     checkpoint: { version: 1, ref: call.spec.ref, sequence: call.sequence - 1, createdAt: new Date().toISOString(),
       resumeMode: "continue_after_answer", continuation: { version: 1, summary: "Files sealed; previous tools must not replay", history: [], completedStepIds: ["step1"], usage: used },
-      artifacts: [artifact(call.spec)], question: { prompt: "Which color?", choices: [{ id: "blue", label: "Blue" }], allowText: true } } };
+      artifacts: [artifact(call.spec)], question: prompt } };
   call.result.resolve(result);
   return result;
 }
@@ -138,6 +141,118 @@ async function start(f: Awaited<ReturnType<typeof fixture>>, r: Room, requestId 
   return { run, request, accepted };
 }
 const current = async (kernel: HarnessService, id: string) => (await kernel.state()).runs.find((r) => r.id === id)!;
+
+const credentialCanary = `sk-${"SYNTHETIC_NOT_A_REAL_KEY_".repeat(2)}`;
+const harmlessPrompt: QuestionPrompt = { prompt: "Which color?", choices: [{ id: "blue", label: "Blue" }], allowText: true };
+
+async function assertNoStoredText(directory: string, needles: string[]) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const file = path.join(directory, entry.name);
+    if (entry.isDirectory()) await assertNoStoredText(file, needles);
+    else {
+      const bytes = await readFile(file);
+      for (const needle of needles) assert.equal(bytes.includes(Buffer.from(needle)), false, "Rejected content reached a database, journal, WAL or snapshot file");
+    }
+  }
+}
+
+const unsafePrompts: QuestionPrompt[] = [
+  { ...harmlessPrompt, prompt: "What is your API key?" },
+  { ...harmlessPrompt, prompt: `Use https://example.invalid/?key=${credentialCanary}?` },
+  { ...harmlessPrompt, choices: [{ id: "blue", label: "Provide your MFA code" }] },
+  { ...harmlessPrompt, choices: [{ id: credentialCanary, label: "Blue" }] },
+];
+
+for (const [index, prompt] of unsafePrompts.entries()) {
+  for (const scope of ["worker", "authoring"] as const) {
+    test(`kernel rejects unsafe ${scope} clarification before any durable snapshot (${index})`, { timeout: 10_000 }, async (t) => {
+      const result: AuthoringResult = { status: "waiting_question", question: prompt, usage: usage(),
+        checkpoint: { version: 1, continuation: { version: 1, summary: JSON.stringify(prompt), history: [], completedStepIds: [], usage: usage() } } };
+      const f = await fixture(t, scope === "authoring" ? { author: { author: async () => result } } :
+        { draft: draft([node("unsafe"), node("unrelated")]) });
+      const needles = [prompt.prompt !== harmlessPrompt.prompt ? prompt.prompt : prompt.choices[0].id === "blue" ? prompt.choices[0].label : prompt.choices[0].id];
+      f.store.beforeSave = (db) => {
+        for (const needle of needles) assert.equal(JSON.stringify(db).includes(needle), false, "Unsafe prompt reached store.save");
+      };
+      const r = await room(f.kernel);
+      if (scope === "authoring") {
+        await f.kernel.authorPlan(r.id, { requestId: "unsafe", expectedRoomRevision: r.revision, goal: "Choose a design" });
+        await f.store.waitFor((db) => db.state.authorings[0].status === "failed");
+        assert.equal(f.store.value.authorJobs[0].checkpoint, null);
+        assert.equal((await f.kernel.state()).questions.length, 0);
+      } else {
+        await start(f, r);
+        const bad = await f.worker.next();
+        const unrelated = await f.worker.next();
+        question(unrelated);
+        const pending = (await f.store.waitFor((db) => db.state.questions.length === 1)).state.questions[0];
+        question(bad, usage(), prompt);
+        await f.store.waitFor((db) => db.state.runs[0].nodes[0].status === "interrupted" && db.attempts[0].stopped);
+        assert.deepEqual((await f.kernel.state()).questions, [pending]);
+        assert.deepEqual(f.worker.cancellations, [bad.spec.ref]);
+        assert.equal(f.store.value.attempts[0].result, null);
+      }
+      assert.equal((await f.kernel.events(0)).events.filter((e) => e.type === "question.updated").length, scope === "worker" ? 1 : 0);
+      await assertNoStoredText(f.directory, needles);
+      await f.kernel.shutdown();
+      await assertNoStoredText(f.directory, needles);
+    });
+  }
+}
+
+for (const scope of ["worker", "authoring"] as const) {
+  test(`kernel rejects sensitive text, choice and routed voice answers without consuming ${scope} binding`, { timeout: 10_000 }, async (t) => {
+    let authorCalls = 0;
+    const f = await fixture(t, scope === "authoring" ? { author: { author: async () => {
+      authorCalls++;
+      return authorCalls === 1 ? { status: "waiting_question", question: harmlessPrompt, usage: usage(),
+        checkpoint: { version: 1, continuation: { version: 1, summary: "Choose a design", history: [], completedStepIds: [], usage: usage() } } } :
+        { status: "completed", draft: draft(), usage: usage(2) };
+    } } } : {});
+    const r = await room(f.kernel);
+    if (scope === "worker") { await start(f, r); question(await f.worker.next()); }
+    else await f.kernel.authorPlan(r.id, { requestId: "safe", expectedRoomRevision: r.revision, goal: "Choose a design" });
+    const db = await f.store.waitFor((db) => db.state.questions.length === 1);
+    const q = db.state.questions[0];
+    const router = createQuestionRouter({ harness: f.kernel });
+    const secrets = [credentialCanary, "password=synthetic-only-value", "My password is synthetic-only-value",
+      "Bearer SYNTHETIC_ONLY_VALUE", "https://example.invalid/?key=synthetic-only-value",
+      `ｓｋ-${"SYNTHETIC_ONLY_".repeat(2)}`, `s\u200Bk-${"SYNTHETIC_ONLY_".repeat(2)}`];
+    const before = structuredClone(f.store.value);
+    let saves = 0;
+    f.store.beforeSave = () => { saves++; };
+    for (const text of secrets) {
+      for (const source of ["text", "voice"] as const) {
+        await assert.rejects(f.kernel.answerQuestion({ binding: questionBinding(q), source, text, choiceId: null }), /Sensitive information/);
+      }
+      await assert.rejects(router.answerVoice({ binding: questionBinding(q), transcript: text }), /Secrets/);
+    }
+    for (const source of ["text", "voice"] as const) {
+      await assert.rejects(f.kernel.answerQuestion({ binding: questionBinding(q), source, text: null, choiceId: credentialCanary }), /Unknown question choice/);
+    }
+    assert.equal(saves, 0);
+    assert.deepEqual(f.store.value, before);
+    assert.deepEqual((await f.kernel.state()).questions, [q]);
+    assert.equal(f.worker.calls.length, scope === "worker" ? 1 : 0);
+    assert.equal(authorCalls, scope === "authoring" ? 1 : 0);
+    await assertNoStoredText(f.directory, secrets);
+    f.store.beforeSave = null;
+    const answered = await router.answerVoice({ binding: questionBinding(q), transcript: "Blue" });
+    assert.equal(answered.status, "answered");
+    assert.equal(answered.answer?.choiceId, "blue");
+    assert.equal(answered.revision, q.revision + 1);
+    if (scope === "worker") {
+      const resumed = await f.worker.next();
+      assert.notEqual(resumed.spec.ref.attemptId, q.target.scope === "node" ? q.target.attemptId : "");
+      assert.equal(resumed.spec.answer?.choiceId, "blue");
+      complete(resumed, usage(2));
+      await f.store.waitFor((db) => db.state.runs[0].status === "completed");
+    } else await f.store.waitFor((db) => db.state.authorings[0].status === "completed");
+    assert.deepEqual((await f.kernel.state()).approvals, []);
+    await f.kernel.shutdown();
+    await assertNoStoredText(f.directory, secrets);
+  });
+}
 
 test("durable room idempotency, revision CAS, accepted plan immutability and exact start", { timeout: 10_000 }, async (t) => {
   const f = await fixture(t);
@@ -533,6 +648,77 @@ async function crashAtIntent(t: TestContext, beforeStarted = false): Promise<{ d
   child.kill("SIGKILL");
   await exited.promise;
   return { directory, spec };
+}
+
+test("kernel rejects unsafe recovered worker questions without storing or replaying them", { timeout: 10_000 }, async (t) => {
+  const { directory, spec } = await crashAtIntent(t);
+  const worker = new ControlledWorker();
+  const store = new ObservedStore(directory);
+  const prompt = { ...harmlessPrompt, prompt: "What is your API key?" };
+  const result = question({ spec, sequence: 1, result: deferred<WorkerResult>(), context: { signal: new AbortController().signal, emit: async () => {} } }, usage(), prompt);
+  worker.reconciled = async (ref) => ({ state: "settled", ref, result });
+  store.beforeSave = (db) => assert.equal(JSON.stringify(db).includes(prompt.prompt), false, "Recovered unsafe content reached store.save");
+  const kernel = new HarnessKernel({ dataDirectory: directory, worker, author: { author: async () => { throw new Error("No author replay"); } } }, store);
+  await kernel.initialize();
+  t.after(() => kernel.shutdown());
+  assert.equal((await kernel.state()).ready, true);
+  assert.deepEqual((await kernel.state()).questions, []);
+  assert.equal((await kernel.state()).runs[0].nodes[0].status, "interrupted");
+  assert.deepEqual(worker.cancellations, [spec.ref]);
+  assert.equal(worker.calls.length, 0);
+  await assertNoStoredText(directory, [prompt.prompt]);
+  await kernel.shutdown();
+  await assertNoStoredText(directory, [prompt.prompt]);
+});
+
+for (const location of ["prompt", "choice", "answer", "result", "spec", "ledger", "author"] as const) {
+  test(`kernel refuses legacy unsafe ${location} without exposing state, rewriting data or cancelling unrelated resources`, { timeout: 10_000 }, async (t) => {
+    const f = await fixture(t);
+    const r = await room(f.kernel);
+    await start(f, r);
+    question(await f.worker.next());
+    await f.store.waitFor((db) => db.state.questions.length === 1);
+    if (location === "spec") {
+      const pending = f.store.value.state.questions[0];
+      await f.kernel.answerQuestion({ binding: questionBinding(pending), source: "text", text: "Blue", choiceId: null });
+      await f.worker.next();
+    }
+    await f.kernel.shutdown();
+    const saved = structuredClone(f.store.value);
+    const q = saved.state.questions[0];
+    const answer: AnswerQuestionRequest = { binding: questionBinding(q), source: "text", text: credentialCanary, choiceId: null };
+    if (location === "prompt") q.question.prompt = "What is your API key?";
+    else if (location === "choice") q.question.choices[0].label = credentialCanary;
+    else if (location === "answer") q.answer = { text: credentialCanary, choiceId: null, answeredAt: q.createdAt };
+    else if (location === "result") {
+      const result = saved.attempts[0].result;
+      assert.equal(result?.status, "waiting_question");
+      if (result?.status === "waiting_question") result.checkpoint.question.prompt = "What is your API key?";
+    } else if (location === "spec") saved.attempts[1].spec.answer = answer;
+    else if (location === "ledger") saved.ledgers[0].answer = answer;
+    else saved.authorJobs[0].answer = answer;
+    const file = path.join(f.directory, "harness-kernel/kernel.sqlite");
+    const connection = new DatabaseSync(file);
+    connection.prepare("UPDATE snapshot SET body=? WHERE id=1").run(JSON.stringify(saved));
+    connection.close();
+    const before = await readFile(file);
+    let reconciliations = 0;
+    const worker = new ControlledWorker();
+    worker.reconciled = async (ref) => { reconciliations++; return { state: "running", ref }; };
+    const kernel = createHarnessKernel({ dataDirectory: f.directory, worker, author: f.author });
+    await assert.rejects(kernel.initialize(), /Unsafe persisted clarification/);
+    const state = await kernel.state();
+    assert.equal(state.ready, false);
+    assert.deepEqual(state.questions, []);
+    assert.deepEqual(state.runs, []);
+    assert.equal(JSON.stringify(state).includes(credentialCanary), false);
+    await assert.rejects(kernel.events(0), /initialization failed/);
+    assert.equal(worker.calls.length, 0);
+    assert.equal(reconciliations, 0);
+    assert.equal(worker.cancellations.length, 0);
+    await kernel.shutdown();
+    assert.deepEqual(await readFile(file), before);
+  });
 }
 
 for (const beforeStarted of [false, true]) {
