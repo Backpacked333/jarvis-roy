@@ -123,12 +123,13 @@ int main(int argc, char **argv) {
 };
 
 export const BUILD_AND_TEST = "npm run build && npm test";
+export const PROJECT_OUTPUT_PATHS = ["package.json", "src", "tools", "test", "native", "dist"];
 export function codingSpec(image: string, nodeId = "project"): WorkerSpec {
   const policy = defaultRoomPolicy(image);
   policy.runBudget.maxModelCalls = 20; policy.runBudget.maxTokens = 100_000;
   return { version: 1, ref: { roomId: "coding", runId: "run", nodeId, attemptId: "attempt" }, planDigest: "b".repeat(64),
     node: { id: nodeId, title: "Offline static project", role: "builder", instructions: "Build and test the supplied offline web project.",
-      dependencies: [], inputFrom: [], outputPaths: ["dist/index.html", "dist/manifest.json"], limits: { ...policy.runBudget, maxWallTimeMs: 90_000 } },
+      dependencies: [], inputFrom: [], outputPaths: ["dist", "native/slug"], limits: { ...policy.runBudget, maxWallTimeMs: 90_000 } },
     policy, inputs: [], checkpoint: null, answer: null };
 }
 

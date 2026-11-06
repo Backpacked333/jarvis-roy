@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -102,16 +102,58 @@ test("question seals/stops old container, resumes exact answer/files in new atte
     assert.equal(result.status, "waiting_question", JSON.stringify(result)); if (result.status !== "waiting_question") return;
     assert.equal(result.checkpoint.sequence, events.at(-1)!.sequence);
     assert.equal(events[0].sequence, 0);
+    assert.deepEqual(result.checkpoint.artifacts, []);
     const resumed = makeSpec("attempt2"); resumed.checkpoint = result.checkpoint;
     resumed.answer = { binding: { questionId: "q1", revision: 1, target: { scope: "node", ...first.ref } }, source: "text", text: "Hello Roy", choiceId: null };
     const second = await runner.run(resumed, context);
     assert.equal(second.status, "completed", JSON.stringify(second)); assert.equal(second.usage.steps, 5);
+    if (second.status === "completed") assert.deepEqual(second.artifacts[0].files.map(file => file.path), ["output.txt"]);
     assert.equal(resources.length, 2); assert.notEqual(resources[0], resources[1]);
     const stale = makeSpec("attempt3"); stale.checkpoint = result.checkpoint; stale.answer = resumed.answer;
     assert.equal((await runner.run(stale, context)).status, "failed");
     const cross = structuredClone(resumed); cross.ref.roomId = "other";
     await assert.rejects(runner.run(cross, context));
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("private checkpoint bytes survive worker restart, cannot be downloaded, and missing/tampered snapshots never silently resume", { skip: !enabled, timeout: 120_000 }, async () => {
+  for (const mutation of ["none", "missing", "tampered", "missing-pointer"]) {
+    const directory = await mkdtemp(join(tmpdir(), "jarvis-private-checkpoint-")), spec = makeSpec();
+    let calls = 0;
+    const mock = provider([
+      ["write_file", { path: "scratch/once.txt", content: "private continuation bytes" }],
+      ["ask_question", { prompt: "Continue with greeting?" }],
+      ["run_check", { command: "python3 -c 'from pathlib import Path; assert Path(\"scratch/once.txt\").read_text()==\"private continuation bytes\"; Path(\"output.txt\").write_text(\"resumed\")'" }],
+      ["final_answer", { answer: "Restored private working state in a fresh container." }],
+    ]);
+    const options = { dataDirectory: directory, model: "fixture/checkpoint", fetch: (async (url, init) => { calls++; return mock(url, init); }) as typeof fetch };
+    const context = { signal: new AbortController().signal, emit: async () => {} };
+    try {
+      const runner = createWorkerRunner(options), first = await runner.run(spec, context);
+      assert.equal(first.status, "waiting_question", JSON.stringify(first)); if (first.status !== "waiting_question") continue;
+      assert.deepEqual(first.checkpoint.artifacts, []);
+      const journal = JSON.parse(await readFile(join(directory, "harness-workers-v1", "attempts", sha256(canonicalJson(spec.ref))), "utf8"));
+      const privateManifest = journal.workspace[0];
+      await assert.rejects(runner.artifacts.read({ roomId: spec.ref.roomId, runId: spec.ref.runId,
+        artifactId: privateManifest.id, digest: privateManifest.digest }, "scratch/once.txt", 100));
+      const blob = join(directory, "harness-workers-v1", "checkpoints", "blobs", privateManifest.files[0].sha256);
+      if (mutation === "missing") await rm(blob);
+      if (mutation === "tampered") { await chmod(blob, 0o600); await writeFile(blob, "changed"); }
+      if (mutation === "missing-pointer") {
+        delete journal.workspace;
+        await writeFile(join(directory, "harness-workers-v1", "attempts", sha256(canonicalJson(spec.ref))), JSON.stringify(journal));
+      }
+      const resumed = makeSpec("resumed"); resumed.checkpoint = first.checkpoint;
+      resumed.answer = { binding: { questionId: "q", revision: 1, target: { scope: "node", ...spec.ref } }, source: "text", text: "Continue", choiceId: null };
+      const result = await createWorkerRunner(options).run(resumed, context);
+      if (mutation !== "none") {
+        assert.equal(result.status, "failed"); if (result.status === "failed") assert.match(result.error,
+          mutation === "missing-pointer" ? /Worker input or protocol validation failed/ : /Private checkpoint workspace missing or invalid/);
+        assert.deepEqual(result.usage, first.usage);
+        assert.equal(calls, 2);
+      } else { assert.equal(result.status, "completed", JSON.stringify(result)); assert.equal(calls, 4); }
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  }
 });
 
 test("cancellation stops active real container; fresh runner detects and reaps an orphan without successful replay", { skip: !enabled, timeout: 90_000 }, async () => {

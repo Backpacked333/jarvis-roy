@@ -2,7 +2,7 @@ import { open, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import type { WorkerRunnerOptions } from "../harness-contracts/service.ts";
-import { AttemptRefSchema, UsageSchema, type AttemptRef, type Usage } from "../harness-contracts/domain.ts";
+import { ArtifactManifestSchema, AttemptRefSchema, UsageSchema, type ArtifactManifest, type AttemptRef, type Usage } from "../harness-contracts/domain.ts";
 import { QuestionPromptSchema, type QuestionPrompt } from "../harness-contracts/interactions.ts";
 import {
   WorkerCheckpointSchema, WorkerResultSchema, WorkerSpecSchema,
@@ -16,11 +16,15 @@ import { runController } from "./controller.ts";
 import { command } from "./process.ts";
 import { imageProfile } from "./images.ts";
 
-const RecordSchema = z.strictObject({
+const LegacyRecordSchema = z.strictObject({
   version: z.literal(1), ref: AttemptRefSchema, specDigest: z.string(), planDigest: z.string(),
   startedAt: z.number(), priorWallMs: z.number(), wallMs: z.number(), usage: UsageSchema,
   resourceId: z.string().nullable(), stopped: z.boolean(), result: WorkerResultSchema.nullable(),
 });
+const RecordSchema = z.union([LegacyRecordSchema, LegacyRecordSchema.extend({
+  version: z.literal(2), workspace: z.array(ArtifactManifestSchema).max(32).nullable(),
+}).refine(record => record.result?.status !== "waiting_question" || record.workspace !== null,
+  "A v2 question requires its private workspace snapshot")]);
 type Record = z.infer<typeof RecordSchema>;
 const LedgerSchema = z.strictObject({
   version: z.literal(1), binding: z.string(), usage: UsageSchema, wallMs: z.number(), active: AttemptRefSchema.nullable(),
@@ -42,6 +46,7 @@ class Runner implements WorkerRunner {
   private readonly records: PrivateStore;
   private readonly ledgers: PrivateStore;
   private readonly locks: PrivateStore;
+  private readonly checkpoints: Artifacts;
   private readonly docker: Docker;
   private readonly gateway: Gateway;
   private readonly python: string;
@@ -55,6 +60,7 @@ class Runner implements WorkerRunner {
     this.ledgers = new PrivateStore(join(directory, "budgets"));
     this.locks = new PrivateStore(join(directory, "locks"));
     this.artifacts = new Artifacts(directory);
+    this.checkpoints = new Artifacts(join(directory, "checkpoints"));
     this.docker = new Docker(options.dockerBinary ?? "docker", sha256(directory).slice(0, 16));
     this.python = options.pythonBinary ?? process.env.JARVIS_WORKER_PYTHON ?? "python3";
     this.gateway = new Gateway(options.model, options.fetch ?? fetch, process.env.AI_GATEWAY_API_KEY);
@@ -108,6 +114,7 @@ class Runner implements WorkerRunner {
     if (context.signal.aborted) abort.abort();
     let timer: NodeJS.Timeout | undefined, record: Record | undefined, ledger: Ledger | undefined, timedOut = false;
     let sequence = 0;
+    let checkpointWorkspace: ArtifactManifest[] | null = null;
     const emit = async (event: Omit<Extract<WorkerEvent, { type: "progress" }>, "ref" | "sequence" | "at"> |
       { type: "started"; resourceId: string } | { type: "usage"; usage: Usage }): Promise<void> => {
       abort.signal.throwIfAborted();
@@ -146,13 +153,18 @@ class Runner implements WorkerRunner {
       if (spec.checkpoint) {
         const old = await this.record(spec.checkpoint.ref);
         if (!old?.stopped || old.result?.status !== "waiting_question" || !same(old.result.checkpoint, spec.checkpoint)) throw new Error("Checkpoint must be the exact durable inert prior result");
+        checkpointWorkspace = old.version === 2 ? old.workspace : null;
+        if (checkpointWorkspace?.some(manifest => !same({ roomId: manifest.roomId, runId: manifest.runId,
+          nodeId: manifest.nodeId, attemptId: manifest.attemptId }, old.ref) || manifest.planDigest !== spec.planDigest)) {
+          throw new Error("Private checkpoint workspace scope mismatch");
+        }
         if (!same(ledger.usage, spec.checkpoint.continuation.usage)) throw new Error("Checkpoint budget is no longer current");
         if (spec.answer!.choiceId && !spec.checkpoint.question.choices.some(c => c.id === spec.answer!.choiceId) ||
             spec.answer!.text !== null && !spec.checkpoint.question.allowText) throw new Error("Answer mode is not allowed");
       }
       ledger.active = ref; ledger.attempts.push(ref.attemptId);
-      record = { version: 1, ref, specDigest, planDigest: spec.planDigest, startedAt: Date.now(), priorWallMs: ledger.wallMs,
-        wallMs: 0, usage: structuredClone(ledger.usage), resourceId: null, stopped: false, result: null };
+      record = { version: 2, ref, specDigest, planDigest: spec.planDigest, startedAt: Date.now(), priorWallMs: ledger.wallMs,
+        wallMs: 0, usage: structuredClone(ledger.usage), resourceId: null, stopped: false, result: null, workspace: null };
       await persist();
       const remainingWall = spec.node.limits.maxWallTimeMs - ledger.wallMs;
       if (remainingWall <= 0 || record.usage.steps >= spec.node.limits.maxSteps || record.usage.modelCalls >= spec.node.limits.maxModelCalls ||
@@ -166,7 +178,9 @@ class Runner implements WorkerRunner {
       await persist();
       await emit({ type: "started", resourceId: record.resourceId });
       const name = resourceName(this.docker.owner, ref);
-      const restored = await this.artifacts.restore(spec.checkpoint ? spec.checkpoint.artifacts : spec.inputs, spec.policy);
+      const restored = checkpointWorkspace !== null
+        ? await this.checkpoints.restore(checkpointWorkspace, spec.policy).catch(() => { throw new Error("Private checkpoint workspace missing or invalid; explicit retry required"); })
+        : await this.artifacts.restore(spec.checkpoint ? spec.checkpoint.artifacts : spec.inputs, spec.policy);
       for (const file of restored) await this.docker.operation(name, { op: "write", ...file, maxBytes: spec.policy.sandbox.maxArtifactBytes }, { signal: abort.signal });
       const history = structuredClone(spec.checkpoint?.continuation.history ?? []);
       const completedStepIds = [...(spec.checkpoint?.continuation.completedStepIds ?? [])];
@@ -252,8 +266,10 @@ class Runner implements WorkerRunner {
       if (outcome.status === "completed" && (!files.length || spec.node.outputPaths.some(path => !files.some(file => file.path === path || file.path.startsWith(`${path}/`))))) {
         throw new Error("Completed work must contain every declared output path");
       }
-      const artifacts = await this.artifacts.seal(spec, files, checkedSnapshot === sha256(canonicalJson(files)) ? checks : []);
+      const outputs = files.filter(file => spec.node.outputPaths.some(path => file.path === path || file.path.startsWith(`${path}/`)));
+      const artifacts = await this.artifacts.seal(spec, outputs, checkedSnapshot === sha256(canonicalJson(files)) ? checks : []);
       if (outcome.status === "waiting_question") {
+        record.workspace = await this.checkpoints.seal(spec, files, []);
         const checkpoint = WorkerCheckpointSchema.parse({ version: 1, ref, sequence: sequence - 1, createdAt: new Date().toISOString(), resumeMode: "continue_after_answer",
           continuation: { version: 1, summary: `Paused after ${record.usage.steps} cumulative tool steps; continue without replay.`, history,
             completedStepIds, usage: record.usage }, artifacts, question });
@@ -262,10 +278,10 @@ class Runner implements WorkerRunner {
         result = { status: "completed", ref, usage: record.usage, artifacts, summary: finalAnswer! };
       }
     } catch (error) {
-      result = timedOut ? { status: "failed", ref, usage: record?.usage ?? emptyUsage(), error: "Full-node wall-time budget exhausted" }
+      result = timedOut ? { status: "failed", ref, usage: record?.usage ?? ledger?.usage ?? emptyUsage(), error: "Full-node wall-time budget exhausted" }
         : abort.signal.aborted
-        ? { status: "cancelled", ref, usage: record?.usage ?? emptyUsage(), confirmed: false }
-        : { status: "failed", ref, usage: record?.usage ?? emptyUsage(), error: errorMessage(error) };
+        ? { status: "cancelled", ref, usage: record?.usage ?? ledger?.usage ?? emptyUsage(), confirmed: false }
+        : { status: "failed", ref, usage: record?.usage ?? ledger?.usage ?? emptyUsage(), error: errorMessage(error) };
     }
     try {
       const stopped = await this.docker.stop(ref).catch(() => false);

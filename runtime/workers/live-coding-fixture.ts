@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkerRunner } from "../bridge/harness-worker/index.ts";
 import { imageProfile } from "../bridge/harness-worker/images.ts";
-import { assertProjectArtifacts, BUILD_AND_TEST, codingSpec, fixtureProvider, projectCalls } from "./coding-fixture.ts";
+import { assertProjectArtifacts, BUILD_AND_TEST, codingSpec, fixtureProvider, projectCalls, PROJECT_OUTPUT_PATHS } from "./coding-fixture.ts";
 
 if (process.env.JARVIS_WORKER_LIVE_TEST !== "1" || !process.env.AI_GATEWAY_API_KEY || !process.env.JARVIS_WORKER_MODEL ||
     !process.env.JARVIS_WORKER_IMAGE || !imageProfile(process.env.JARVIS_WORKER_IMAGE).coding) {
@@ -13,6 +13,8 @@ if (process.env.JARVIS_WORKER_LIVE_TEST !== "1" || !process.env.AI_GATEWAY_API_K
 const directory = await mkdtemp(join(tmpdir(), "jarvis-live-coding-"));
 const source = codingSpec(process.env.JARVIS_WORKER_IMAGE, "source");
 const builder = codingSpec(process.env.JARVIS_WORKER_IMAGE, "enhance");
+source.node.outputPaths = PROJECT_OUTPUT_PATHS;
+builder.node.outputPaths = source.node.outputPaths;
 const verifier = codingSpec(process.env.JARVIS_WORKER_IMAGE, "verify");
 const synthetic = createWorkerRunner({ dataDirectory: directory, model: "synthetic/source", fetch: fixtureProvider(projectCalls()) });
 const live = createWorkerRunner({ dataDirectory: directory, model: process.env.JARVIS_WORKER_MODEL });

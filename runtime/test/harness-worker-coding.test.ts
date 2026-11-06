@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Docker, resourceName } from "../bridge/harness-worker/docker.ts";
 import { WORKER_IMAGES, imageProfile, workerArchitecture } from "../bridge/harness-worker/images.ts";
 import { createWorkerRunner } from "../bridge/harness-worker/index.ts";
-import { assertProjectArtifacts, codingSpec, fixtureProvider, projectCalls } from "../workers/coding-fixture.ts";
+import { assertProjectArtifacts, codingSpec, fixtureProvider, projectCalls, PROJECT_FILES, PROJECT_OUTPUT_PATHS } from "../workers/coding-fixture.ts";
 
 const enabled = process.env.JARVIS_WORKER_CODING_TESTS === "1";
 const architecture = enabled ? await new Docker("docker", "platform").available() : "amd64";
@@ -22,6 +22,8 @@ test("only reviewed coding pins enable executable workspace; platform selection 
   }
   assert.equal(workerArchitecture("x86_64"), "amd64"); assert.equal(workerArchitecture("aarch64"), "arm64");
   assert.throws(() => workerArchitecture("ppc64le"), /verified/);
+  assert.ok(Object.keys(PROJECT_FILES).every(path => PROJECT_OUTPUT_PATHS.some(output => path === output || path.startsWith(`${output}/`))));
+  assert.ok(PROJECT_OUTPUT_PATHS.filter(path => path !== "dist").every(path => Object.keys(PROJECT_FILES).some(file => file === path || file.startsWith(`${path}/`))));
 });
 
 test("real coding workspace executes native tools without changing filesystem/network/credential boundaries", { skip: !enabled, timeout: 45_000 }, async () => {
@@ -69,6 +71,10 @@ test("real smolagents builds/tests offline web project and native helper, export
   try {
     const result = await runner.run(spec, { signal: new AbortController().signal, emit: async () => {} });
     await assertProjectArtifacts(runner, result);
+    if (result.status === "completed") {
+      assert.ok(result.artifacts[0].files.every(file => file.path.startsWith("dist/") || file.path === "native/slug"));
+      assert.ok(!result.artifacts[0].files.some(file => file.path === "src/model.mjs" || file.path === "native/slug.c"));
+    }
     assert.equal(result.usage.modelCalls, projectCalls().length);
     assert.equal((await runner.reconcile(spec.ref)).state, "settled");
   } finally {
