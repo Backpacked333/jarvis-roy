@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { containsCredentialLikeData, deleteMemory, listMemories } from "../agent/lib/memory.ts";
 import { BridgeError, errorMessage } from "./errors.ts";
-import { redactText, safeJson } from "./redaction.ts";
+import { redactText } from "./redaction.ts";
+import { reviewArguments } from "./approval.ts";
 import { CONVERSATION_ID, TaskStore } from "./store.ts";
 import type {
   Approval,
@@ -253,6 +254,9 @@ export class JarvisService {
       throw new BridgeError("The task is being cancelled.", 409);
     }
     const options = this.pendingOptions.get(taskId) ?? pendingOptionsFromTask(task);
+    if (task.approvals.find((item) => item.id === interactionId)?.reviewable === false && optionId !== "deny") {
+      throw new BridgeError("This request cannot be fully reviewed. Only denial is allowed.", 409);
+    }
     const allowed = options.get(interactionId);
     const submissionKey = `${taskId}:${interactionId}`;
     if (!allowed || !allowed.has(optionId) || this.submittingInteractions.has(submissionKey)) {
@@ -642,19 +646,19 @@ export class JarvisService {
           const callName = stringValue(originCall.name) ?? call?.name;
           const input = originCall.input ?? call?.input;
           const prompt = redactText(stringValue(request.prompt) ?? "A response is required.");
-          const argumentDetail = callName
-            ? `\nTool: ${callName}\nArguments: ${safeJson(input)}`
-            : "";
+          const review = request.kind === "approval" ? reviewArguments(callName, input) : undefined;
+          const visibleOptions = review?.reviewable === false ? options.filter((option) => option.id === "deny") : options;
           const approval: Approval = {
             id: interactionId,
-            title,
-            detail: `${prompt}${argumentDetail}`.slice(0, 22_000),
-            options,
+            title: title.slice(0, 500),
+            ...(review ?? {}),
+            detail: review ? review.detail : prompt.slice(0, 8_000),
+            options: visibleOptions,
           };
           if (!task.approvals.some((item) => item.id === interactionId)) {
             task.approvals = [...task.approvals, approval];
           }
-          pending.set(interactionId, new Set(options.map((option) => option.id)));
+          pending.set(interactionId, new Set(visibleOptions.map((option) => option.id)));
           this.submittingInteractions.delete(`${taskId}:${interactionId}`);
           if (ACTIVE_STATUSES.has(task.status) && !task.cancelConfirmed) task.status = "waiting";
           append(`Waiting for input: ${title}.`);

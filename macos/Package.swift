@@ -5,5 +5,8 @@ let package = Package(
     name: "JarvisRoy",
     platforms: [.macOS(.v14)],
     products: [.executable(name: "Jarvis", targets: ["Jarvis"])],
-    targets: [.executableTarget(name: "Jarvis")]
+    targets: [
+        .executableTarget(name: "Jarvis"),
+        .testTarget(name: "JarvisVoiceTests", dependencies: ["Jarvis"])
+    ]
 )

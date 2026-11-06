@@ -72,8 +72,9 @@ test("tasks persist actual approval input, response, and completed result", asyn
   state = await service.state();
   assert.equal(state.tasks[0]?.reply, "Preference saved.");
   const persisted = JSON.parse(await readFile(path.join(setup.dataDirectory, "tasks.json"), "utf8"));
-  assert.equal(persisted[0].reply, "Preference saved.");
-  assert.equal(persisted[0].status, "completed");
+  assert.equal(persisted.version, 2);
+  assert.equal(persisted.tasks[0].reply, "Preference saved.");
+  assert.equal(persisted.tasks[0].status, "completed");
 });
 
 test("cancellation waits for the eve turn-settled confirmation", async (t) => {

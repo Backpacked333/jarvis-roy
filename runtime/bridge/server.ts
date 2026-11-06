@@ -7,6 +7,7 @@ import { bearerTokenMatches, isValidLocalToken } from "../agent/lib/local-auth.t
 import { BridgeError, errorMessage } from "./errors.ts";
 import { redactText } from "./redaction.ts";
 import { JarvisService } from "./service.ts";
+import { capabilitiesStatus } from "./capabilities.ts";
 import type { EveClient } from "./types.ts";
 
 const BRIDGE_HOST = "127.0.0.1";
@@ -105,6 +106,11 @@ async function route(
   }
   const method = request.method ?? "GET";
   try {
+    if (pathname === "/v1/capabilities") {
+      if (method !== "GET") throw new BridgeError("Method not allowed.", 405);
+      json(response, 200, capabilitiesStatus());
+      return;
+    }
     if (pathname === "/v1/state") {
       if (method !== "GET") throw new BridgeError("Method not allowed.", 405);
       json(response, 200, await service.state());

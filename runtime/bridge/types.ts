@@ -16,6 +16,8 @@ export interface Approval {
   id: string;
   title: string;
   detail: string;
+  reviewable?: boolean;
+  blockedReason?: string;
   options: ApprovalOption[];
 }
 

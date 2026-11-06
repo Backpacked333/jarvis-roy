@@ -30,6 +30,7 @@ struct WorkspaceView: View {
                 }
                 switch model.tab {
                 case .workspace: workspace
+                case .capabilities: capabilities
                 case .memory: memory
                 case .privacy: privacy
                 }
@@ -37,7 +38,6 @@ struct WorkspaceView: View {
         }
         .background(Palette.background)
         .tint(Palette.cyan)
-        .onChange(of: voice.transcript) { _, text in model.draft = text }
         .alert("Delete this memory?", isPresented: Binding(
             get: { memoryToDelete != nil },
             set: { if !$0 { memoryToDelete = nil } }
@@ -75,7 +75,27 @@ struct WorkspaceView: View {
                     .background(model.tab == tab ? Palette.cyan.opacity(0.075) : .clear, in: RoundedRectangle(cornerRadius: 8))
                 }.buttonStyle(.plain).padding(.bottom, 6)
             }
-            Spacer()
+            Button { Task { await model.newConversation() } } label: {
+                Label("New conversation", systemImage: "plus")
+            }.buttonStyle(.plain).foregroundStyle(Palette.cyan).padding(.vertical, 14)
+                .disabled(!model.isConnected || model.pendingActions.contains("new-conversation"))
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(model.conversations) { conversation in
+                        Button { model.selectConversation(conversation.id) } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(conversation.title).lineLimit(2).font(.system(size: 12))
+                                let pending = model.tasks.filter { $0.conversationId == conversation.id && $0.canCancel }
+                                if !pending.isEmpty {
+                                    Text(pending.contains { !$0.approvals.isEmpty } ? "Needs approval" : "Active / unconfirmed")
+                                        .font(.caption2).foregroundStyle(Palette.amber)
+                                }
+                            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                                .background(model.selectedConversationID == conversation.id ? Palette.cyan.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                        }.buttonStyle(.plain)
+                    }
+                }
+            }
             VStack(alignment: .leading, spacing: 10) {
                 Label("You stay in control", systemImage: "lock.shield").font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.8))
                 Text("Desktop actions wait for your approval. Always.").font(.system(size: 11)).foregroundStyle(Palette.muted).lineSpacing(4)
@@ -89,6 +109,13 @@ struct WorkspaceView: View {
         HStack(spacing: 10) {
             Text(model.tab.rawValue).font(.system(size: 14, weight: .medium))
             Spacer()
+            VStack(alignment: .trailing, spacing: 3) {
+                Label(voice.isListening ? "Mic on · on device" : "Mic muted / paused", systemImage: voice.isListening ? "mic.fill" : "mic.slash")
+                    .foregroundStyle(voice.isListening ? Palette.amber : Palette.muted)
+                Text(voice.wakeStatus).foregroundStyle(Palette.muted)
+            }.font(.system(size: 10))
+            Button("Mute mic") { voice.stopListening() }.font(.caption)
+                .disabled(!voice.isListening && !voice.wakeWordEnabled && !voice.isRequestingPermission)
             Circle().fill(model.isConnected ? Palette.cyan : Palette.amber).frame(width: 6, height: 6)
             Text(model.isConnected ? "Agent connected" : "Agent offline").font(.system(size: 11)).foregroundStyle(Palette.muted)
             Divider().frame(height: 16).padding(.horizontal, 12)
@@ -107,7 +134,25 @@ struct WorkspaceView: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
-                        if let task = model.selectedTask { taskDetail(task) } else { welcome }
+                        if let conversation = model.selectedConversation {
+                            Text(conversation.title).font(.title2)
+                            if conversation.messages.isEmpty { welcome }
+                            ForEach(conversation.messages) { message in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(message.role == "user" ? "YOU" : "JARVIS").font(.caption).foregroundStyle(Palette.cyan)
+                                    Text(message.text).textSelection(.enabled).lineSpacing(5)
+                                }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Palette.panel, in: RoundedRectangle(cornerRadius: 12))
+                            }
+                            if let task = model.selectedTask {
+                                Divider()
+                                taskDetail(task)
+                            }
+                        } else {
+                            welcome
+                            Button("Start a conversation") { Task { await model.newConversation() } }
+                                .disabled(!model.isConnected || model.pendingActions.contains("new-conversation"))
+                        }
                     }.padding(32).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 composer
@@ -153,28 +198,39 @@ struct WorkspaceView: View {
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let error = voice.error { Text(error).font(.caption).foregroundStyle(Palette.amber) }
+            if let notice = model.voiceNotice { Text(notice).font(.caption).foregroundStyle(Palette.muted) }
+            if !model.voiceReview.isEmpty {
+                DisclosureGroup("Voice text retained for review") {
+                    ScrollView { Text(model.voiceReview).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 120)
+                    Button("Add to draft (mutes microphone)") { model.useVoiceReview() }
+                }.font(.caption).foregroundStyle(Palette.amber)
+            }
+            Toggle("Hey Jarvis · opt-in on-device listening", isOn: Binding(
+                get: { voice.wakeWordEnabled }, set: { enabled in Task { await model.setWakeEnabled(enabled) } }
+            )).toggleStyle(.switch).font(.caption).disabled(model.selectedConversationID == nil)
             HStack(alignment: .bottom, spacing: 12) {
                 Button {
-                    if voice.isListening { voice.stopListening() } else { Task { await voice.startListening() } }
+                    if voice.isListening { voice.stopListening() } else { Task { await model.startManualListening() } }
                 } label: {
                     Image(systemName: voice.isListening ? "stop.fill" : "mic.fill")
                         .font(.system(size: 15)).frame(width: 38, height: 38)
                         .background(voice.isListening ? Palette.cyan.opacity(0.2) : .white.opacity(0.05), in: Circle())
                 }.buttonStyle(.plain).foregroundStyle(Palette.cyan)
-                    .disabled(voice.isRequestingPermission)
+                    .disabled(voice.isRequestingPermission || model.selectedConversationID == nil)
                     .accessibilityLabel(voice.isListening ? "Stop microphone" : "Start microphone")
                 TextField("What would you like to do?", text: $model.draft, axis: .vertical)
                     .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...5).padding(.vertical, 10)
+                    .disabled(model.selectedConversationID == nil)
                     .onSubmit { Task { await model.send() } }
                 Button { Task { await model.send() } } label: {
                     Image(systemName: "arrow.up").font(.system(size: 15, weight: .semibold)).frame(width: 36, height: 36)
                 }.buttonStyle(.borderedProminent).tint(Palette.cyan)
-                    .disabled(!model.isConnected || model.isSubmitting || model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.draft.count > 8000)
-                    .accessibilityLabel("Send task")
+                    .disabled(!model.canSend)
+                    .accessibilityLabel("Send in selected conversation")
             }.padding(12).background(Palette.panel, in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(voice.isListening ? Palette.cyan.opacity(0.5) : Palette.line))
             HStack {
-                Text(voice.isListening ? "Listening on device · stop, review, then send" : "Each message starts an independent task · ⌘. stops all work")
+                Text(model.sendBlockReason ?? "Follow-up in this conversation · approvals require buttons · ⌘. stops all work")
                     .font(.system(size: 9)).foregroundStyle(model.draft.count > 8000 ? Palette.amber : Palette.muted)
                 Spacer()
                 Button {
@@ -199,18 +255,17 @@ struct WorkspaceView: View {
                 Spacer()
                 Text("\(model.activeCount) active").font(.system(size: 10)).foregroundStyle(Palette.cyan)
             }
-            Button { model.selectedTaskID = nil } label: { Label("New task", systemImage: "plus") }
-                .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.cyan)
+            Text("Selected thread · tasks & approvals").font(.caption2).foregroundStyle(Palette.muted)
             ScrollView {
                 LazyVStack(spacing: 10) {
-                    if model.tasks.isEmpty {
+                    if model.conversationTasks.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Image(systemName: "square.stack.3d.up").font(.title2).foregroundStyle(Palette.muted.opacity(0.6))
                             Text("A clear workspace.").font(.system(size: 12, weight: .medium))
                             Text("Tasks, approvals, and results will appear here as you work.").font(.system(size: 11)).foregroundStyle(Palette.muted).lineSpacing(4)
                         }.padding(.vertical, 24).frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    ForEach(model.tasks) { task in
+                    ForEach(model.conversationTasks) { task in
                         Button { model.selectedTaskID = task.id } label: {
                             VStack(alignment: .leading, spacing: 9) {
                                 HStack(spacing: 6) {
@@ -250,7 +305,7 @@ struct WorkspaceView: View {
                         ForEach(approval.options) { option in
                             Button(option.label) {
                                 Task { await model.act(key: approval.id, path: "v1/tasks/\(task.id)/respond", body: ["interactionId": approval.id, "optionId": option.id]) }
-                            }.disabled(model.pendingActions.contains(approval.id) || !model.isConnected)
+                            }.disabled(model.pendingActions.contains(approval.id) || !model.isConnected || (approval.reviewable == false && option.id != "deny"))
                         }
                     }
                 }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
@@ -258,7 +313,10 @@ struct WorkspaceView: View {
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.amber.opacity(0.25)))
             }
             if let error = task.error { notice(error, icon: "exclamationmark.triangle", color: Palette.amber) }
-            if !task.reply.isEmpty {
+            if let lateReply = task.lateReply, !lateReply.isEmpty {
+                notice("Output observed after cancellation; not a successful result: \(lateReply)", icon: "exclamationmark.triangle", color: Palette.amber)
+            }
+            if !task.reply.isEmpty && !["completed", "cancelled"].contains(task.status) {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
                         Text("JARVIS").font(.system(size: 10, weight: .semibold)).tracking(2).foregroundStyle(Palette.cyan)
@@ -309,16 +367,47 @@ struct WorkspaceView: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    private var capabilities: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                Text("Capabilities & setup").font(.largeTitle.weight(.light))
+                Text("Optional capabilities are off until configured in the launch environment. There are no credential fields in this app. Set the variables below in your terminal, then quit Jarvis and rerun scripts/run-macos.sh. Unset them and restart to disable.")
+                    .foregroundStyle(Palette.muted)
+                if let error = model.capabilityError {
+                    notice("Capability status unavailable: \(error)", icon: "exclamationmark.triangle", color: Palette.amber)
+                }
+                if let state = model.capabilityState {
+                    Text(state.notice).font(.caption).foregroundStyle(Palette.amber)
+                    ForEach(state.capabilities) { capability in
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text(capability.title).font(.headline)
+                                Spacer()
+                                Text(capability.stateLabel).font(.caption).foregroundStyle(Palette.amber)
+                            }
+                            Text(capability.detail).font(.callout).foregroundStyle(Palette.muted)
+                            Text(capability.setup).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                        }.padding(20).background(Palette.panel, in: RoundedRectangle(cornerRadius: 12))
+                    }
+                } else if model.capabilityError == nil {
+                    Text("Reading actual runtime configuration…").foregroundStyle(Palette.muted)
+                }
+                Link("Open macOS Privacy & Security", destination: URL(string: "x-apple.systempreferences:com.apple.preference.security")!)
+                Text("Permission declarations do not grant access. macOS may attribute helper/Automation requests to the launching terminal; grant only the identity you recognize. See README for provider setup and limitations.").font(.caption).foregroundStyle(Palette.muted)
+            }.padding(32).frame(maxWidth: 850, alignment: .leading)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var privacy: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 Text("An assistant.\nNot an open door.").font(.system(size: 32, weight: .light))
-                privacyRow("Microphone", icon: "mic", text: "Off until you press the microphone button. Recognition is on-device only; if unavailable, use text. Review the transcript before sending. No wake-word or always-on recording.")
+                privacyRow("Microphone", icon: "mic", text: "Off by default. Opt in to Hey Jarvis for rolling on-device English-US recognition, not a low-power wake model. Automatic command submission needs an idle selected thread and empty draft; otherwise text stays for review. Thread changes mute capture. Background speech is not submitted. Hardware/language support and capture gaps apply.")
                 privacyRow("Cloud reasoning", icon: "cloud", text: "Submitted text, recalled memories, and tool results go to the configured model through Vercel AI Gateway. This is not an offline assistant. Your API key stays in the local runtime, not task history.")
-                privacyRow("Desktop permissions", icon: "hand.raised", text: "Jarvis can propose opening an HTTPS website, saving a note in its own folder, or remembering a preference. Each requires an explicit approval. There is no shell, screen capture, email, or unrestricted file access.")
+                privacyRow("Desktop & account access", icon: "hand.raised", text: "Optional screen/app control, terminal, Mail, Calendar, iMessage sends and supported Home Assistant actions require setup and runtime approval. Approved screen/account content can enter cloud model context. Terminal runs with your user privileges, NOT in a security sandbox. Exact tool arguments must be visible; redacted, missing or oversized actions are deny-only.")
                 privacyRow("Stopping work", icon: "stop.circle", text: "Stop all ends speech and asks the agent runtime to cancel active work. Check task status for confirmation. An action already completed—such as opening a page—cannot be undone.")
                 privacyRow("Stored on this Mac", icon: "internaldrive", text: "Task history, approved notes, and saved memories remain in the local Jarvis data directory and runtime workflow store. Deleting a memory does not remove past mentions from task history. See the README for full deletion instructions.")
-                privacyRow("First-version boundaries", icon: "info.circle", text: "Tasks are independent, not one continuous conversation. The analyst can draft and reason but cannot browse for live information. Approvals require a click. The app is a source-build preview, not a signed or notarized distribution.")
+                privacyRow("Preview boundaries", icon: "info.circle", text: "Follow-ups continue the selected conversation. Separate threads have separate model history, but explicitly saved memories are global. Live research requires your Tavily configuration. The analyst drafts from supplied evidence, with no private tools. iMessage is send-only. This is an ad-hoc signed source-build preview, not a signed installer or notarized distribution.")
             }.padding(36).frame(maxWidth: 850, alignment: .leading)
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }

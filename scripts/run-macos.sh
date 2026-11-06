@@ -11,7 +11,9 @@ if ! command -v node >/dev/null || [[ "$(node -p 'process.versions.node.split(".
   exit 1
 fi
 APP="$ROOT/dist/Jarvis.app/Contents/MacOS/Jarvis"
-if [[ ! -x "$APP" || ! -f "$ROOT/runtime/.output/server/index.mjs" ]]; then
+export JARVIS_NATIVE_HELPER="$ROOT/dist/Jarvis.app/Contents/Helpers/JarvisControl.app/Contents/MacOS/JarvisControl"
+NODE="$(command -v node)"
+if [[ ! -x "$APP" || ! -x "$JARVIS_NATIVE_HELPER" || ! -f "$ROOT/runtime/.output/server/index.mjs" ]]; then
   echo "Run ./scripts/setup-macos.sh first." >&2
   exit 1
 fi
@@ -45,9 +47,9 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 cd "$ROOT/runtime"
-HOST=127.0.0.1 PORT=39201 node .output/server/index.mjs >"$JARVIS_DATA_DIR/logs/runtime.log" 2>&1 &
+"$NODE" "$ROOT/scripts/launch-env.mjs" runtime "$NODE" .output/server/index.mjs >"$JARVIS_DATA_DIR/logs/runtime.log" 2>&1 &
 EVE_PID=$!
-node bridge/server.ts >"$JARVIS_DATA_DIR/logs/bridge.log" 2>&1 &
+"$NODE" "$ROOT/scripts/launch-env.mjs" bridge "$NODE" bridge/server.ts >"$JARVIS_DATA_DIR/logs/bridge.log" 2>&1 &
 BRIDGE_PID=$!
 echo "Starting local services…"
 if ! node --input-type=module <<'JS'
@@ -68,6 +70,6 @@ process.exit(1);
 JS
 then exit 1; fi
 echo "Opening Jarvis. Keep this terminal open; quitting Jarvis stops its services."
-env -u AI_GATEWAY_API_KEY "$APP" &
+"$NODE" "$ROOT/scripts/launch-env.mjs" ui "$APP" &
 APP_PID=$!
 wait "$APP_PID"

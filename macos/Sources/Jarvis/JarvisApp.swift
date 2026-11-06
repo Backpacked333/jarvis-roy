@@ -25,7 +25,7 @@ struct JarvisApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("New task") { model.selectedTaskID = nil; model.tab = .workspace }
+                Button("New conversation") { Task { await model.newConversation() } }
                     .keyboardShortcut("n", modifiers: .command)
                 Button("Stop all work") { Task { await model.stopAll() } }
                     .keyboardShortcut(".", modifiers: .command)
