@@ -15,6 +15,11 @@ final class VoiceTransportHandsFreeTests: XCTestCase {
         return value
     }
 
+    private func conversationContext(_ id: String = "original-conversation") -> HarnessVoiceContext {
+        var value = HarnessVoiceContext(); value.conversationId = id
+        return value
+    }
+
     func testProviderDoneIsNotPlaybackDrained() throws {
         var drain = VoicePlaybackDrain()
         try drain.scheduled(960); try drain.scheduled(960); drain.end()
@@ -34,6 +39,21 @@ final class VoiceTransportHandsFreeTests: XCTestCase {
         try drain.played(960)
         XCTAssertNil(turn.answer(generation: 7, drain: drain))
         XCTAssertEqual(turn.answer(generation: 8, drain: drain), context())
+        XCTAssertNil(turn.answer(generation: 8, drain: drain))
+    }
+
+    func testConversationAnswerRequiresExactNonemptyCapturedScopeAndConsumesOnce() throws {
+        var drain = VoicePlaybackDrain(); try drain.scheduled(960); drain.end(); try drain.played(960)
+        var roomOnly = HarnessVoiceContext(); roomOnly.roomId = "room-only"
+        for unbound in [HarnessVoiceContext(), roomOnly, conversationContext(""), conversationContext("   ")] {
+            var turn = VoiceHandsFreeTurn(); turn.begin(context: unbound, generation: 8)
+            XCTAssertNil(turn.answer(generation: 8, drain: drain))
+        }
+        var turn = VoiceHandsFreeTurn(); var selected = conversationContext()
+        turn.begin(context: selected, generation: 8)
+        selected.conversationId = "changed-conversation"
+        XCTAssertNil(turn.answer(generation: 9, drain: drain))
+        XCTAssertEqual(turn.answer(generation: 8, drain: drain), conversationContext())
         XCTAssertNil(turn.answer(generation: 8, drain: drain))
     }
 
@@ -109,6 +129,13 @@ final class VoiceTransportHandsFreeTests: XCTestCase {
         let absent = VoiceController(audioInputAvailable: { false }, audioOutputAvailable: { true }, transport: wire, microphonePermission: { XCTFail("No permission prompt without device"); return true }, duplex: audio)
         absent.setCloudConsent(true); await absent.setHandsFreeEnabled(true)
         XCTAssertFalse(absent.handsFreeEnabled)
+        audio.unavailable = false; await voice.setHandsFreeEnabled(true)
+        XCTAssertTrue(voice.handsFreeEnabled)
+        XCTAssertFalse(voice.wakeWordEnabled)
+        XCTAssertTrue(voice.wakeStatus.contains("microphone off"))
+        XCTAssertTrue(voice.wakeStatus.contains("wake listening is off"))
+        XCTAssertNil(voice.capturedContext)
+        voice.stopListening()
     }
 
     @MainActor
@@ -241,6 +268,94 @@ final class VoiceTransportHandsFreeTests: XCTestCase {
         XCTAssertEqual(wire.frames.count, 1)
         XCTAssertFalse(voice.isListening)
         voice.stopListening()
+    }
+
+    @MainActor
+    func testConversationWindowRetainsCaptureAcrossSelectionChangeAndSilenceOrMuteNeverDispatches() async throws {
+        for mute in [false, true] {
+            var time = 1.0
+            let audio = HandsFreeAudio(), wire = HandsFreeWire()
+            let voice = VoiceController(audioInputAvailable: { true }, audioOutputAvailable: { true }, transport: wire, microphonePermission: { true }, duplex: audio, now: { time })
+            var received: [HarnessVoiceUtterance] = []
+            voice.onUtterance = { received.append($0) }
+            voice.setCloudConsent(true); await voice.setHandsFreeEnabled(true)
+            let captured = conversationContext()
+            voice.speak("Continue this conversation?", context: captured)
+            XCTAssertEqual(voice.capturedContext, captured)
+            await eventually { !wire.frames.isEmpty }
+            let spoken = wire.frames[0]
+            voice.contextProvider = { self.conversationContext("other-conversation") }
+            try server(wire, for: spoken, type: "audio", extra: ["pcm": "AAA=", "sampleRate": 24_000, "sequence": 0])
+            try server(wire, for: spoken, type: "audio_end")
+            XCTAssertEqual(wire.frames.count, 1)
+            audio.completions[0]()
+            let start = try XCTUnwrap(wire.frames.last)
+            XCTAssertEqual(start.type, "start"); XCTAssertEqual(start.context, captured)
+            XCTAssertEqual(voice.capturedContext, captured)
+            try server(wire, for: start, type: "state", extra: ["state": "listening"])
+            XCTAssertTrue(voice.isListening)
+            if mute { voice.stopListening() } else { time = 9.1; await eventually { voice.state == .idle } }
+            XCTAssertNil(voice.capturedContext); XCTAssertFalse(voice.isListening)
+            XCTAssertFalse(wire.frames.contains(where: { $0.type == "commit" }))
+            XCTAssertTrue(received.isEmpty)
+            let count = wire.frames.count
+            audio.completions[0]()
+            try server(wire, for: start, type: "state", extra: ["state": "listening"])
+            XCTAssertEqual(wire.frames.count, count)
+            XCTAssertFalse(voice.isListening)
+            voice.stopListening()
+        }
+    }
+
+    @MainActor
+    func testConversationFinalDispatchesOnlyWithExactCapturedContext() async throws {
+        for wrongContext in [false, true] {
+            let audio = HandsFreeAudio(), wire = HandsFreeWire()
+            let voice = VoiceController(audioInputAvailable: { true }, audioOutputAvailable: { true }, transport: wire, microphonePermission: { true }, duplex: audio)
+            var received: [HarnessVoiceUtterance] = []
+            voice.onUtterance = { received.append($0) }
+            voice.setCloudConsent(true); await voice.setHandsFreeEnabled(true)
+            let captured = conversationContext()
+            voice.speak("A reply", context: captured)
+            await eventually { !wire.frames.isEmpty }
+            let spoken = wire.frames[0]
+            try server(wire, for: spoken, type: "audio", extra: ["pcm": "AAA=", "sampleRate": 24_000, "sequence": 0])
+            try server(wire, for: spoken, type: "audio_end")
+            audio.completions[0]()
+            let start = try XCTUnwrap(wire.frames.last)
+            try server(wire, for: start, type: "state", extra: ["state": "listening"])
+            audio.signals.append(.init(pcm: Data(repeating: 12, count: 9_600), speech: true))
+            await eventually { wire.frames.filter { $0.type == "audio" }.count == 3 }
+            voice.finishListening()
+            await eventually { wire.frames.contains(where: { $0.type == "commit" }) }
+            let sentContext = wrongContext ? conversationContext("wrong-conversation") : captured
+            let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(sentContext))
+            try server(wire, for: start, type: "transcript", extra: ["text": "Continue", "final": true, "context": encoded])
+            if wrongContext {
+                XCTAssertTrue(received.isEmpty); XCTAssertEqual(voice.state, .unavailable)
+            } else {
+                XCTAssertEqual(received.count, 1); XCTAssertEqual(received.first?.context, captured)
+                XCTAssertEqual(voice.state, .idle)
+            }
+            XCTAssertNil(voice.capturedContext)
+            voice.stopListening()
+        }
+    }
+
+    @MainActor
+    func testMuteDuringPlaybackPreventsConversationRearmFromLateCompletion() async throws {
+        let audio = HandsFreeAudio(), wire = HandsFreeWire()
+        let voice = VoiceController(audioInputAvailable: { true }, audioOutputAvailable: { true }, transport: wire, microphonePermission: { true }, duplex: audio)
+        voice.setCloudConsent(true); await voice.setHandsFreeEnabled(true)
+        voice.speak("A reply", context: conversationContext())
+        await eventually { !wire.frames.isEmpty }
+        let spoken = wire.frames[0]
+        try server(wire, for: spoken, type: "audio", extra: ["pcm": "AAA=", "sampleRate": 24_000, "sequence": 0])
+        try server(wire, for: spoken, type: "audio_end")
+        voice.stopListening()
+        XCTAssertFalse(voice.handsFreeEnabled); XCTAssertNil(voice.capturedContext)
+        audio.completions[0]()
+        XCTAssertEqual(wire.frames.count, 1); XCTAssertEqual(voice.state, .idle)
     }
 }
 

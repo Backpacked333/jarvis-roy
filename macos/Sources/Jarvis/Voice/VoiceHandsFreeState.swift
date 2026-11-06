@@ -87,7 +87,8 @@ struct VoiceHandsFreeTurn {
         return (context, bytes)
     }
     mutating func answer(generation: Int, drain: VoicePlaybackDrain) -> HarnessVoiceContext? {
-        guard self.generation == generation, !consumed, context.question != nil, drain.finished, drain.receivedAudio else { return nil }
+        let bound = context.question != nil || context.conversationId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        guard self.generation == generation, !consumed, bound, drain.finished, drain.receivedAudio else { return nil }
         consumed = true; preRoll.clear()
         return context
     }
