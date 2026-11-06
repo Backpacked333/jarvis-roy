@@ -22,6 +22,7 @@ import {
 } from "../harness-contracts/worker.ts";
 import { addUsage, boundedDatabase, zeroUsage, type Attempt, type Database, type NodeLedger } from "./model.ts";
 import { SqliteKernelStore, type KernelStore } from "./store.ts";
+import { isSafeClarification, isSafeClarificationAnswer } from "../harness-interactions/clarification-safety.ts";
 
 const AuthorResultSchema = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("completed"), draft: PlanDraftSchema, usage: UsageSchema }),
@@ -88,8 +89,13 @@ export class HarnessKernel implements HarnessService {
 
   private async initializeOnce(): Promise<void> {
     try {
+      const unloaded = this.db;
       this.db = await this.store.open(this.db);
-      this.validateLoaded();
+      try { this.validateLoaded(); }
+      catch (error) {
+        this.db = unloaded;
+        throw error;
+      }
       this.commit((db) => {
         db.state.ready = false;
         db.state.defaultPolicy = RoomPolicySchema.parse(this.options.defaultPolicy ?? defaultRoomPolicy());
@@ -394,6 +400,9 @@ export class HarnessKernel implements HarnessService {
         if (error instanceof z.ZodError) throw error;
         throw new BridgeError(error instanceof Error ? error.message : "Question binding conflict", 409);
       }
+      if (!isSafeClarification(question.question) || !isSafeClarificationAnswer(answer)) {
+        throw new BridgeError("Sensitive information cannot be requested or supplied through clarifications", 400);
+      }
       const target = question.target;
       const room = this.room(db, target.roomId);
       if (room.status === "archived") conflict("Archived room cannot resume work");
@@ -593,6 +602,7 @@ export class HarnessKernel implements HarnessService {
     this.event(db, "question.updated", q.target.roomId, q.target.scope === "node" ? q.target.runId : null, q.id, q.revision);
   }
   private addQuestion(db: Database, target: QuestionTarget, prompt: QuestionPrompt): void {
+    if (!isSafeClarification(prompt)) throw new BridgeError("Unsafe clarification rejected", 400);
     const q: Question = { kind: "question", id: this.id(db), revision: 1, target, question: prompt,
       status: "pending", createdAt: this.timestamp(), expiresAt: new Date(this.milliseconds() + 86_400_000).toISOString(), answer: null };
     db.state.questions.push(q);
@@ -1029,6 +1039,15 @@ export class HarnessKernel implements HarnessService {
 
   private validateLoaded(): void {
     const db = this.db;
+    const safeQuestion = (question: QuestionPrompt | undefined) => !question || isSafeClarification(question);
+    const safeAnswer = (answer: Pick<AnswerQuestionRequest, "text" | "choiceId"> | null) => !answer || isSafeClarificationAnswer(answer);
+    if (db.state.questions.some((q) => !safeQuestion(q.question) || !safeAnswer(q.answer)) ||
+        db.attempts.some((a) => !safeQuestion(a.spec.checkpoint?.question) || !safeAnswer(a.spec.answer) ||
+          (a.result?.status === "waiting_question" && !safeQuestion(a.result.checkpoint.question))) ||
+        db.ledgers.some((l) => !safeQuestion(l.checkpoint?.question) || !safeAnswer(l.answer)) ||
+        db.authorJobs.some((j) => !safeAnswer(j.answer))) {
+      throw new Error("Unsafe persisted clarification; offline data review is required before startup");
+    }
     const seen = new Set<string>();
     for (const item of [...db.state.rooms, ...db.state.plans, ...db.state.runs, ...db.state.authorings, ...db.state.questions, ...db.state.artifacts]) {
       if (seen.has(item.id)) throw new Error("Duplicate durable entity ID");

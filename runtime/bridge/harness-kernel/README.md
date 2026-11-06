@@ -101,6 +101,19 @@ once when resumed. Expired questions fail the suspended work rather than quietly
 retargeting it. Questions in quiet rooms remain available; attention selection is
 the separate router's job.
 
+Worker and authoring prompts (including choice IDs/labels) pass the same sensitive
+information filter before any snapshot, event or UI state is committed. Text,
+choice and voice answers are checked at the kernel boundary before consumption or
+continuation; rejection leaves the exact pending revision unchanged. The shared
+filter uses credential patterns, secret redaction and sensitive terms, not a claim
+to detect every possible secret. Clarifications never grant approval authority.
+
+Recovered worker questions pass the same checks as live results. Legacy snapshots
+containing unsafe prompts/answers fail startup before dispatch or reconciliation,
+with no raw state exposed and no automatic rewriting or cancellation of unrelated
+resources. Such data requires offline review; this is not secure erasure of content
+already written by an older version, including journals or backups.
+
 `approvals` is empty for the parent to project real root approval cards. There is
 no kernel approval mutation, and a spoken answer cannot grant privileged authority.
 

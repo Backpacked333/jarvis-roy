@@ -3,8 +3,7 @@ import { QuestionSchema, VoiceAnswerRequestSchema, assertAnswerMatches, question
 import type { HarnessState, QuestionRouter, QuestionRouterOptions } from "../harness-contracts/service.ts";
 import { canonicalJson } from "../harness-contracts/validation.ts";
 import { BridgeError } from "../errors.ts";
-import { containsCredentialLikeData } from "../../agent/lib/memory.ts";
-import { isSafeClarification } from "./clarification-safety.ts";
+import { isSafeClarification, isSafeClarificationText } from "./clarification-safety.ts";
 
 export class QuestionRoutingError extends BridgeError {
   constructor(message: string, status = 409) { super(message, status); }
@@ -44,7 +43,7 @@ function normalized(value: string): string { return value.normalize("NFC").trim(
 export function normalizeVoiceAnswer(question: Question, input: VoiceAnswerRequest, now = new Date()) {
   question = QuestionSchema.parse(question);
   const parsed = VoiceAnswerRequestSchema.parse(input);
-  if (!isSafeClarification(question.question) || containsCredentialLikeData(parsed.transcript)) {
+  if (!isSafeClarification(question.question) || !isSafeClarificationText(parsed.transcript)) {
     throw new QuestionRoutingError("Secrets cannot be requested or supplied through voice clarifications", 400);
   }
   const transcript = normalized(parsed.transcript);
