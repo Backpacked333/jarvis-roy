@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var tab: WorkspaceTab = .workspace
+    @Published var tab: WorkspaceTab = .rooms
     @Published var tasks: [AgentTask] = []
     @Published var conversations: [Conversation] = []
     @Published var memories: [MemoryEntry] = []
@@ -23,6 +23,7 @@ final class AppModel: ObservableObject {
     @Published var modelName = "Connecting"
     @AppStorage("speakReplies") var speakReplies = true
     let voice: VoiceController
+    let rooms: RoomsModel
     private let client: any RuntimeServing
     private var spokenTasks: Set<String> = []
     private var didLoad = false
@@ -30,15 +31,64 @@ final class AppModel: ObservableObject {
     private var voiceOwner: String?
     private var selectionRevision = 0
     private var transcriptSubscription: AnyCancellable?
+    private var receivedUtterances: [String] = []
 
-    init(client: (any RuntimeServing)? = nil) {
+    init(client: (any RuntimeServing)? = nil, harnessClient: (any HarnessServing)? = nil) {
         self.client = client ?? RuntimeClient()
         self.voice = VoiceController()
-        voice.onCommand = { [weak self] text in self?.receiveVoiceCommand(text) }
+        self.rooms = RoomsModel(client: harnessClient ?? HarnessClient())
+        voice.contextProvider = { [weak self] in self?.captureContext ?? HarnessVoiceContext() }
+        voice.onUtterance = { [weak self] utterance in Task { await self?.handleUtterance(utterance) } }
+        voice.onAudioLevels = { [weak self] levels in self?.rooms.updateAudioLevels(levels) }
+        voice.onStateChange = { [weak self] state in self?.rooms.updateVoiceState(state) }
         transcriptSubscription = voice.$transcript.sink { [weak self] text in
             guard let self, let owner = self.voiceOwner, !self.voice.wakeWordEnabled, !text.isEmpty else { return }
             self.manualTranscripts[owner] = text
         }
+    }
+
+    var captureContext: HarnessVoiceContext {
+        tab == .rooms ? rooms.voiceContext : HarnessVoiceContext(roomId: nil, conversationId: selectedConversationID, question: nil)
+    }
+
+    func handleUtterance(_ utterance: HarnessVoiceUtterance) async {
+        let key = "\(utterance.sessionId):\(utterance.generation)"
+        guard !receivedUtterances.contains(key) else { return }
+        receivedUtterances.append(key)
+        if receivedUtterances.count > 256 { receivedUtterances.removeFirst() }
+        let text = utterance.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.lowercased().trimmingCharacters(in: .punctuationCharacters) == "stop all" { await stopAll(); return }
+        if utterance.context.roomId != nil || utterance.context.question != nil {
+            await rooms.handleUtterance(utterance)
+            return
+        }
+        guard let owner = utterance.context.conversationId, conversations.contains(where: { $0.id == owner }) else {
+            voiceNotice = "No captured conversation target. Nothing was sent."
+            return
+        }
+        voiceOwner = owner
+        if voice.wakeWordEnabled { receiveVoiceCommand(text) }
+        else {
+            manualTranscripts[owner] = text
+            voiceNotice = "Transcript retained in its original conversation for review. Use Add to draft, then Send."
+        }
+    }
+
+    func speakQuestion(_ question: HarnessQuestion) {
+        guard voice.cloudConsentGranted, [.idle, .interrupted].contains(voice.state) else { return }
+        voice.speak(question.question.prompt, context: HarnessVoiceContext(roomId: question.target.roomId, conversationId: nil, question: question.binding))
+    }
+
+    func reviewApproval(_ approval: HarnessApproval) async {
+        await refresh()
+        guard let task = tasks.first(where: { $0.id == approval.taskId }),
+              task.approvals.contains(where: { $0.id == approval.interactionId && $0.revision == approval.revision }) else {
+            error = "That approval changed or expired. Refresh the exact task card; no action was authorized."
+            return
+        }
+        selectConversation(task.conversationId)
+        selectedTaskID = task.id
+        tab = .workspace
     }
 
     var draft: String {
@@ -116,11 +166,18 @@ final class AppModel: ObservableObject {
             if !didLoad {
                 spokenTasks.formUnion(tasks.map(\.id))
                 didLoad = true
-                if let first = conversations.first { selectConversation(first.id) }
+                if let first = conversations.first {
+                    let initialTab = tab
+                    selectConversation(first.id)
+                    tab = initialTab
+                }
             }
             for task in tasks where task.status == "completed" && !spokenTasks.contains(task.id) {
                 spokenTasks.insert(task.id)
-                if speakReplies, task.conversationId == selectedConversationID { voice.speak(task.reply) }
+                if speakReplies, tab == .workspace, voice.cloudConsentGranted,
+                   [.idle, .interrupted].contains(voice.state), task.conversationId == selectedConversationID {
+                    voice.speak(task.reply, context: HarnessVoiceContext(roomId: nil, conversationId: task.conversationId, question: nil))
+                }
             }
         } catch {
             guard !Task.isCancelled else { return }
@@ -172,12 +229,19 @@ final class AppModel: ObservableObject {
     func setWakeEnabled(_ enabled: Bool) async {
         if enabled {
             guard prepareVoiceCapture() else { return }
-            voiceNotice = "Say Hey Jarvis at the start of an utterance. Commands send only when this thread is idle and the draft is empty. Spoken yes is never approval."
+            voiceNotice = "Say Hey Jarvis, wait for Listening, then speak. Active commands upload to ElevenLabs. Spoken yes is never approval."
         }
         await voice.setWakeWordEnabled(enabled)
     }
 
     func startManualListening() async {
+        if tab == .rooms {
+            guard rooms.selectedRoomId != nil else { voiceNotice = "Create or select a room before dictating its goal."; return }
+            voiceOwner = nil
+            voiceNotice = "Finish sends this room goal for draft authoring, or answers the exact focused clarification. It never starts a run or approves host actions."
+            await voice.startListening()
+            return
+        }
         guard prepareVoiceCapture() else { return }
         if let id = voiceOwner, let prior = manualTranscripts.removeValue(forKey: id), !prior.isEmpty {
             voiceReviews[id, default: []].append(prior)
@@ -226,6 +290,11 @@ final class AppModel: ObservableObject {
     }
 
     func prepareVoiceCapture() -> Bool {
+        if tab == .rooms {
+            voiceOwner = nil
+            guard rooms.selectedRoomId != nil else { voiceNotice = "Select a room first."; return false }
+            return true
+        }
         guard let id = selectedConversationID else {
             voiceNotice = "Select a conversation before starting the microphone."
             return false
@@ -250,5 +319,6 @@ final class AppModel: ObservableObject {
         voice.stopSpeaking()
         selectionRevision += 1
         await act(key: "stop-all", path: "v1/stop")
+        await rooms.refresh()
     }
 }

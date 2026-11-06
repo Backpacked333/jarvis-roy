@@ -14,6 +14,7 @@ struct WorkspaceView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var voice: VoiceController
     @State private var memoryToDelete: MemoryEntry?
+    @State private var questionAnswers: [String: String] = [:]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -29,6 +30,10 @@ struct WorkspaceView: View {
                     notice(model.connectionError ?? "Connecting to the local agent service…", icon: "network", color: Palette.amber)
                 }
                 switch model.tab {
+                case .rooms:
+                    RoomsWorkspaceView(model: model.rooms, onVoiceContext: { _ in },
+                        onSpeakQuestion: { model.speakQuestion($0) },
+                        onReviewApproval: { approval in Task { await model.reviewApproval(approval) } })
                 case .workspace: workspace
                 case .capabilities: capabilities
                 case .memory: memory
@@ -110,10 +115,16 @@ struct WorkspaceView: View {
             Text(model.tab.rawValue).font(.system(size: 14, weight: .medium))
             Spacer()
             VStack(alignment: .trailing, spacing: 3) {
-                Label(voice.isListening ? "Mic on · on device" : "Mic muted / paused", systemImage: voice.isListening ? "mic.fill" : "mic.slash")
+                Label(voice.isListening ? "Mic on · ElevenLabs" : "Mic muted / paused", systemImage: voice.isListening ? "mic.fill" : "mic.slash")
                     .foregroundStyle(voice.isListening ? Palette.amber : Palette.muted)
                 Text(voice.wakeStatus).foregroundStyle(Palette.muted)
             }.font(.system(size: 10))
+            Toggle("Cloud voice", isOn: Binding(get: { voice.cloudConsentGranted }, set: { voice.setCloudConsent($0) }))
+                .toggleStyle(.checkbox).font(.caption)
+                .help("Allow this session to send active microphone audio and spoken text to ElevenLabs v4 Turbo / Scribe. Never speak secrets. Off by default; no fallback.")
+            Button(voice.isSpeaking ? "Interrupt / Listen" : "Listen") { Task { await model.startManualListening() } }
+                .disabled(!voice.cloudConsentGranted || voice.isRequestingPermission).font(.caption)
+            Button("Finish") { voice.finishListening() }.disabled(!voice.isCapturingCommand).font(.caption)
             Button("Mute mic") { voice.stopListening() }.font(.caption)
                 .disabled(!voice.isListening && !voice.wakeWordEnabled && !voice.isRequestingPermission)
             Circle().fill(model.isConnected ? Palette.cyan : Palette.amber).frame(width: 6, height: 6)
@@ -296,17 +307,32 @@ struct WorkspaceView: View {
                 }
             }
             Text(task.title).font(.system(size: 25, weight: .medium)).textSelection(.enabled)
-            ForEach(task.approvals) { approval in
+            ForEach(task.approvals + (task.questions ?? [])) { approval in
                 VStack(alignment: .leading, spacing: 14) {
-                    Label("YOUR APPROVAL", systemImage: "hand.raised").font(.system(size: 10, weight: .semibold)).tracking(1.5).foregroundStyle(Palette.amber)
+                    Label(approval.kind == "question" ? "YOUR ANSWER · NOT APPROVAL" : approval.kind == "approval" ? "YOUR APPROVAL" : "UNSUPPORTED REQUEST", systemImage: approval.kind == "approval" ? "hand.raised" : "questionmark.circle").font(.system(size: 10, weight: .semibold)).tracking(1.5).foregroundStyle(Palette.amber)
                     Text(approval.title).font(.system(size: 15, weight: .medium))
                     Text(approval.detail).font(.system(size: 12, design: .monospaced)).textSelection(.enabled).foregroundStyle(.white.opacity(0.8))
                     HStack {
                         ForEach(approval.options) { option in
                             Button(option.label) {
-                                Task { await model.act(key: approval.id, path: "v1/tasks/\(task.id)/respond", body: ["interactionId": approval.id, "optionId": option.id]) }
+                                Task { await model.act(key: approval.id, path: "v1/tasks/\(task.id)/respond", body: ["interactionId": approval.id, "optionId": option.id, "expectedRevision": String(approval.revision ?? 0)]) }
                             }.disabled(model.pendingActions.contains(approval.id) || !model.isConnected || (approval.reviewable == false && option.id != "deny"))
                         }
+                    }
+                    if approval.kind == "question" && approval.allowText == true {
+                        let key = "\(task.id):\(approval.id):\(approval.revision ?? 0)"
+                        TextField("Answer this exact question (never secrets)", text: Binding(
+                            get: { questionAnswers[key] ?? "" }, set: { questionAnswers[key] = $0 }))
+                        Button("Send answer · not approval") {
+                            let answer = questionAnswers[key] ?? ""
+                            Task { await model.act(key: approval.id, path: "v1/tasks/\(task.id)/respond",
+                                body: ["interactionId": approval.id, "text": answer, "expectedRevision": String(approval.revision ?? 0)]) }
+                        }.disabled(model.pendingActions.contains(approval.id) || !model.isConnected ||
+                            (questionAnswers[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    if approval.kind == "other" || (approval.options.isEmpty && approval.allowText != true) {
+                        Text("This prompt has no supported response control. Stop the task and start a new conversation with the missing details; ambient text cannot answer pending prompts.")
+                            .font(.caption).foregroundStyle(Palette.amber)
                     }
                 }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
                     .background(Palette.amber.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))

@@ -18,7 +18,11 @@ test("native launch allows only minimal OS context and ephemeral loopback creden
   assert.equal(runtime.HOST, "127.0.0.1");
   assert.equal(runtime.PORT, "39201");
   for (const key of ["NODE_OPTIONS", "DYLD_INSERT_LIBRARIES", "RANDOM_SECRET"]) assert.equal(runtime[key], undefined);
-  assert.equal(environmentFor("bridge", source).AI_GATEWAY_API_KEY, undefined);
+  assert.equal(environmentFor("bridge", source).AI_GATEWAY_API_KEY, source.AI_GATEWAY_API_KEY);
+  const voice = { ELEVENLABS_API_KEY: "fixture-eleven", ELEVENLABS_VOICE_ID: "fixture-voice" };
+  assert.equal(environmentFor("bridge", voice).ELEVENLABS_API_KEY, voice.ELEVENLABS_API_KEY);
+  assert.equal(environmentFor("runtime", voice).ELEVENLABS_API_KEY, undefined);
+  assert.equal(environmentFor("ui", voice).ELEVENLABS_API_KEY, undefined);
   assert.equal(environmentFor("runtime", {}).JARVIS_ENABLE_DESKTOP, undefined);
   assert.throws(() => environmentFor("unknown", source));
 });

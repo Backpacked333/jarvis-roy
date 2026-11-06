@@ -20,12 +20,13 @@ struct AgentTask: Decodable, Identifiable {
     let createdAt: String
     let events: [String]
     let approvals: [Approval]
+    var questions: [Approval]? = nil
 
     var isActive: Bool { ["starting", "running", "waiting", "cancelling"].contains(status) }
     var canCancel: Bool { isActive || status == "interrupted" }
     var statusLabel: String {
         switch status {
-        case "waiting": return "Needs your approval"
+        case "waiting": return approvals.isEmpty ? "Needs your answer" : "Needs your approval"
         case "starting": return "Starting"
         case "running": return "Working"
         case "completed": return "Complete"
@@ -45,6 +46,10 @@ struct Approval: Decodable, Identifiable {
     let options: [ApprovalOption]
     let reviewable: Bool?
     let blockedReason: String?
+    var kind: String? = nil
+    var revision: Int? = nil
+    var expiresAt: String? = nil
+    var allowText: Bool? = nil
 }
 
 struct ApprovalOption: Decodable, Identifiable {
@@ -58,10 +63,11 @@ struct MemoryEntry: Decodable, Identifiable {
 }
 
 enum WorkspaceTab: String, CaseIterable, Identifiable {
-    case workspace = "Workspace", capabilities = "Capabilities", memory = "Memory", privacy = "Privacy"
+    case rooms = "Rooms", workspace = "Workspace", capabilities = "Capabilities", memory = "Memory", privacy = "Privacy"
     var id: String { rawValue }
     var icon: String {
         switch self {
+        case .rooms: return "circle.hexagongrid"
         case .workspace: return "square.stack.3d.up"
         case .capabilities: return "slider.horizontal.3"
         case .memory: return "brain.head.profile"

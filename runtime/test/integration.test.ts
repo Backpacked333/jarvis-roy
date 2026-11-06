@@ -79,7 +79,7 @@ test("capabilities route keeps authentication, rejects origins and reveals no co
   const raw = await response.text();
   for (const value of [token, "fixture-home-value", "fixture-home.invalid", process.env.TAVILY_API_KEY]) assert.ok(!raw.includes(value));
   const state = JSON.parse(raw);
-  assert.equal(state.capabilities.length, 7);
+  assert.equal(state.capabilities.length, 9);
   assert.equal(state.capabilities.find((item: { id: string }) => item.id === "desktop").state, "off");
   assert.equal(state.capabilities.find((item: { id: string }) => item.id === "mail").state, "disabled");
   assert.match(state.notice, /not proof/);

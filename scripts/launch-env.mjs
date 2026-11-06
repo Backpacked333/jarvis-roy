@@ -8,7 +8,9 @@ export function environmentFor(target, source = process.env) {
   if (target !== 'ui') names.push('JARVIS_DATA_DIR', 'JARVIS_MODEL', 'JARVIS_NATIVE_HELPER',
     'JARVIS_ENABLE_DESKTOP', 'JARVIS_ENABLE_TERMINAL', 'JARVIS_ENABLE_APPLE_SERVICES',
     'TAVILY_API_KEY', 'HOME_ASSISTANT_URL', 'HOME_ASSISTANT_TOKEN', 'JARVIS_ALLOW_HOME_ASSISTANT_HTTP');
-  if (target === 'runtime') names.push('AI_GATEWAY_API_KEY');
+  if (target !== 'ui') names.push('AI_GATEWAY_API_KEY');
+  if (target === 'bridge') names.push('ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID',
+    'JARVIS_WORKER_PYTHON', 'JARVIS_WORKER_IMAGE', 'JARVIS_DOCKER_BINARY', 'DOCKER_CONTEXT', 'DOCKER_CONFIG');
   for (const name of names) if (typeof source[name] === 'string') result[name] = source[name];
   if (target === 'runtime') Object.assign(result, { HOST: '127.0.0.1', PORT: '39201' });
   return result;

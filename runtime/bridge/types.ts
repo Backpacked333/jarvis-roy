@@ -14,6 +14,10 @@ export interface ApprovalOption {
 
 export interface Approval {
   id: string;
+  kind?: "approval" | "question" | "other";
+  revision?: number;
+  expiresAt?: string;
+  allowText?: boolean;
   title: string;
   detail: string;
   reviewable?: boolean;
@@ -33,6 +37,7 @@ export interface Task {
   createdAt: string;
   events: string[];
   approvals: Approval[];
+  questions?: Approval[];
 }
 
 export interface TaskRecord extends Omit<Task, "conversationId" | "userMessage"> {
@@ -98,7 +103,7 @@ export interface EveDelivery {
 export interface EveSession {
   id: string;
   send?(message: string): Promise<EveDelivery>;
-  respond(answers: readonly { interactionId: string; optionId: string }[]): Promise<EveDelivery>;
+  respond(answers: readonly { interactionId: string; optionId?: string; text?: string }[]): Promise<EveDelivery>;
   cancel(options?: { signal?: AbortSignal; turnId?: string | null }): Promise<EveDelivery>;
 }
 

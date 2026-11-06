@@ -1,9 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { containsCredentialLikeData, deleteMemory, listMemories } from "../agent/lib/memory.ts";
 import { BridgeError, errorMessage } from "./errors.ts";
 import { redactText } from "./redaction.ts";
 import { reviewArguments } from "./approval.ts";
 import { CONVERSATION_ID, TaskStore } from "./store.ts";
+import { HarnessApprovalSchema, type HarnessApproval } from "./harness-contracts/interactions.ts";
+import { inspectEveInteraction } from "./harness-interactions/eve-safety.ts";
 import type {
   Approval,
   BridgeState,
@@ -53,10 +55,11 @@ function publicTask(record: TaskRecord): Task {
     ...(record.error ? { error: record.error } : {}),
     createdAt: record.createdAt,
     events: [...record.events],
-    approvals: record.approvals.map((approval) => ({
+    approvals: record.approvals.filter((a) => a.kind === "approval").map((approval) => ({
       ...approval,
       options: approval.options.map((option) => ({ ...option })),
     })),
+    questions: record.approvals.filter((a) => a.kind !== "approval").map((question) => ({ ...question, options: question.options.map((option) => ({ ...option })) })),
   };
 }
 
@@ -98,6 +101,7 @@ export class JarvisService {
   private readonly submittingInteractions = new Set<string>();
   private readonly callInputs = new Map<string, Map<string, { name: string; input?: unknown }>>();
   private readonly seenEvents = new Map<string, Set<string>>();
+  private stopping = false;
 
   private constructor(store: TaskStore, client: EveClient, model: string) {
     this.store = store;
@@ -171,6 +175,7 @@ export class JarvisService {
   }
 
   async createTask(message: string, conversationId?: string): Promise<Task> {
+    if (this.stopping) throw new BridgeError("Tasks are stopping. Wait for cancellation confirmation.", 409);
     if (conversationId !== undefined &&
       (typeof conversationId !== "string" || !CONVERSATION_ID.test(conversationId) ||
         !this.store.conversation(conversationId))) {
@@ -183,7 +188,7 @@ export class JarvisService {
       throw new BridgeError("Messages containing credential-like data cannot be persisted.", 400);
     }
     if (conversationId && this.store.values().some((task) =>
-      task.conversationId === conversationId && (ACTIVE_STATUSES.has(task.status) ||
+      task.conversationId === conversationId && (task.approvals.length > 0 || ACTIVE_STATUSES.has(task.status) ||
         this.cancelOperations.has(task.id) || this.sessionCancelOperations.has(task.id) ||
         this.pendingSessions.has(task.id)))) {
       throw new BridgeError("This conversation has an active or unconfirmed turn. Wait for it to finish, or Stop its task and confirm cancellation before sending again.", 409);
@@ -248,19 +253,30 @@ export class JarvisService {
     taskId: string,
     interactionId: string,
     optionId: string,
+    expectedRevision?: number,
+    text?: string,
   ): Promise<Task> {
     const task = this.store.get(taskId);
     if (!task) throw new BridgeError("Task not found.", 404);
-    if (this.cancelOperations.has(taskId)) {
+    if (this.stopping || this.cancelOperations.has(taskId)) {
       throw new BridgeError("The task is being cancelled.", 409);
     }
     const options = this.pendingOptions.get(taskId) ?? pendingOptionsFromTask(task);
-    if (task.approvals.find((item) => item.id === interactionId)?.reviewable === false && optionId !== "deny") {
+    const card = task.approvals.find((item) => item.id === interactionId);
+    if (!card || (expectedRevision !== undefined && expectedRevision !== card.revision) ||
+      (card.expiresAt !== undefined && Date.parse(card.expiresAt) <= Date.now())) {
+      throw new BridgeError("This exact card has expired or changed. Refresh before responding.", 409);
+    }
+    if (card.kind !== "approval" && card.kind !== "question") throw new BridgeError("Unsupported interaction kind. Stop the task rather than guessing a response.", 409);
+    if (text !== undefined && (card.kind !== "question" || !card.allowText || !text.trim() || text.length > 16_000 || containsCredentialLikeData(text))) {
+      throw new BridgeError("This card does not allow that text answer. Never enter secrets.", 400);
+    }
+    if (card.reviewable === false && optionId !== "deny") {
       throw new BridgeError("This request cannot be fully reviewed. Only denial is allowed.", 409);
     }
     const allowed = options.get(interactionId);
     const submissionKey = `${taskId}:${interactionId}`;
-    if (!allowed || !allowed.has(optionId) || this.submittingInteractions.has(submissionKey)) {
+    if (!allowed || (text === undefined && !allowed.has(optionId)) || this.submittingInteractions.has(submissionKey)) {
       throw new BridgeError("That response is not currently pending.", 409);
     }
     const session = this.sessions.get(taskId);
@@ -270,7 +286,7 @@ export class JarvisService {
 
     this.submittingInteractions.add(submissionKey);
     try {
-      const delivery = await session.respond([{ interactionId, optionId }]);
+      const delivery = await session.respond([{ interactionId, ...(text === undefined ? { optionId } : { text }) }]);
       void this.observeDelivery(taskId, delivery);
       return publicTask(task);
     } catch (cause) {
@@ -302,13 +318,29 @@ export class JarvisService {
   }
 
   async stop(): Promise<Task[]> {
+    if (this.stopping) throw new BridgeError("Stop is already in progress.", 409);
+    this.stopping = true;
+    try {
     const active = this.store.values()
       .filter((task) => ACTIVE_STATUSES.has(task.status))
       .map((task) => task.id);
-    await Promise.all(active.map((id) => this.cancel(id)));
+    const outcomes = await Promise.allSettled(active.map((id) => this.cancel(id)));
+    if (outcomes.some((outcome) => outcome.status === "rejected")) throw new BridgeError("Some task cancellation operations failed; check status before retrying.", 503);
     return active.map((id) => this.store.get(id)).filter(
       (task): task is TaskRecord => task !== undefined,
     ).map(publicTask);
+    } finally { this.stopping = false; }
+  }
+
+  harnessApprovals(): HarnessApproval[] {
+    return this.store.values().filter((task) => task.status === "waiting").flatMap((task) =>
+      task.approvals.filter((card) => card.kind === "approval").map((card) => {
+        const result = HarnessApprovalSchema.safeParse({ kind: "approval", id: `root-${createHash("sha256").update(`${task.id}:${card.id}`).digest("hex")}`,
+          roomId: null, runId: null, nodeId: null, taskId: task.id, interactionId: card.id, revision: card.revision ?? 1,
+          title: card.title.slice(0, 200), detail: card.detail, status: card.expiresAt && Date.parse(card.expiresAt) <= Date.now() ? "expired" : "pending",
+          reviewable: card.reviewable === true, blockedReason: card.blockedReason ?? null, options: card.options });
+        return result.success ? result.data : null;
+      }).filter((card): card is HarnessApproval => card !== null));
   }
 
   async removeMemory(id: string): Promise<boolean> {
@@ -637,6 +669,7 @@ export class JarvisService {
           const interactionId = stringValue(data.interactionId);
           const request = asRecord(data.request);
           if (!interactionId) break;
+          const kind = inspectEveInteraction({ interactionId, request: { kind: stringValue(request.kind) ?? "unknown" } }).kind;
           const title = redactText(stringValue(request.title) ?? stringValue(request.kind) ?? "Response required");
           const options = Array.isArray(request.options)
             ? request.options.flatMap((option) => {
@@ -655,17 +688,24 @@ export class JarvisService {
           const input = originCall.input ?? call?.input;
           const prompt = redactText(stringValue(request.prompt) ?? "A response is required.");
           const review = request.kind === "approval" ? reviewArguments(callName, input) : undefined;
-          const visibleOptions = review?.reviewable === false ? options.filter((option) => option.id === "deny") : options;
+          const visibleOptions = kind === "other" ? [] : review?.reviewable === false ? options.filter((option) => option.id === "deny") : options;
           const approval: Approval = {
             id: interactionId,
+            kind, revision: 1, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+            allowText: kind === "question" && (request.allowFreeform === true || options.length === 0),
             title: title.slice(0, 500),
             ...(review ?? {}),
             detail: review ? review.detail : prompt.slice(0, 8_000),
             options: visibleOptions,
           };
-          if (!task.approvals.some((item) => item.id === interactionId)) {
-            task.approvals = [...task.approvals, approval];
+          const existing = task.approvals.find((item) => item.id === interactionId);
+          if (existing) {
+            const comparable = (card: Approval) => JSON.stringify([card.kind, card.title, card.detail, card.options, card.allowText, card.reviewable]);
+            if (comparable(existing) === comparable(approval)) break;
+            approval.revision = (existing.revision ?? 1) + 1;
+            task.approvals = task.approvals.filter((item) => item.id !== interactionId);
           }
+          task.approvals = [...task.approvals, approval];
           pending.set(interactionId, new Set(visibleOptions.map((option) => option.id)));
           this.submittingInteractions.delete(`${taskId}:${interactionId}`);
           if (ACTIVE_STATUSES.has(task.status) && !task.cancelConfirmed) task.status = "waiting";

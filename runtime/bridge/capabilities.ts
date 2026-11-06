@@ -1,14 +1,21 @@
 import { desktopStatus } from "../agent/lib/desktop.ts";
 import { researchStatus } from "../agent/lib/web-research.ts";
 import { connectedServicesStatus } from "../agent/lib/connected-services.ts";
+import type { VoiceStatus } from "./harness-contracts/voice.ts";
 
-export function capabilitiesStatus() {
+export function capabilitiesStatus(harness?: { worker: { available: boolean; reason: string | null }; voice: VoiceStatus }) {
   const desktop = desktopStatus();
   const web = researchStatus();
   const services = connectedServicesStatus();
   return {
     notice: "Configuration only, not proof of a live connection or permission grant. Change launcher environment and restart; never paste credentials into chat.",
     capabilities: [
+      { id: "rooms", title: "Isolated room workers", state: harness?.worker.available ? "available" : "setup_needed",
+        detail: harness?.worker.reason ?? "Durable rooms and explicit plan starts. Workers require the pinned Python controller and a configured local Docker image; no host execution fallback. Local work stops during Mac sleep/shutdown.",
+        setup: "Run ./scripts/setup-workers.sh, explicitly pull the documented platform digest, and set JARVIS_WORKER_IMAGE and JARVIS_WORKER_PYTHON before launch. Network is denied inside workers." },
+      { id: "voice", title: "ElevenLabs v4 Turbo + Scribe", state: harness?.voice.status ?? "unavailable",
+        detail: harness?.voice.reason ?? "Configuration is not proof of model access or audible playback. Active microphone audio and speech text go to ElevenLabs only after session consent. No voice fallback.",
+        setup: "Supply ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID in the launch environment, never chat. Enable cloud voice consent for this session, then Listen / Finish / Mute. Spoken yes never approves a privileged action." },
       { id: "desktop", title: "Screen & app control", state: !desktop.desktopEnabled ? "off" : !desktop.desktopSupported ? "requires_macos" : !desktop.helperConfigured ? "setup_needed" : "permission_needed", detail: desktop.message,
         setup: "Set JARVIS_ENABLE_DESKTOP=1 before launching. Build the bundled JarvisControl helper. Grant Accessibility and Screen Recording to the responsible app/helper or terminal in macOS Privacy & Security. Permissions are checked at action time." },
       { id: "terminal", title: "Terminal", state: !desktop.terminalEnabled ? "off" : !desktop.terminalSupported ? "unsupported" : "configured_unverified",
