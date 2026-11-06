@@ -57,8 +57,8 @@ An explicitly spoken question supplies the next capture's exact binding until
 muted or consumed. `finishListening()` commits a captured turn. `stopListening()`
 is full mute/cancel and discards unfinished recognition. `interrupt()` and
 `stopSpeaking()` drain playback and stop capture; starting another listening turn
-is an explicit barge-in action. Automatic open-mic acoustic barge-in is not
-claimed: capture is paused throughout playback to prevent speaker feedback.
+is an explicit barge-in action. By default capture is paused throughout playback.
+The separately opted-in acoustic mode below instead uses Apple's same-engine AEC.
 
 If `onUtterance` is set, it is the sole final-text callback (never also
 `onCommand`). Legacy manual transcription still updates `transcript` for review;
@@ -95,14 +95,86 @@ Input uses `wss://api.elevenlabs.io/v1/speech-to-text/realtime` with
 matching `session_started` config, forwards partial display text, and emits a
 final only after an explicit commit. Output is mono PCM16 at 24 kHz. Provider
 credentials travel only as outbound headers; provider error bodies are never
-echoed into the app or logs. No downgrade, provider switch, key collection by
+echoed into the app or logs. Scribe's real handshake can omit `commit_strategy`;
+only that echoed field is optional, and it must still equal `manual` if present.
+The outbound URL always requests manual commits. No downgrade, provider switch, key collection by
 speech, or public tunnel exists.
 
 `configured` means configuration exists, not account validation. `connected`
 means an active provider transport/session; it does not prove sound or entitlement
 to both models. An actual rejection is explicit on that turn. No ElevenLabs key
-was available for this lane, so live account access, PCM behavior, sound, latency
-and acoustic quality remain unverified.
+was available to this lane. The parent separately reported successful actual v4
+PCM24k output and Scribe PCM16k transcription with exact context after the narrow
+handshake fix. This is provider validation, not microphone/speaker/AEC validation.
+
+## Opt-in acoustic hands-free mode
+
+After the cloud disclosure/consent above, expose a **separate**, default-off,
+current-session hands-free toggle and await `voice.setHandsFreeEnabled(true)`.
+Observe `handsFreeEnabled` and `handsFreeStatus`; failure never leaves it enabled.
+Explain that the microphone stays active **locally during replies** for speech
+detection and will automatically send a bounded answer window to ElevenLabs after
+a spoken bound question. Do not infer this consent from wake arming, a key, or the
+spoken-attention toggle. Setting false, mute, stop, interrupt, cloud revocation,
+device loss or a detector failure stops capture and revokes acoustic rearming.
+Typed commands and manual push-to-talk remain available. Public stopSpeaking is
+also a full acoustic stop, whereas an internally detected barge-in transitions
+directly into a new capture generation.
+
+Implementation:
+
+- A dedicated duplex `AVAudioEngine` owns **both** the microphone and the actual
+  reply `AVAudioPlayerNode`. While stopped, Objective-C-contained setup enables
+  `setVoiceProcessingEnabled`, checks both I/O nodes and disables processing bypass.
+  This is Apple's supported echo-cancellation path, not two unrelated engines or
+  an RMS detector on raw speaker echo. The microphone is not routed to speakers.
+- Preflight requires input/output hardware and a supported mono processed input
+  format. Every poll verifies active, unbypassed voice processing. Hardware/config
+  changes, stalled input, unsupported formats or failed system APIs disable the
+  mode explicitly; no raw-input downgrade. Speaker/headphone combinations that
+  cannot supply this configuration are unsupported for acoustic mode.
+- A local `SoundAnalysis` built-in version1 speech classifier processes ONLY AEC
+  PCM16k in bounded serial work, with a supported 500 ms window and 50% overlap.
+  Two consecutive fresh speech results >=0.85 confidence and non-silent actual
+  PCM are required. A bounded normalized-correlation veto rejects residual PCM
+  matching the rendered mixer reference. RMS is a silence floor, **not** proof of
+  human speech. AEC/classification/correlation reduce false triggers; they do not
+  authenticate a speaker or guarantee rejection of every echo/background voice.
+- During playback, no microphone audio is sent to Scribe. Retain at most one
+  second of processed pre-roll locally; correlated echo clears it. Accepted
+  speech synchronously stops queued playback, disconnects the old provider turn,
+  advances the generation/session and starts Scribe with the **spoken turn's
+  original context**, not whatever room is currently selected. Pre-roll plus
+  connecting audio is capped at two seconds; slow handshakes fail closed instead
+  of dropping words or replaying old turns. Pending PCM drains in order only after
+  Scribe reports listening. Normal manual capture is unchanged.
+- A spoken **bound clarification** opens an answer window automatically only
+  after real audio was received, provider audio ended AND every native scheduled
+  buffer reports `dataPlayedBack`. Provider idle/done alone does not suffice.
+  The exact question/revision/room/run/node/attempt travels unchanged. Silence
+  closes the window after eight seconds without committing or dispatching text;
+  detected speech uses 1.2 seconds trailing silence and a 45-second maximum.
+  Unbound narration does not auto-open an ambient answer window.
+- Final transcripts alone call `onUtterance`. Partials remain display-only and can
+  be corrected. No spoken yes, local VAD event or transcript authorizes approval.
+  The parent still owns exact pending-question/approval routing and expiry checks.
+
+System API references:
+[Apple voice processing](https://developer.apple.com/videos/play/wwdc2019/510/),
+[voice processing details](https://developer.apple.com/videos/play/wwdc2023/10235/),
+[local stream classification](https://developer.apple.com/documentation/soundanalysis/classifying-sounds-in-an-audio-stream),
+[classification windows](https://developer.apple.com/documentation/soundanalysis/snclassifysoundrequest/windowduration).
+The muted-talker listener is deliberately not used: Apple documents it as active
+only while the voice-processing uplink is muted, which would lose the requested
+audible pre-roll. No TCC/database/permission scripts or copied actor voices are used.
+
+This is real acoustic processing code but **physical hardware behavior is not
+verified by injected tests or a provider round-trip**. Validate on the target Mac
+with speakers/headphones, ordinary and loud reply audio, silence/room noise,
+near-end speech over playback, immediate mute, device removal and switching rooms
+during recognition. Classifier windowing introduces detection latency (roughly
+750 ms of evidence plus inference); pre-roll protects onset, not zero latency.
+Do not advertise a measured false-trigger rate or production acoustics yet.
 
 ## Bounds and lifecycle
 
@@ -152,7 +224,9 @@ question context, invalid frames/configuration, consent, interruption, stopped
 retries, stale sessions, overflow and multi-second producer backpressure.
 
 Native tests cover pure generation/context/PCM state, real AVAudioConverter
-buffers, and injected no-key/device-loss/permission callbacks. They require the
+buffers, system speech-classifier loading, playback-drain accounting, pre-roll,
+echo-correlation fixtures and injected consent/device-loss/permission/duplex
+callbacks. They require the
 parent's macOS stage (`swift test --package-path macos`); there is no Swift or
 Clang toolchain on the Linux implementation VM. Native sources and tests have not
 been compiled here. Actual microphones/speakers and the user's ElevenLabs account
