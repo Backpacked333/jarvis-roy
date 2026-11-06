@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { request as httpRequest } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,10 +14,11 @@ import { createWorkerRunner } from "../bridge/harness-worker/index.ts";
 import { createPlanAuthor, createQuestionRouter } from "../bridge/harness-interactions/index.ts";
 import { createVoiceBridge } from "../bridge/harness-voice/index.ts";
 import { createHarnessRuntime, type HarnessRuntime } from "../bridge/harness-runtime.ts";
-import { defaultRoomPolicy, type PlanDraft } from "../bridge/harness-contracts/domain.ts";
-import { HarnessStateSchema, type HarnessState } from "../bridge/harness-contracts/service.ts";
+import { defaultRoomPolicy, type AttemptRef, type PlanDraft } from "../bridge/harness-contracts/domain.ts";
+import { HarnessStateSchema, type HarnessState, type PlanAuthor } from "../bridge/harness-contracts/service.ts";
+import type { Cancellation, WorkerContext, WorkerResult, WorkerRunner, WorkerSpec } from "../bridge/harness-contracts/worker.ts";
 import { questionBinding } from "../bridge/harness-contracts/interactions.ts";
-import { FakeDelivery, FakeEveClient, event } from "./helpers.ts";
+import { FakeDelivery, FakeEveClient, approvalEvents, event } from "./helpers.ts";
 
 const token = "harness-integration-token-at-least-32-characters";
 const image = process.env.JARVIS_WORKER_IMAGE ?? "python@sha256:2986c55feb36e6cae00fa1fefb454283e4b33f35e75ff8bdd123b134130be301";
@@ -73,10 +75,38 @@ function scriptedProvider(): typeof fetch {
   }) as typeof fetch;
 }
 
-async function fixture(t: TestContext, live = false) {
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+class StopWorker implements WorkerRunner {
+  launches = 0;
+  cancellations = 0;
+  started = deferred<void>();
+  stopping = deferred<void>();
+  cleanup: (ref: AttemptRef) => Promise<Cancellation> = async (ref) => ({ ref, confirmed: true, reason: null });
+  artifacts = { read: async (): Promise<never> => { throw new Error("No artifacts in cancellation fixture"); } };
+  async availability() { return { available: true, reason: null }; }
+  async reconcile(ref: AttemptRef) { return { state: "unknown" as const, ref, reason: "Unconfirmed fixture resource" }; }
+  async run(spec: WorkerSpec, context: WorkerContext): Promise<WorkerResult> {
+    this.launches++;
+    await context.emit({ type: "started", ref: spec.ref, sequence: 0, at: new Date().toISOString(), resourceId: "controlled-stop-resource" });
+    this.started.resolve();
+    return new Promise(() => {});
+  }
+  async cancel(ref: AttemptRef) {
+    this.cancellations++;
+    this.stopping.resolve();
+    return this.cleanup(ref);
+  }
+}
+
+async function fixture(t: TestContext, live = false, options: { worker?: WorkerRunner; author?: PlanAuthor; stopTimeoutMs?: number } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "jarvis-integrated-"));
-  const worker = createWorkerRunner({ dataDirectory: directory, model: "fixture/model", fetch: scriptedProvider() });
-  const author = createPlanAuthor({ model: "fixture/model", modelClient: { async complete(input) {
+  const worker = options.worker ?? createWorkerRunner({ dataDirectory: directory, model: "fixture/model", fetch: scriptedProvider() });
+  const author = options.author ?? createPlanAuthor({ model: "fixture/model", modelClient: { async complete(input) {
     const goal = JSON.parse(input.prompt).untrustedData.goal;
     const nodes = goal === "graph" ? [node("build"), node("verify", ["build"])] : [node(goal)];
     return { text: JSON.stringify({ kind: "plan", draft: { goal, nodes } }), inputTokens: 50, outputTokens: 150 };
@@ -94,7 +124,7 @@ async function fixture(t: TestContext, live = false) {
       runtime = { harness, worker, questions: createQuestionRouter({ harness }), voice: createVoiceBridge({}), stopping: false };
     }
     process.env.JARVIS_LOCAL_TOKEN = token;
-    server = createBridgeServer(service, "127.0.0.1", 0, runtime);
+    server = createBridgeServer(service, "127.0.0.1", 0, runtime, { stopTimeoutMs: options.stopTimeoutMs });
     await once(server, "listening");
     base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   }
@@ -134,7 +164,7 @@ async function fixture(t: TestContext, live = false) {
     return request(`/v1/harness/rooms/${room.id}/runs`, "POST", { requestId: `start-${plan.id}`, planId: plan.id, expectedPlanRevision: plan.revision, planDigest: plan.digest }, 202);
   }
   return { directory, service, client, request, state, wait, createRoom, accept, run,
-    get base() { return base; }, get runtime() { return runtime; },
+    get base() { return base; }, get runtime() { return runtime; }, get server() { return server; },
     restart: async () => { await shutdownBridge(server); await start(); } };
 }
 
@@ -240,6 +270,265 @@ test("Stop all holds a common admission barrier until both roots and rooms finis
   } finally { release(); await stopping; }
   assert.equal((await f.state()).rooms.length, 0);
   await f.createRoom("after-stop");
+});
+
+for (const timing of ["during", "after"] as const) {
+  for (const kind of ["run", "root", "approval", "author"] as const) {
+    test(`Stop all rejects a pre-stop partial ${kind} body completed ${timing} stop`, async (t) => {
+      const worker = new StopWorker(), f = await fixture(t, false, { worker });
+      const room = await f.createRoom("partial");
+      const plan = await f.accept(room, "independent");
+      let path = `/v1/harness/rooms/${room.id}/runs`;
+      let body: unknown = { requestId: "late-run", planId: plan.id, expectedPlanRevision: plan.revision, planDigest: plan.digest };
+      let rootDispatches = 0;
+      if (kind === "root") {
+        path = "/v1/tasks"; body = { message: "Late root work" };
+        const original = f.service.createTask.bind(f.service);
+        f.service.createTask = async (...args) => { rootDispatches++; return original(...args); };
+      } else if (kind === "approval") {
+        f.client.session.initial = new FakeDelivery(approvalEvents(), { status: "awaiting-input", outcome: "awaiting-input" });
+        const task = await f.service.createTask("Wait for exact approval");
+        await f.client.session.initial.streamComplete;
+        await f.service.waitForObservedDelivery(task.id);
+        path = `/v1/tasks/${task.id}/respond`;
+        body = { interactionId: "interaction-1", optionId: "approve", expectedRevision: 1 };
+        const original = f.service.respond.bind(f.service);
+        f.service.respond = async (...args) => { rootDispatches++; return original(...args); };
+      } else if (kind === "author") {
+        path = `/v1/harness/rooms/${room.id}/author`;
+        body = { requestId: "late-root-tool-author", expectedRoomRevision: room.revision, goal: "independent" };
+      }
+      const serialized = JSON.stringify(body), entered = once(f.server, "request");
+      const response = deferred<{ status: number; text: string }>();
+      const pending = httpRequest(f.base + path, { method: "POST", headers: { authorization: `Bearer ${token}`,
+        "content-type": "application/json", "content-length": Buffer.byteLength(serialized) } }, (incoming) => {
+        let text = ""; incoming.on("data", (chunk) => { text += chunk; });
+        incoming.on("end", () => response.resolve({ status: incoming.statusCode!, text }));
+      });
+      t.after(() => pending.destroy());
+      pending.write(serialized.slice(0, 1));
+      const [incoming] = await entered;
+      const release = deferred<void>(), began = deferred<void>();
+      const originalStop = f.service.stop.bind(f.service);
+      f.service.stop = async () => { began.resolve(); await release.promise; return originalStop(); };
+      const stopped = f.request("/v1/stop", "POST");
+      await began.promise;
+      if (timing === "after") { release.resolve(); await stopped; }
+      const ended = once(incoming, "end");
+      pending.end(serialized.slice(1));
+      await ended;
+      release.resolve();
+      await stopped;
+      const late = await response.promise;
+      assert.equal(late.status, 409, late.text);
+      assert.equal(rootDispatches, 0, "Stale task/approval requests must never reach Eve dispatch");
+      assert.equal(worker.launches, 0);
+      const snapshot = await f.state();
+      assert.equal(snapshot.runs.length, 0);
+      assert.equal(snapshot.authorings.length, 1, "Late root-tool authoring was not created");
+      await f.createRoom("fresh-request");
+    });
+  }
+}
+
+test("Stop all snapshots only after already admitted run dispatch and confirms its cleanup", async (t) => {
+  const worker = new StopWorker(), f = await fixture(t, false, { worker });
+  const room = await f.createRoom("admitted"), plan = await f.accept(room, "independent");
+  const entered = deferred<void>(), release = deferred<void>();
+  const start = f.runtime.harness.startRun.bind(f.runtime.harness);
+  f.runtime.harness.startRun = async (...args) => { entered.resolve(); await release.promise; return start(...args); };
+  const run = f.run(room, plan);
+  await entered.promise;
+  let snapshotTaken = false;
+  const stop = f.service.stop.bind(f.service);
+  f.service.stop = async () => { snapshotTaken = true; return stop(); };
+  const stopEntered = once(f.server, "request");
+  const stopped = f.request("/v1/stop", "POST");
+  await stopEntered;
+  assert.equal(snapshotTaken, false);
+  release.resolve();
+  await run; await stopped;
+  const result = (await f.state()).runs[0];
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.cancelConfirmed, true);
+});
+
+test("Stop all rejects root-created authoring until root cancellation has finished", async (t) => {
+  const f = await fixture(t), room = await f.createRoom("root-tool");
+  const original = f.service.stop.bind(f.service);
+  f.service.stop = async () => {
+    await f.request(`/v1/harness/rooms/${room.id}/author`, "POST",
+      { requestId: "root-still-running", expectedRoomRevision: room.revision, goal: "independent" }, 409);
+    return original();
+  };
+  await f.request("/v1/stop", "POST");
+  assert.equal((await f.state()).authorings.length, 0);
+  f.service.stop = original;
+});
+
+test("Stop all drains admitted root approvals before taking cancellation snapshots", async (t) => {
+  const f = await fixture(t);
+  f.client.session.initial = new FakeDelivery(approvalEvents(), { status: "awaiting-input", outcome: "awaiting-input" });
+  f.client.session.responseDelivery = new FakeDelivery([], { status: "awaiting-input", outcome: "awaiting-input" });
+  const task = await f.service.createTask("Explicit approval dispatch fixture");
+  await f.client.session.initial.streamComplete;
+  await f.service.waitForObservedDelivery(task.id);
+  const release = deferred<void>(), entered = deferred<void>();
+  const respond = f.service.respond.bind(f.service);
+  f.service.respond = async (...args) => { entered.resolve(); await release.promise; return respond(...args); };
+  const response = f.request(`/v1/tasks/${task.id}/respond`, "POST", { interactionId: "interaction-1", optionId: "approve", expectedRevision: 1 });
+  await entered.promise;
+  let snapshotTaken = false;
+  const originalStop = f.service.stop.bind(f.service);
+  f.service.stop = async () => { snapshotTaken = true; return originalStop(); };
+  const stopEntered = once(f.server, "request"), stopped = f.request("/v1/stop", "POST");
+  await stopEntered;
+  assert.equal(snapshotTaken, false);
+  release.resolve();
+  await response; await stopped;
+  assert.equal((await f.request("/v1/state")).tasks[0].status, "cancelled");
+  assert.equal(f.client.session.responses.length, 1, "Admitted explicit action is drained, never replayed");
+});
+
+test("Stop all includes an admitted authoring created after the stop request arrived", async (t) => {
+  let aborted = false;
+  const author: PlanAuthor = { async author(_input, { signal }) {
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => { aborted = true; reject(new Error("Authoring cancelled")); }, { once: true });
+    });
+  } };
+  const f = await fixture(t, false, { author }), room = await f.createRoom("admitted-author");
+  const entered = deferred<void>(), release = deferred<void>();
+  const original = f.runtime.harness.authorPlan.bind(f.runtime.harness);
+  f.runtime.harness.authorPlan = async (...args) => { entered.resolve(); await release.promise; return original(...args); };
+  const authoring = f.request(`/v1/harness/rooms/${room.id}/author`, "POST",
+    { requestId: "admitted-author", expectedRoomRevision: room.revision, goal: "independent" }, 202);
+  await entered.promise;
+  const stopEntered = once(f.server, "request"), stopped = f.request("/v1/stop", "POST");
+  await stopEntered;
+  release.resolve();
+  await authoring; await stopped;
+  assert.equal((await f.state()).authorings[0].status, "cancelled");
+  assert.equal(aborted, true);
+});
+
+test("Stop all times out behind admitted dispatch without opening the gate when it later drains", async (t) => {
+  const f = await fixture(t, false, { stopTimeoutMs: 100 });
+  const entered = deferred<void>(), release = deferred<void>();
+  const settled = deferred<void>(), originalStop = f.service.stop.bind(f.service);
+  f.service.stop = async () => { const result = await originalStop(); settled.resolve(); return result; };
+  const create = f.service.createTask.bind(f.service);
+  f.service.createTask = async (...args) => { entered.resolve(); await release.promise; return create(...args); };
+  const task = f.request("/v1/tasks", "POST", { message: "Already admitted before Stop" }, 202);
+  await entered.promise;
+  await f.request("/v1/stop", "POST", undefined, 503);
+  await f.request("/v1/stop", "POST", undefined, 409);
+  await f.request("/v1/tasks", "POST", { message: "No new work while dispatch is draining" }, 409);
+  release.resolve();
+  await task;
+  await settled.promise;
+  assert.equal((await f.request("/v1/state")).tasks[0].status, "cancelled");
+  await f.request("/v1/tasks", "POST", { message: "Late cleanup does not silently reopen admission" }, 409);
+  await f.request("/v1/stop", "POST");
+  await f.createRoom("dispatch-reconciled");
+});
+
+test("Stop all waits for delayed worker cleanup rather than a cancel_requested acknowledgement", async (t) => {
+  const worker = new StopWorker(), cleanup = deferred<void>();
+  worker.cleanup = async (ref) => { await cleanup.promise; return { ref, confirmed: true, reason: null }; };
+  const f = await fixture(t, false, { worker });
+  const room = await f.createRoom("delay"), plan = await f.accept(room, "independent");
+  await f.run(room, plan); await worker.started.promise;
+  let returned = false;
+  const stopped = f.request("/v1/stop", "POST").then((result) => { returned = true; return result; });
+  await worker.stopping.promise;
+  try {
+    const pending = (await f.state()).runs[0];
+    assert.equal(pending.status, "cancel_requested");
+    assert.equal(pending.cancelConfirmed, false);
+    assert.equal(returned, false);
+    await f.request("/v1/tasks", "POST", { message: "Cannot start during teardown" }, 409);
+  } finally { cleanup.resolve(); await stopped; }
+  assert.equal((await f.state()).runs[0].cancelConfirmed, true);
+  await f.createRoom("confirmed");
+});
+
+for (const outcome of ["false", "missing", "timeout"] as const) {
+  test(`Stop all retains its fence after ${outcome} cleanup until explicit reconciliation`, async (t) => {
+    const worker = new StopWorker(), cleanup = deferred<void>();
+    worker.cleanup = async (ref) => {
+      if (outcome === "timeout") await cleanup.promise;
+      if (outcome === "missing") throw new Error("Resource not found; cleanup unknown");
+      return { ref, confirmed: outcome === "timeout", reason: outcome === "false" ? "Unconfirmed cleanup" : null };
+    };
+    const f = await fixture(t, false, { worker, stopTimeoutMs: 150 });
+    const room = await f.createRoom("unconfirmed"), plan = await f.accept(room, "independent");
+    await f.run(room, plan); await worker.started.promise;
+    const failed = await f.request("/v1/stop", "POST", undefined, 503);
+    assert.match(failed.error, /unconfirmed.*Admission remains closed|unconfirmed.*admission remains closed/);
+    const pending = (await f.state()).runs[0];
+    assert.equal(pending.cancelConfirmed, false);
+    assert.ok(["interrupted", "cancel_requested"].includes(pending.status));
+    await f.request("/v1/tasks", "POST", { message: "Must remain fenced" }, 409);
+    await f.request("/v1/harness/rooms", "POST", { requestId: "fenced", title: "No new room" }, 409);
+    await f.request("/v1/state");
+    const socket = new WebSocket(f.base.replace("http:", "ws:") + "/v1/voice/stream", { headers: { authorization: `Bearer ${token}` } });
+    socket.on("error", () => {});
+    const [, rejected] = await once(socket, "unexpected-response");
+    socket.terminate(); assert.equal(rejected.statusCode, 404);
+    worker.cleanup = async (ref) => ({ ref, confirmed: true, reason: null });
+    cleanup.resolve();
+    let snapshot = (await f.state()).runs[0];
+    if (outcome !== "timeout") await f.request(`/v1/harness/rooms/${room.id}/runs/${snapshot.id}/cancel`, "POST", { expectedRevision: snapshot.revision });
+    for (let attempt = 0; attempt < 100 && !(snapshot = (await f.state()).runs[0]).cancelConfirmed; attempt++) await delay(5);
+    assert.equal(snapshot.cancelConfirmed, true);
+    await f.request("/v1/tasks", "POST", { message: "Late success alone cannot reopen admission" }, 409);
+    await f.request("/v1/stop", "POST");
+    await f.createRoom("reconciled");
+  });
+}
+
+for (const stage of ["initial snapshot", "cleanup confirmation"] as const) {
+  test(`Stop all rejects an empty unavailable state during ${stage}`, async (t) => {
+    const worker = new StopWorker();
+    const f = await fixture(t, false, { worker });
+    const room = await f.createRoom("unavailable"), plan = await f.accept(room, "independent");
+    await f.run(room, plan); await worker.started.promise;
+    let unavailable = stage === "initial snapshot";
+    const state = f.runtime.harness.state.bind(f.runtime.harness);
+    f.runtime.harness.state = async () => {
+      const current = await state();
+      return unavailable ? { ...current, ready: false, rooms: [], plans: [], runs: [], authorings: [], questions: [], artifacts: [] } : current;
+    };
+    worker.cleanup = async (ref) => {
+      unavailable = true;
+      return { ref, confirmed: true, reason: null };
+    };
+    try {
+      await f.request("/v1/stop", "POST", undefined, 503);
+      assert.equal((await f.state()).ready, false);
+      assert.equal(worker.cancellations, stage === "initial snapshot" ? 0 : 1);
+      await f.request("/v1/tasks", "POST", { message: "Unavailable is not an empty confirmed stop" }, 409);
+    } finally { f.runtime.harness.state = state; }
+    await f.request("/v1/tasks", "POST", { message: "Recovery does not silently reopen admission" }, 409);
+    await f.request("/v1/stop", "POST");
+    assert.equal((await f.state()).runs[0].cancelConfirmed, true);
+    await f.createRoom("available-again");
+  });
+}
+
+test("Stop all reports unconfirmed root cancellation and requires an explicit successful retry", async (t) => {
+  const f = await fixture(t);
+  f.client.session.initial.emit(event("turn.started", { turnId: "turn-1" }, 1));
+  const task = await f.request("/v1/tasks", "POST", { message: "Root cancellation fixture" }, 202);
+  f.client.session.confirmCancellation = false;
+  await f.request("/v1/stop", "POST", undefined, 503);
+  await f.request("/v1/tasks", "POST", { message: "Root uncertainty fences new work" }, 409);
+  f.client.session.confirmCancellation = true;
+  await f.request(`/v1/tasks/${task.id}/cancel`, "POST");
+  await f.request("/v1/tasks", "POST", { message: "Individual cancel does not lift global fence" }, 409);
+  await f.request("/v1/stop", "POST");
+  await f.createRoom("root-reconciled");
 });
 
 test("real HTTP → kernel → smolagents → Docker: two rooms, DAG handoff, exact question resume across restart, cancellation", { skip: !enabled, timeout: 180_000 }, async (t) => {
