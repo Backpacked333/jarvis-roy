@@ -135,6 +135,42 @@ checkpoint, old room/run/node/attempt binding, allowed answer mode, and new
 attempt ID. Questions never authorize any privileged action. Root host/external
 actions remain exact approval-card operations; this worker has none.
 
+Public manifests contain **only** files equal to a declared `outputPaths` entry
+or beneath that entry followed by `/`, matching the kernel exactly. For example,
+`dist` includes `dist/index.html`, not `dist-other/file`; `.` and wildcards are
+not allowed. Completion still requires every declared output to exist. Declare
+source directories explicitly when a downstream builder needs source, not just
+final assets. Inputs and build scratch are not republished implicitly.
+
+At a question, the entire bounded regular-file workspace is sealed separately in
+the worker's private `checkpoints` store. Only declared outputs appear in the
+frozen checkpoint's public `artifacts` array. The exact durable attempt record
+binds private manifests to room/run/node/attempt/plan; a fresh attempt restores
+and hashes them without replaying tools. Private blobs cannot be read through
+`ArtifactReader` or the HTTP artifact route. Both stores and journals must remain
+in `dataDirectory` for resume; missing or altered private snapshots fail closed,
+never silently falling back to partial public outputs. Worker journal v2 requires
+this snapshot pointer; pre-existing v1 journals remain readable using their
+original complete public snapshots. No frozen contract or kernel relaxation is
+needed, and early resume failures retain cumulative usage.
+
+Whole-workspace snapshot limits still use `maxArtifactBytes` and
+`maxArtifactFiles`, including private scratch; oversized trees fail rather than
+silently drop files. Only regular-file bytes persist, not sockets, links, empty
+directories or executable bits. Restore uses mode 0600; recreate directories and
+rebuild/chmod helpers inside the disposable sandbox when needed. A separate
+working-snapshot allowance/metadata format would need a future versioned policy
+if larger dependency-heavy workspaces are required.
+
+In the integrated tree, set `JARVIS_WORKER_KERNEL_TESTS=1` in addition to the two
+Docker test flags below. Worker-owned HTTP acceptance tests use the actual
+authenticated bridge, kernel and Docker worker with synthetic provider calls.
+They build the real project, download/hash allowed outputs, reject source,
+scratch and lookalike-directory downloads, then exercise a clarification across
+bridge/worker restart and verify private files survived without tool replay.
+The standalone worker branch lacks kernel/root wiring, so these two tests skip
+unless explicitly enabled in the integrated tree.
+
 Worker events and results contain **cumulative full-node Usage**, including
 continuations and explicit retries. Kernel must replace/merge monotonically,
 not add each event/result as a fresh delta. Worker journals retain wall time and
@@ -268,8 +304,9 @@ and 90 seconds. A separate fresh Docker attempt then independently rebuilds and
 asserts the generated module behavior and hashes. Generated code never runs on
 the host. All resources are cleaned or retained as explicitly uncertain.
 
-The verified live enhancement completed in five tool steps/six model calls,
-with measured 12,110 input + 722 output tokens. Earlier bounded runs exposed a
+The latest verified live enhancement, with declared-output filtering, completed
+in five tool steps/five model calls, with measured 10,211 input + 574 output
+tokens. Earlier bounded runs exposed a
 provider ignoring the no-parallel hint and poor textual tool-history handling;
 they failed safely. The native call-ID adapter and budgeted batch repair were
 then regression-tested and the complete enhancement/rebuild/export passed.
