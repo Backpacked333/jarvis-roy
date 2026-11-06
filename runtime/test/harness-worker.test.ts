@@ -89,8 +89,31 @@ test("model limits reject exhausted calls, oversized prompts, unapproved tools a
   await assert.rejects(gateway.generate({ ...request, tools: [{ type: "function", function: { name: "host_shell" } }] }, emptyUsage(), spec.node.limits, async () => {}, signal));
   assert.equal(calls, 0);
   await assert.rejects(gateway.generate(request, emptyUsage(), spec.node.limits, async () => {}, signal));
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
   await assert.rejects(boundedJson(new Response("a".repeat(100)), 10), /size/);
+});
+
+test("provider batch repair consumes a bounded model call but never admits any rejected tools", async () => {
+  const usage = emptyUsage(); let calls = 0, persisted = 0;
+  const gateway = new Gateway("fixture/model", (async (_url, init) => {
+    const body = JSON.parse(init!.body as string);
+    assert.equal(body.parallel_tool_calls, false);
+    calls++;
+    if (calls === 2) assert.match(body.messages.at(-1).content, /NONE executed.*exactly ONE/);
+    return Response.json({ usage: { prompt_tokens: 100, completion_tokens: 40 }, choices: [{ finish_reason: "tool_calls", message: {
+      role: "assistant", content: null, tool_calls: (calls === 1 ? [1, 2] : [3]).map(id => ({ id: `call_${id}`, type: "function",
+        function: { name: "read_file", arguments: JSON.stringify({ path: "src/model.mjs" }) } })),
+    } }] });
+  }) as typeof fetch, undefined);
+  const result = await gateway.generate(request, usage, spec.node.limits, async () => { persisted++; }, new AbortController().signal);
+  assert.equal(calls, 2); assert.equal(usage.modelCalls, 2); assert.equal(usage.steps, 0);
+  assert.equal(usage.inputTokens, 200); assert.equal(usage.outputTokens, 80); assert.ok(persisted >= 4);
+  assert.equal(result.call.name, "read_file");
+  assert.equal((result.message as any).tool_calls[0].id, "call_3");
+  calls = 0;
+  const capped = emptyUsage();
+  await assert.rejects(gateway.generate(request, capped, { ...spec.node.limits, maxModelCalls: 1 }, async () => {}, new AbortController().signal), /exhausted/);
+  assert.equal(calls, 1); assert.equal(capped.modelCalls, 1); assert.equal(capped.steps, 0);
 });
 
 test("estimated-dollar admission uses published rates conservatively and is not a billing cap", async () => {

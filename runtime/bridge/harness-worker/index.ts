@@ -14,6 +14,7 @@ import { Artifacts, PrivateStore, SnapshotSchema, type CheckEvidence } from "./s
 import { Gateway, ToolArguments, emptyUsage, type ToolName } from "./gateway.ts";
 import { runController } from "./controller.ts";
 import { command } from "./process.ts";
+import { imageProfile } from "./images.ts";
 
 const RecordSchema = z.strictObject({
   version: z.literal(1), ref: AttemptRefSchema, specDigest: z.string(), planDigest: z.string(),
@@ -113,7 +114,7 @@ class Runner implements WorkerRunner {
       let onAbort!: () => void;
       try {
         await Promise.race([
-          context.emit({ ...event, ref, sequence: ++sequence, at: new Date().toISOString() } as WorkerEvent),
+          context.emit({ ...event, ref, sequence: sequence++, at: new Date().toISOString() } as WorkerEvent),
           new Promise<never>((_resolve, reject) => {
             onAbort = () => reject(new Error("Event persistence interrupted by cancellation/deadline"));
             abort.signal.addEventListener("abort", onAbort, { once: true });
@@ -130,7 +131,12 @@ class Runner implements WorkerRunner {
       await this.ledgers.put(nodeKey(ref), ledger);
       await this.records.put(key, record);
     };
-    const persistUsage = async () => { await persist(); await emit({ type: "usage", usage: structuredClone(record!.usage) }); };
+    const persistUsage = async () => {
+      await persist();
+      if (record!.usage.accounting === "measured" && record!.usage.reservedTokens === 0) {
+        await emit({ type: "usage", usage: structuredClone(record!.usage) });
+      }
+    };
     let result: WorkerResult;
     try {
       const binding = sha256(canonicalJson({ planDigest: spec.planDigest, node: spec.node, policy: spec.policy }));
@@ -178,6 +184,9 @@ class Runner implements WorkerRunner {
       const outcome = await runController(this.python, {
         model: this.options.model, maxSteps: spec.node.limits.maxSteps - record.usage.steps,
         task: JSON.stringify({ instructions: spec.node.instructions, outputPaths: spec.node.outputPaths,
+          runtime: { python: "python3", node: imageProfile(spec.policy.sandbox.image!).coding ? "24" : null,
+            workspaceExecutable: imageProfile(spec.policy.sandbox.image!).coding, network: "none",
+            packages: "Preinstalled toolchain only; npm is offline. Do not attempt package downloads or assume project dependencies exist." },
           existingFiles: restored.map(file => file.path), inertHistory: history, answer: spec.answer,
           previousSummary: spec.checkpoint?.continuation.summary ?? null }),
       }, abort.signal, async message => {
@@ -245,7 +254,7 @@ class Runner implements WorkerRunner {
       }
       const artifacts = await this.artifacts.seal(spec, files, checkedSnapshot === sha256(canonicalJson(files)) ? checks : []);
       if (outcome.status === "waiting_question") {
-        const checkpoint = WorkerCheckpointSchema.parse({ version: 1, ref, sequence, createdAt: new Date().toISOString(), resumeMode: "continue_after_answer",
+        const checkpoint = WorkerCheckpointSchema.parse({ version: 1, ref, sequence: sequence - 1, createdAt: new Date().toISOString(), resumeMode: "continue_after_answer",
           continuation: { version: 1, summary: `Paused after ${record.usage.steps} cumulative tool steps; continue without replay.`, history,
             completedStepIds, usage: record.usage }, artifacts, question });
         result = { status: "waiting_question", ref, usage: record.usage, checkpoint };

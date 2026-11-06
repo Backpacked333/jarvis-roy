@@ -64,7 +64,7 @@ export class Gateway {
   }
 
   async generate(request: Record<string, unknown>, usage: Usage, limits: BudgetLimits,
-    persist: () => Promise<void>, signal: AbortSignal): Promise<{ message: object; call: { name: ToolName; arguments: Record<string, unknown> } }> {
+    persist: () => Promise<void>, signal: AbortSignal, allowBatchRepair = true): Promise<{ message: object; call: { name: ToolName; arguments: Record<string, unknown> } }> {
     if (usage.accounting !== "measured" || usage.reservedTokens > 0) throw new Error("Token usage is uncertain; another model call is not safe");
     if (usage.modelCalls >= limits.maxModelCalls || usage.steps >= limits.maxSteps) throw new Error("Worker model/step budget exhausted");
     const parsed = z.strictObject({
@@ -118,10 +118,21 @@ export class Gateway {
       await persist();
       throw new Error("Provider omitted trustworthy usage; execution halted with full remaining reservation");
     }
-    const response = ResponseSchema.parse(raw);
+    const validated = ResponseSchema.safeParse(raw);
+    if (!validated.success && allowBatchRepair && validated.error.issues.every(issue =>
+      issue.code === "too_big" && issue.path.join(".") === "choices.0.message.tool_calls")) {
+      // Some providers ignore parallel_tool_calls:false. No rejected call executes.
+      return this.generate({ ...parsed, messages: [...parsed.messages, { role: "user",
+        content: "The previous response contained multiple tool calls and was rejected. NONE executed. Return exactly ONE tool call, not a batch. Continue from the unchanged files." }] },
+      usage, limits, persist, signal, false);
+    }
+    if (!validated.success) throw new Error(`Gateway response shape rejected: ${validated.error.issues.map(issue => `${issue.code} at ${issue.path.join(".")}`).join("; ").slice(0, 500)}`);
+    const response = validated.data;
     if (response.choices[0].finish_reason !== "tool_calls" && response.choices[0].finish_reason !== "stop") throw new Error("Incomplete model response");
     const call = response.choices[0].message.tool_calls[0];
-    const args = ToolArguments[call.function.name].parse(JSON.parse(call.function.arguments));
+    const validatedArgs = ToolArguments[call.function.name].safeParse(JSON.parse(call.function.arguments));
+    if (!validatedArgs.success) throw new Error(`Gateway ${call.function.name} arguments rejected: ${validatedArgs.error.issues.map(issue => `${issue.code} at ${issue.path.join(".")}`).join("; ").slice(0, 500)}`);
+    const args = validatedArgs.data;
     return {
       message: { role: "assistant", content: response.choices[0].message.content ?? "", tool_calls: [{ ...call, function: { name: call.function.name, arguments: args } }] },
       call: { name: call.function.name, arguments: args },
