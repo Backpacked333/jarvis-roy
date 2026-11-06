@@ -227,6 +227,32 @@ test("child-task and child-session lifecycle is represented in normalized progre
   assert.ok(task.id);
 });
 
+test("failed call activity preserves bounded sanitized errors without exposing other error fields or successful outputs", async (t) => {
+  const setup = await makeService();
+  t.after(setup.close);
+  setup.client.session.initial = new FakeDelivery([
+    event("turn.started", { turnId: "turn-1" }, 1),
+    event("call.requested", { callId: "failed-1", capability: { name: "control_app" }, input: {} }, 2),
+    event("call.settled", { callId: "failed-1", outcome: "failed", error: { message: "STALE_TARGET: changed target; token=fixture-secret", stack: "PRIVATE STACK" } }, 3),
+    event("call.requested", { callId: "failed-2", capability: { name: "inspect_app" }, input: {} }, 4),
+    event("call.settled", { callId: "failed-2", outcome: "failed", error: `AX_UNAVAILABLE: ${"x".repeat(3_000)}` }, 5),
+    event("call.settled", { callId: "ok-1", outcome: "completed", output: "PRIVATE OUTPUT" }, 6),
+    event("turn.settled", { turnId: "turn-1", outcome: "completed" }, 7),
+    event("delivery.settled", { deliveryId: "initial", outcome: "handled" }, 8),
+  ], { status: "completed", reply: "The tool failed safely." });
+  const task = await setup.service.createTask("Inspect the fixture.");
+  await waitFor(async () => (await setup.service.state()).tasks[0]?.status === "completed");
+  const events = (await setup.service.state()).tasks[0]!.events;
+  const text = events.join("\n");
+  assert.match(text, /control_app failed\. STALE_TARGET: changed target/);
+  assert.match(text, /token=\[REDACTED\]/);
+  assert.match(text, /inspect_app failed\. AX_UNAVAILABLE/);
+  assert.doesNotMatch(text, /fixture-secret|PRIVATE STACK|PRIVATE OUTPUT/);
+  assert.ok(events.every((item) => item.length <= 2_000));
+  const persisted = JSON.parse(await readFile(path.join(setup.dataDirectory, "tasks.json"), "utf8"));
+  assert.deepEqual(persisted.tasks.find((item: TaskRecord) => item.id === task.id).events, events);
+});
+
 test("active sessions from a previous process are marked interrupted, not cancelled", async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "jarvis-restart-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

@@ -38,7 +38,7 @@ function fixtureBody(handler: string) {
 
 const inspection = {
   kind: "inspection", bundleId, processId: 123, launchTimestamp: 100, treeDigest: "a".repeat(64),
-  elements: [{ elementId: "root/0", path: [0], role: "AXButton", label: "Fixture", value: "", secure: false }], truncated: false,
+  elements: [{ elementId: "root/0", path: [0], role: "AXButton", label: "Fixture", value: "", secure: false, validationDigest: "b".repeat(64) }], truncated: false,
 };
 
 test("desktop and terminal opt-ins are exact, independent, and off by default; status does not claim permissions", async () => {
@@ -263,6 +263,7 @@ test("observations are owner/app-bound, consume once, and forward only server-ob
       else { require('node:fs').writeFileSync(${JSON.stringify(capture)},JSON.stringify(request));console.log(JSON.stringify({ok:true,result:{kind:'control',action:request.action,bundleId:request.bundleId}})); }`));
     const observation = await inspectApp({ bundleId }, "owner", undefined, options);
     assert.equal("path" in observation.elements[0], false);
+    assert.equal("validationDigest" in observation.elements[0], false);
     const action = { action: "click" as const, bundleId, observationId: observation.observationId, elementId: "root/0" };
     await assert.rejects(controlApp(action, "other-owner", undefined, options), /another app\/session/);
     await assert.rejects(controlApp({ ...action, bundleId: "com.example.Other" }, "owner", undefined, options), /another app\/session/);
@@ -271,10 +272,19 @@ test("observations are owner/app-bound, consume once, and forward only server-ob
     const request = JSON.parse(await readFile(capture, "utf8"));
     assert.equal(request.operation, "control_app");
     assert.deepEqual(request.path, [0]);
-    assert.equal(request.expectedTreeDigest, inspection.treeDigest);
+    assert.equal(request.expectedTreeDigest, inspection.elements[0].validationDigest);
     assert.equal(request.expectedProcessId, inspection.processId);
     assert.equal(request.expectedLaunchTimestamp, inspection.launchTimestamp);
     await assert.rejects(controlApp(action, "owner", undefined, options), /missing, expired/);
+  });
+});
+
+test("old helpers without per-target validation digests must be rebuilt", async () => {
+  await withDirectory(async (directory) => {
+    const { validationDigest: _digest, ...legacyElement } = inspection.elements[0];
+    const legacy = { ...inspection, elements: [legacyElement] };
+    const options = await helper(directory, fixtureBody(`console.log(JSON.stringify({ok:true,result:${JSON.stringify(legacy)}}))`));
+    await assert.rejects(inspectApp({ bundleId }, "owner", undefined, options), /incompatible response; rebuild/);
   });
 });
 

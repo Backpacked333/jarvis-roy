@@ -76,10 +76,33 @@ struct Inspection {
     let launchTimestamp: Double
     let nodes: [ObservedNode]
     let truncated: Bool
-    let digest: String
+    let digests: ObservationDigests
     var response: [String: Any] {
         ["kind": "inspection", "bundleId": bundleId, "processId": pid, "launchTimestamp": launchTimestamp,
-         "treeDigest": digest, "elements": nodes.map(\.response), "truncated": truncated]
+         "treeDigest": digests.tree, "elements": nodes.map { node in
+             var result = node.response
+             result["validationDigest"] = digests.forTarget(node.path)
+             return result
+         }, "truncated": truncated]
+    }
+}
+
+struct ObservationDigests {
+    let tree: String
+    let content: String
+    private let menuPaths: [[Int]]
+
+    init(elements: [(path: [Int], role: String, fingerprint: String)]) {
+        let menus = elements.filter { ["AXMenuBar", "AXMenu", "AXMenuItem"].contains($0.role) }.map { $0.path }
+        menuPaths = menus
+        tree = sha(Data(elements.map { $0.fingerprint }.joined(separator: ":").utf8))
+        // Menus update independently of document controls, even while the app is idle.
+        let contentElements = elements.filter { element in !menus.contains { element.path.starts(with: $0) } }
+        content = sha(Data(contentElements.map { $0.fingerprint }.joined(separator: ":").utf8))
+    }
+
+    func forTarget(_ path: [Int]) -> String {
+        menuPaths.contains { path.starts(with: $0) } ? tree : content
     }
 }
 
@@ -143,7 +166,8 @@ func inspectApplication(_ app: NSRunningApplication, deadline: Deadline) throws 
     try visit(root, path: [])
     guard !app.isTerminated else { throw ControlFailure("APP_CHANGED", "The application exited while reading its tree. Inspect again.") }
     return Inspection(bundleId: bundleId, pid: app.processIdentifier, launchTimestamp: launch.timeIntervalSince1970,
-                      nodes: nodes, truncated: truncated, digest: sha(Data(nodes.map(\.fingerprint).joined(separator: ":").utf8)))
+                      nodes: nodes, truncated: truncated,
+                      digests: ObservationDigests(elements: nodes.map { (path: $0.path, role: $0.role, fingerprint: $0.fingerprint) }))
 }
 
 func resolve(_ root: AXUIElement, path: [Int], deadline: Deadline) throws -> AXUIElement {
@@ -209,8 +233,9 @@ func controlApplication(_ request: Request, deadline: Deadline) async throws -> 
     try await activateApprovedApplication(app, deadline: deadline)
     try verifyIdentity(app, request)
     let inspection = try inspectApplication(app, deadline: deadline)
-    guard inspection.digest == expectedDigest, let node = inspection.nodes.first(where: { $0.path == path }), !node.secure else {
-        throw ControlFailure("STALE_TARGET", "The accessible tree/target changed or is secure. The approved app may have been activated, but no element action was performed. Inspect again.")
+    guard let node = inspection.nodes.first(where: { $0.path == path }), !node.secure,
+          inspection.digests.forTarget(path) == expectedDigest else {
+        throw ControlFailure("STALE_TARGET", "The target's validation scope changed or is secure. Window controls require unchanged non-menu content; menu targets require the full tree. The approved app may have been activated, but no element action was performed. Inspect again.")
     }
     let root = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetMessagingTimeout(root, 0.5)

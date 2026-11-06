@@ -625,7 +625,10 @@ export class JarvisService {
           const callId = stringValue(data.callId);
           const call = callId ? callInputs.get(callId) : undefined;
           const outcome = stringValue(data.outcome) ?? "settled";
-          append(`${call?.name ?? "Action"} ${outcome}.`);
+          const failure = outcome === "failed"
+            ? stringValue(asRecord(data.error).message) ?? stringValue(data.error)
+            : undefined;
+          append(`${call?.name ?? "Action"} ${outcome}.${failure ? ` ${failure}` : ""}`);
           if (callId) callInputs.delete(callId);
           break;
         }
