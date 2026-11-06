@@ -13,13 +13,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct JarvisApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = AppModel()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup("Jarvis") {
             WorkspaceView(model: model, voice: model.voice)
                 .frame(minWidth: 1050, minHeight: 720)
                 .preferredColorScheme(.dark)
-                .task { await model.observe() }
+                .task { model.startObserving() }
+                .onAppear { model.setApplicationActive(NSApp.isActive) }
+                .onChange(of: scenePhase) { _, phase in model.setApplicationActive(phase == .active) }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in model.shutdown() }
+                .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)) { _ in model.muteVoice() }
         }
         .defaultSize(width: 1280, height: 840)
         .windowStyle(.hiddenTitleBar)

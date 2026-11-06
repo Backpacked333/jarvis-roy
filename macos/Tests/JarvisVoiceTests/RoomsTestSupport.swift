@@ -22,6 +22,7 @@ final class RoomsTestService: HarnessServing {
     var batch: HarnessEvents
     var stateCalls = 0
     var stateHandler: (() async throws -> HarnessState)?
+    var createHandler: ((HarnessCreateRoomRequest) async throws -> HarnessRoom)?
     var answerHandler: ((HarnessAnswerRequest) async throws -> HarnessQuestion)?
     var failure: Error?
     var textAnswers: [HarnessAnswerRequest] = []
@@ -49,6 +50,7 @@ final class RoomsTestService: HarnessServing {
     func events(after: Int, roomId: String?) async throws -> HarnessEvents { batch }
     func createRoom(_ input: HarnessCreateRoomRequest) async throws -> HarnessRoom {
         created.append(input)
+        if let createHandler { return try await createHandler(input) }
         if let failure { throw failure }
         var room = snapshot.rooms[0]
         room.id = "created_room"; room.title = input.title; room.description = input.description; room.policy = input.policy

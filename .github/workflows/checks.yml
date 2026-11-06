@@ -29,6 +29,8 @@ jobs:
     timeout-minutes: 15
     env:
       JARVIS_WORKER_DOCKER_TESTS: '1'
+      JARVIS_WORKER_CODING_TESTS: '1'
+      JARVIS_WORKER_KERNEL_TESTS: '1'
       JARVIS_WORKER_IMAGE: python@sha256:2986c55feb36e6cae00fa1fefb454283e4b33f35e75ff8bdd123b134130be301
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +48,7 @@ jobs:
       - run: ./scripts/setup-workers.sh
       - run: echo "JARVIS_WORKER_PYTHON=$PWD/runtime/workers/.venv/bin/python" >> "$GITHUB_ENV"
       - run: docker pull "$JARVIS_WORKER_IMAGE"
+      - run: node runtime/workers/setup-image.ts coding --pull
       - run: npm --prefix runtime test
       - name: Check for leaked running workers
         if: always()

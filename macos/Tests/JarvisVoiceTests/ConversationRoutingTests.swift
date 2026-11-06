@@ -5,6 +5,7 @@ import XCTest
 @MainActor
 private final class FixtureRuntime: RuntimeServing {
     var requests: [(String, [String: String]?)] = []
+    var stateCalls = 0
     var onRequest: (() -> Void)?
     var failRequests = false
     var tasks: [AgentTask] = []
@@ -37,7 +38,8 @@ private final class FixtureRuntime: RuntimeServing {
     }
 
     func state() async throws -> RuntimeState {
-        RuntimeState(ready: true, model: "fixture", tasks: tasks, conversations: threads, memories: [], error: nil)
+        stateCalls += 1
+        return RuntimeState(ready: true, model: "fixture", tasks: tasks, conversations: threads, memories: [], error: nil)
     }
 
     func capabilities() async throws -> CapabilityState {
@@ -50,7 +52,121 @@ private final class FixtureRuntime: RuntimeServing {
     }
 }
 
+@MainActor
+private final class RoutingDuplex: VoiceDuplexAudioServing {
+    func start() throws {}
+    func poll() throws -> VoiceDuplexSignal { .init() }
+    func play(_ data: Data, completed: @escaping () -> Void) throws {}
+    func interruptPlayback() {}
+    func stop() {}
+}
+
 final class ConversationRoutingTests: XCTestCase {
+    @MainActor
+    func testHandsFreeSubmissionKeepsConsentAndSendsOnceToCapturedConversation() async {
+        let runtime = FixtureRuntime(), transport = FixtureVoiceTransport()
+        let voice = VoiceController(audioInputAvailable: { true }, audioOutputAvailable: { true },
+            transport: transport, microphonePermission: { true }, duplex: RoutingDuplex())
+        let model = AppModel(client: runtime, voice: voice)
+        defer { model.shutdown() }
+        await model.refresh(); model.selectConversation("a")
+        voice.setCloudConsent(true)
+        await voice.setHandsFreeEnabled(true)
+        XCTAssertTrue(voice.handsFreeEnabled)
+        XCTAssertTrue(model.prepareVoiceCapture())
+        voice.transcript = "An intermediate partial"
+        var context = HarnessVoiceContext(); context.conversationId = "a"
+        let utterance = HarnessVoiceUtterance(text: "Final hands-free command", context: context, sessionId: "capture", generation: 1)
+        await model.handleUtterance(utterance)
+        await model.handleUtterance(utterance)
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(runtime.requests.filter { $0.0 == "v1/tasks" }.count, 1)
+        XCTAssertEqual(runtime.requests.first?.1?["conversationId"], "a")
+        XCTAssertEqual(runtime.requests.first?.1?["message"], "Final hands-free command")
+        XCTAssertTrue(model.voiceReview.isEmpty)
+        XCTAssertTrue(voice.handsFreeEnabled)
+    }
+
+    @MainActor
+    func testHandsFreeYesDoesNotAnswerPendingApprovalOrBypassDraft() async {
+        let runtime = FixtureRuntime(), transport = FixtureVoiceTransport()
+        runtime.tasks = [runtime.pending("a", status: "interrupted")]
+        let voice = VoiceController(audioInputAvailable: { true }, audioOutputAvailable: { true },
+            transport: transport, microphonePermission: { true }, duplex: RoutingDuplex())
+        let model = AppModel(client: runtime, voice: voice)
+        defer { model.shutdown() }
+        await model.refresh(); model.selectConversation("a")
+        voice.setCloudConsent(true); await voice.setHandsFreeEnabled(true)
+        var context = HarnessVoiceContext(); context.conversationId = "a"
+        await model.handleUtterance(.init(text: "yes", context: context, sessionId: "approval-is-not-voice", generation: 1))
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertTrue(runtime.requests.isEmpty)
+        XCTAssertEqual(model.voiceReview, "yes")
+    }
+
+    @MainActor
+    func testPartialTranscriptCannotLeakFromBackgroundQuestionIntoConversation() async {
+        let runtime = FixtureRuntime(), transport = FixtureVoiceTransport()
+        let voice = VoiceController(audioInputAvailable: { true }, audioOutputAvailable: { true },
+            transport: transport, microphonePermission: { true })
+        let model = AppModel(client: runtime, voice: voice)
+        defer { model.shutdown() }
+        await model.refresh(); model.selectConversation("a"); voice.setCloudConsent(true)
+        await model.startManualListening()
+        voice.transcript = "Original conversation partial"
+        XCTAssertEqual(model.voiceReview, "Original conversation partial")
+        var context = HarnessVoiceContext(); context.roomId = "separate-room"
+        context.question = .init(questionId: "question", revision: 1, target: .authoring(roomId: "separate-room", authoringId: "author"))
+        voice.speak("Which color?", context: context)
+        voice.transcript = "Private room answer"
+        XCTAssertEqual(model.voiceReview, "Original conversation partial")
+    }
+
+    @MainActor
+    func testApplicationOwnsOneObserverAcrossNavigationAndWorkspaceOwners() async throws {
+        let runtime = FixtureRuntime(), harness = RoomsTestService(try RoomsFixture.load())
+        let model = AppModel(client: runtime, harnessClient: harness)
+        defer { model.shutdown() }
+        model.startObserving(); model.startObserving()
+        for _ in 0..<100 where runtime.stateCalls == 0 { await Task.yield() }
+        XCTAssertEqual(runtime.stateCalls, 1)
+        XCTAssertTrue(model.rooms.isObserving)
+        model.tab = .privacy
+        model.rooms.stopObserving(owner: .workspace)
+        XCTAssertTrue(model.rooms.isObserving)
+        model.setApplicationActive(false)
+        XCTAssertFalse(model.rooms.isApplicationActive)
+        model.shutdown()
+        XCTAssertFalse(model.rooms.isObserving)
+    }
+
+    @MainActor
+    func testMuteDuringFreshRoomCreationCannotStartMicrophoneLater() async throws {
+        let fixture = try RoomsFixture.load(), runtime = FixtureRuntime()
+        let harness = RoomsTestService(fixture), transport = FixtureVoiceTransport()
+        harness.snapshot.rooms = []; harness.snapshot.plans = []; harness.snapshot.runs = []
+        harness.snapshot.authorings = []; harness.snapshot.questions = []; harness.snapshot.artifacts = []; harness.snapshot.approvals = []
+        var continuation: CheckedContinuation<HarnessRoom, Never>?
+        harness.createHandler = { _ in await withCheckedContinuation { continuation = $0 } }
+        let voice = VoiceController(audioInputAvailable: { true }, transport: transport, microphonePermission: { true })
+        let model = AppModel(client: runtime, harnessClient: harness, voice: voice)
+        defer { model.shutdown(); harness.createHandler = nil }
+        await model.refresh(); await model.rooms.refresh(); voice.setCloudConsent(true)
+        XCTAssertEqual(model.tab, .rooms); XCTAssertNil(model.rooms.selectedRoomId)
+        let task = Task { await model.startManualListening() }
+        for _ in 0..<100 where continuation == nil { await Task.yield() }
+        let held = try XCTUnwrap(continuation)
+        model.muteVoice()
+        var room = fixture.state.rooms[0]; room.id = "new-voice-room"
+        harness.snapshot.rooms = [room]; harness.snapshot.sequence += 1
+        held.resume(returning: room)
+        await task.value
+        XCTAssertEqual(harness.created.count, 1)
+        XCTAssertEqual(transport.connections, 0)
+        XCTAssertNil(voice.capturedContext)
+        XCTAssertTrue(model.voiceNotice?.contains("capture was cancelled") == true)
+    }
+
     @MainActor
     func testDraftHistoryAndTaskSelectionRemainThreadScoped() async {
         let runtime = FixtureRuntime()

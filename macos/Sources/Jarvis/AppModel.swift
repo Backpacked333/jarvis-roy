@@ -3,7 +3,9 @@ import SwiftUI
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var tab: WorkspaceTab = .rooms
+    @Published var tab: WorkspaceTab = .rooms {
+        didSet { if oldValue != tab { voiceStartGeneration += 1 } }
+    }
     @Published var tasks: [AgentTask] = []
     @Published var conversations: [Conversation] = []
     @Published var memories: [MemoryEntry] = []
@@ -32,6 +34,8 @@ final class AppModel: ObservableObject {
     private var selectionRevision = 0
     private var transcriptSubscription: AnyCancellable?
     private var receivedUtterances: [String] = []
+    private var observationTask: Task<Void, Never>?
+    private var voiceStartGeneration = 0
 
     init(client: (any RuntimeServing)? = nil, harnessClient: (any HarnessServing)? = nil, voice injectedVoice: VoiceController? = nil) {
         self.client = client ?? RuntimeClient()
@@ -41,8 +45,26 @@ final class AppModel: ObservableObject {
         voice.onUtterance = { [weak self] utterance in Task { await self?.handleUtterance(utterance) } }
         voice.onAudioLevels = { [weak self] levels in self?.rooms.updateAudioLevels(levels) }
         voice.onStateChange = { [weak self] state in self?.rooms.updateVoiceState(state) }
+        rooms.onQuestionAttention = { [weak self] notice in
+            guard let self, self.voice.cloudConsentGranted, self.rooms.canSpeak(notice),
+                  self.voice.state == .idle else { return false }
+            self.voice.speak(notice.question.question.prompt, context: notice.context)
+            return self.voice.capturedContext == notice.context
+        }
+        rooms.onQuestionAttentionRevoked = { [weak self] binding in self?.voice.revokeQuestion(binding) }
+        rooms.onAttentionNavigation = { [weak self] target in
+            guard let self else { return }
+            switch target {
+            case .question: self.tab = .rooms
+            case .approval(let approval): Task { await self.reviewApproval(approval) }
+            }
+        }
+        rooms.updateVoiceState(voice.state)
         transcriptSubscription = voice.$transcript.sink { [weak self] text in
-            guard let self, let owner = self.voiceOwner, !self.voice.wakeWordEnabled, !text.isEmpty else { return }
+            guard let self, let owner = self.voiceOwner, !self.voice.wakeWordEnabled,
+                  !self.voice.handsFreeEnabled, !text.isEmpty,
+                  let context = self.voice.capturedContext, context.conversationId == owner,
+                  context.roomId == nil, context.question == nil else { return }
             self.manualTranscripts[owner] = text
         }
     }
@@ -67,7 +89,7 @@ final class AppModel: ObservableObject {
             return
         }
         voiceOwner = owner
-        if voice.wakeWordEnabled { receiveVoiceCommand(text) }
+        if voice.wakeWordEnabled || voice.handsFreeEnabled { receiveVoiceCommand(text) }
         else {
             manualTranscripts[owner] = text
             voiceNotice = "Transcript retained in its original conversation for review. Use Add to draft, then Send."
@@ -119,11 +141,11 @@ final class AppModel: ObservableObject {
 
     func selectConversation(_ id: String) {
         guard conversations.contains(where: { $0.id == id }), id != selectedConversationID || tab != .workspace else { return }
+        voiceStartGeneration += 1
         if voiceOwner != nil {
-            voice.stopListening()
             voiceNotice = "Microphone muted on thread switch. Captured text remains in its original thread for review; enable listening again here when ready."
         }
-        voice.stopSpeaking()
+        voice.stopListening()
         voiceOwner = nil
         selectionRevision += 1
         selectedConversationID = id
@@ -143,11 +165,33 @@ final class AppModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
 
-    func observe() async {
-        while !Task.isCancelled {
-            await refresh()
-            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+    func startObserving() {
+        guard observationTask == nil else { return }
+        rooms.startObserving()
+        observationTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.refresh()
+                do { try await Task.sleep(for: .seconds(self.rooms.isApplicationActive ? 1 : 15)) } catch { return }
+            }
         }
+    }
+
+    func setApplicationActive(_ active: Bool) { rooms.setApplicationActive(active) }
+
+    func shutdown() {
+        voiceStartGeneration += 1
+        observationTask?.cancel()
+        observationTask = nil
+        rooms.shutdown()
+        voice.stopListening()
+    }
+
+    func muteVoice() {
+        voiceStartGeneration += 1
+        rooms.spokenAttentionEnabled = false
+        voice.stopListening()
+        voiceNotice = "Voice stopped. Read new questions aloud is off; re-enable it in Attention when ready. Notification preferences are unchanged."
     }
 
     func refresh() async {
@@ -207,7 +251,7 @@ final class AppModel: ObservableObject {
     private func submit(_ text: String, conversationID: String, fromVoice: Bool) async {
         guard !submitting.contains(conversationID) else { return }
         submitting.insert(conversationID)
-        voice.stopSpeaking()
+        if !fromVoice, voice.capturedContext != nil { voice.stopSpeaking() }
         defer { submitting.remove(conversationID) }
         do {
             let data = try await client.request("v1/tasks", method: "POST", body: ["message": text, "conversationId": conversationID])
@@ -235,8 +279,27 @@ final class AppModel: ObservableObject {
     }
 
     func startManualListening() async {
+        guard !pendingActions.contains("voice-start"), !pendingActions.contains("stop-all") else { return }
+        guard voice.cloudConsentGranted else {
+            voiceNotice = "Allow cloud voice for this session before starting a microphone capture."
+            return
+        }
+        pendingActions.insert("voice-start")
+        defer { pendingActions.remove("voice-start") }
+        voiceStartGeneration += 1
+        let ticket = voiceStartGeneration
         if tab == .rooms {
-            guard rooms.selectedRoomId != nil else { voiceNotice = "Create or select a room before dictating its goal."; return }
+            if rooms.selectedRoomId == nil {
+                guard let policy = rooms.state?.defaultPolicy,
+                      await rooms.createRoom(title: "Voice room", description: "A room created for a dictated goal. Rename it after planning.", policy: policy) else {
+                    voiceNotice = "A room could not be confirmed for this capture. Nothing was recorded."
+                    return
+                }
+                guard !Task.isCancelled, ticket == voiceStartGeneration, tab == .rooms else {
+                    voiceNotice = "The new room was saved, but capture was cancelled. Start listening again explicitly when ready."
+                    return
+                }
+            }
             voiceOwner = nil
             voiceNotice = "Finish sends this room goal for draft authoring, or answers the exact focused clarification. It never starts a run or approves host actions."
             await voice.startListening()
@@ -246,7 +309,9 @@ final class AppModel: ObservableObject {
         if let id = voiceOwner, let prior = manualTranscripts.removeValue(forKey: id), !prior.isEmpty {
             voiceReviews[id, default: []].append(prior)
         }
-        voiceNotice = "Manual transcript stays here for review. Use Add to draft, then Send."
+        voiceNotice = voice.handsFreeEnabled
+            ? "Hands-free sends completed speech to this conversation when it is ready. Pending approvals and drafts still block submission."
+            : "Manual transcript stays here for review. Use Add to draft, then Send."
         await voice.startListening()
     }
 
@@ -315,8 +380,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopAll() async {
-        voice.stopListening()
-        voice.stopSpeaking()
+        muteVoice()
         selectionRevision += 1
         await act(key: "stop-all", path: "v1/stop")
         await rooms.refresh()

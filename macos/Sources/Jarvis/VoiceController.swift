@@ -61,7 +61,6 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     private var sentInputBytes = 0
     private var captureStarted: TimeInterval = 0
     private var lastPlaybackAt: TimeInterval = 0
-    private var replyContext: HarnessVoiceContext?
     private var fromWake = false
     private var observers: [NSObjectProtocol] = []
 
@@ -120,8 +119,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     }
 
     func startListening() async {
-        let context = replyContext ?? contextProvider?() ?? HarnessVoiceContext()
-        replyContext = nil
+        let context = contextProvider?() ?? HarnessVoiceContext()
         await beginCapture(context: context, fromWake: false)
     }
 
@@ -255,7 +253,6 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         handsFreeStatus = "Hands-free is off"
         wakeGate.mute()
         wakeWordEnabled = false
-        replyContext = nil
         cancelActive()
         wakeStatus = "Wake listening is off"
         changeState(.idle)
@@ -269,6 +266,13 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         changeState(.interrupted)
     }
 
+    func revokeQuestion(_ binding: HarnessQuestionBinding) {
+        guard turn.mode != .idle, turn.context.question == binding else { return }
+        cancelActive()
+        wakeStatus = "Question ended · microphone off"
+        changeState(.idle)
+    }
+
     func speak(_ text: String) { speak(text, context: contextProvider?() ?? HarnessVoiceContext()) }
 
     func speak(_ text: String, context: HarnessVoiceContext) {
@@ -278,7 +282,6 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         guard cloudConsentGranted else { fail("ElevenLabs voice is off until you explicitly allow cloud voice for this session. Typing still works."); return }
         guard audioOutputAvailable() else { fail("No usable audio output was found. Connect speakers or headphones. The reply remains available as text."); return }
         guard text.utf16.count <= 4_000 else { fail("This reply is too long for one voice turn. Read it as text or speak a shorter selection."); return }
-        replyContext = context.question == nil ? nil : context
         let ticket = turn.begin(.playback, context: context)
         error = nil
         changeState(.connecting)
@@ -403,7 +406,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         pendingDuplexPCM = preRoll
         inputSequence = 0; sentInputBytes = 0
         isSpeaking = false; isListening = false; isCapturingCommand = false
-        transcript = ""; replyContext = nil
+        transcript = ""
         fromWake = false
         duplexAnswerWindow = answerWindow
         duplexFinishing = false
@@ -584,8 +587,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
             Task { @MainActor [weak self] in
                 guard let self, self.wakeGate.accepts(ticket), self.wakeWordEnabled else { return }
                 if woke {
-                    let context = self.replyContext ?? self.contextProvider?() ?? HarnessVoiceContext()
-                    self.replyContext = nil
+                    let context = self.contextProvider?() ?? HarnessVoiceContext()
                     self.wakeRetry.reset()
                     // Discard Apple's transcript. The command starts only after Scribe is ready.
                     await self.beginCapture(context: context, fromWake: true)

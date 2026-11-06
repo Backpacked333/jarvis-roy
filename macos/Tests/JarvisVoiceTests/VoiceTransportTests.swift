@@ -5,6 +5,51 @@ import JarvisAudioSafety
 @testable import Jarvis
 
 final class VoiceTransportTests: XCTestCase {
+    @MainActor
+    func testFreshCaptureCannotInheritQuestionFromInterruptedSpeech() async {
+        let wire = FixtureVoiceTransport()
+        let voice = VoiceController(audioInputAvailable: { true }, audioOutputAvailable: { true }, transport: wire, microphonePermission: { true })
+        defer { voice.stopListening() }
+        voice.setCloudConsent(true)
+        var question = HarnessVoiceContext(); question.roomId = "room-a"
+        question.question = .init(questionId: "question-a", revision: 1, target: .authoring(roomId: "room-a", authoringId: "author-a"))
+        var selected = question
+        voice.contextProvider = { selected }
+        voice.speak("Which color?", context: question)
+        voice.interrupt()
+        selected = HarnessVoiceContext(); selected.roomId = "room-b"
+        await voice.startListening()
+        XCTAssertEqual(voice.capturedContext, selected)
+        XCTAssertNil(voice.capturedContext?.question)
+        XCTAssertEqual(wire.frames.last?.type, "start")
+        XCTAssertEqual(wire.frames.last?.context?.roomId, "room-b")
+    }
+
+    @MainActor
+    func testQuestionRevocationOnlyCancelsExactActiveQuestion() async {
+        let wire = FixtureVoiceTransport()
+        let voice = VoiceController(audioInputAvailable: { true }, audioOutputAvailable: { true }, transport: wire, microphonePermission: { true })
+        defer { voice.stopListening() }
+        voice.setCloudConsent(true)
+        let binding = HarnessQuestionBinding(questionId: "question-a", revision: 1, target: .authoring(roomId: "room-a", authoringId: "author-a"))
+        var question = HarnessVoiceContext(); question.roomId = "room-a"; question.question = binding
+        voice.speak("Which color?", context: question)
+        let active = wire.disconnections
+        var stale = binding; stale.revision += 1
+        voice.revokeQuestion(stale)
+        XCTAssertEqual(wire.disconnections, active)
+        XCTAssertEqual(voice.capturedContext, question)
+        voice.revokeQuestion(binding)
+        XCTAssertNil(voice.capturedContext)
+        XCTAssertGreaterThan(wire.disconnections, active)
+        var conversation = HarnessVoiceContext(); conversation.conversationId = "conversation-b"
+        voice.speak("An unrelated reply.", context: conversation)
+        let unrelated = wire.disconnections
+        voice.revokeQuestion(binding)
+        XCTAssertEqual(wire.disconnections, unrelated)
+        XCTAssertEqual(voice.capturedContext, conversation)
+    }
+
     private func frame(_ state: VoiceTurnState, type: String, extra: [String: Any] = [:]) throws -> HarnessVoiceServerFrame {
         var value: [String: Any] = ["version": 1, "sessionId": state.sessionId, "generation": state.generation, "type": type]
         value.merge(extra) { _, rhs in rhs }
