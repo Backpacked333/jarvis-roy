@@ -23,7 +23,7 @@ final class VoiceSocketTransport: VoiceSocketTransporting {
     private var queuedBytes = 0
     private var epoch = 0
 
-    init(token: String = ProcessInfo.processInfo.environment["JARVIS_LOCAL_TOKEN"] ?? "") {
+    init(token: String = LocalSession.token) {
         self.token = token
         let config = URLSessionConfiguration.ephemeral
         config.httpCookieStorage = nil

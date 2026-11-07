@@ -192,3 +192,28 @@ export function completedEvents(): EveEvent[] {
     }, 10),
   ];
 }
+
+/**
+ * Serializes tests that bind the fixed service ports 39201/39202 across test
+ * files (node --test runs files in parallel processes). Returns a release function.
+ */
+export async function acquireServicePortsLock(timeoutMs = 240_000): Promise<() => Promise<void>> {
+  const { mkdir, rm, stat } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const lock = join(tmpdir(), "jarvis-test-service-ports.lock");
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      await mkdir(lock);
+      return async () => { await rm(lock, { recursive: true, force: true }); };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      // Break a lock abandoned by a crashed test process.
+      const age = await stat(lock).then((info) => Date.now() - info.mtimeMs, () => 0);
+      if (age > timeoutMs) await rm(lock, { recursive: true, force: true });
+      if (Date.now() > deadline) throw new Error("Timed out waiting for the shared service-ports test lock.");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+}

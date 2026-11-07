@@ -27,6 +27,37 @@ test("native launch allows only minimal OS context and ephemeral loopback creden
   assert.throws(() => environmentFor("unknown", source));
 });
 
+test("app launch mode reaches the runtime and bridge but not the UI", () => {
+  const source = { JARVIS_LAUNCH_MODE: "app", HOME: "/fixture" };
+  assert.equal(environmentFor("runtime", source).JARVIS_LAUNCH_MODE, "app");
+  assert.equal(environmentFor("bridge", source).JARVIS_LAUNCH_MODE, "app");
+  assert.equal(environmentFor("ui", source).JARVIS_LAUNCH_MODE, undefined);
+  assert.equal(environmentFor("bridge", { HOME: "/fixture" }).JARVIS_LAUNCH_MODE, undefined);
+});
+
+test("capability setup copy points app users to Settings and launcher users to the environment", async (t) => {
+  const { capabilitiesStatus } = await import("../bridge/capabilities.ts");
+  const original = process.env.JARVIS_LAUNCH_MODE;
+  t.after(() => { if (original === undefined) delete process.env.JARVIS_LAUNCH_MODE; else process.env.JARVIS_LAUNCH_MODE = original; });
+  delete process.env.JARVIS_LAUNCH_MODE;
+  const launcher = capabilitiesStatus();
+  assert.match(launcher.notice, /launcher environment/);
+  assert.ok(launcher.capabilities.some((item) => /setup-workers\.sh/.test(item.setup)));
+  assert.ok(launcher.capabilities.some((item) => /JARVIS_ENABLE_DESKTOP=1/.test(item.setup)));
+  process.env.JARVIS_LAUNCH_MODE = "app";
+  const app = capabilitiesStatus();
+  assert.match(app.notice, /Jarvis → Settings/);
+  assert.equal(app.capabilities.length, launcher.capabilities.length);
+  for (const item of app.capabilities) {
+    assert.match(item.setup, /Jarvis → Settings/, item.id);
+    assert.doesNotMatch(item.setup, /launch environment|before launch|setup-workers\.sh|export |[A-Z_]{6,}=/, item.id);
+  }
+  assert.match(app.capabilities.find((item) => item.id === "desktop")!.setup, /does not grant macOS permissions/);
+  assert.match(app.capabilities.find((item) => item.id === "terminal")!.setup, /not sandboxed/);
+  process.env.JARVIS_LAUNCH_MODE = "launcher";
+  assert.equal(capabilitiesStatus().notice, launcher.notice, "only the exact app value switches the copy");
+});
+
 test("launcher uses filtered environments and the absolute bundled helper", async () => {
   const script = await readFile(new URL("../../scripts/run-macos.sh", import.meta.url), "utf8");
   assert.match(script, /JARVIS_NATIVE_HELPER="\$ROOT\/dist\/Jarvis.app\/Contents\/Helpers\/JarvisControl.app\/Contents\/MacOS\/JarvisControl"/);
