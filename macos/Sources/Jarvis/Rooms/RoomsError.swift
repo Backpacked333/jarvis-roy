@@ -6,7 +6,7 @@ enum RoomsError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .configuration: return "Start Jarvis with scripts/run-macos.sh to connect the authenticated local service."
+        case .configuration: return "Jarvis is not connected to its authenticated local service. Open Jarvis.app (or, for a source build, run scripts/run-macos.sh)."
         case .invalidResponse: return "The local service returned an invalid or out-of-scope response."
         case .unsupportedVersion: return "This harness protocol is not supported. Update the app and runtime together."
         case .tooLarge: return "The response exceeds the safe download limit."

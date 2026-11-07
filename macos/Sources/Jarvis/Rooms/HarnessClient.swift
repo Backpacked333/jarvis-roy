@@ -68,7 +68,7 @@ struct HarnessClient: HarnessServing {
     private let transport: any RoomsHTTPTransport
     private let base = "http://127.0.0.1:39202/v1/harness"
 
-    init(token: String = ProcessInfo.processInfo.environment["JARVIS_LOCAL_TOKEN"] ?? "",
+    init(token: String = LocalSession.token,
          transport: (any RoomsHTTPTransport)? = nil) {
         self.token = token
         self.transport = transport ?? RoomsURLTransport()

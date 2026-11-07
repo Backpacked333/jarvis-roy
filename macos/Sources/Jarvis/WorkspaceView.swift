@@ -447,7 +447,9 @@ struct WorkspaceView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 Text("Capabilities & setup").font(.largeTitle.weight(.light))
-                Text("Optional capabilities are off until configured in the launch environment. There are no credential fields in this app. Set the variables below in your terminal, then quit Jarvis and rerun scripts/run-macos.sh. Unset them and restart to disable.")
+                Text(LocalSession.isExternallySupervised
+                     ? "Optional capabilities are off until configured in the launch environment. There are no credential fields in this app. Set the variables below in your terminal, then quit Jarvis and rerun scripts/run-macos.sh. Unset them and restart to disable."
+                     : "Optional capabilities are off until configured in Jarvis → Settings (⌘,). Keys are saved in the macOS Keychain on this Mac only and are never shown again. Changes take effect after Save & Restart services; clear a setting and restart to disable. Settings cannot be changed from chat.")
                     .foregroundStyle(Palette.muted)
                 if let error = model.capabilityError {
                     notice("Capability status unavailable: \(error)", icon: "exclamationmark.triangle", color: Palette.amber)
@@ -469,7 +471,9 @@ struct WorkspaceView: View {
                     Text("Reading actual runtime configuration…").foregroundStyle(Palette.muted)
                 }
                 Link("Open macOS Privacy & Security", destination: URL(string: "x-apple.systempreferences:com.apple.preference.security")!)
-                Text("Permission declarations do not grant access. macOS may attribute helper/Automation requests to the launching terminal; grant only the identity you recognize. See README for provider setup and limitations.").font(.caption).foregroundStyle(Palette.muted)
+                Text(LocalSession.isExternallySupervised
+                     ? "Permission declarations do not grant access. macOS may attribute helper/Automation requests to the launching terminal; grant only the identity you recognize. See README for provider setup and limitations."
+                     : "Enabling a capability does not grant macOS permissions. macOS asks separately for Jarvis and its JarvisControl helper; grant only the identity you recognize. See README for provider setup and limitations.").font(.caption).foregroundStyle(Palette.muted)
             }.padding(32).frame(maxWidth: 850, alignment: .leading)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -483,7 +487,7 @@ struct WorkspaceView: View {
                 privacyRow("Desktop & account access", icon: "hand.raised", text: "Optional screen/app control, terminal, Mail, Calendar, iMessage sends and supported Home Assistant actions require setup and runtime approval. Approved screen/account content can enter cloud model context. Terminal runs with your user privileges, NOT in a security sandbox. Exact tool arguments must be visible; redacted, missing or oversized actions are deny-only.")
                 privacyRow("Stopping work", icon: "stop.circle", text: "Stop all ends speech and asks the agent runtime to cancel active work. Check task status for confirmation. An action already completed—such as opening a page—cannot be undone.")
                 privacyRow("Stored on this Mac", icon: "internaldrive", text: "Task history, approved notes, and saved memories remain in the local Jarvis data directory and runtime workflow store. Deleting a memory does not remove past mentions from task history. See the README for full deletion instructions.")
-                privacyRow("Preview boundaries", icon: "info.circle", text: "Follow-ups continue the selected conversation. Separate threads have separate model history, but explicitly saved memories are global. Live research requires your Tavily configuration. The analyst drafts from supplied evidence, with no private tools. iMessage is send-only. This is an ad-hoc signed source-build preview, not a signed installer or notarized distribution.")
+                privacyRow("Preview boundaries", icon: "info.circle", text: "Follow-ups continue the selected conversation. Separate threads have separate model history, but explicitly saved memories are global. Live research requires your Tavily configuration. The analyst drafts from supplied evidence, with no private tools. iMessage is send-only. Builds are ad-hoc signed and not notarized unless you package them with your own Developer ID; Gatekeeper may warn on first open.")
             }.padding(36).frame(maxWidth: 850, alignment: .leading)
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }

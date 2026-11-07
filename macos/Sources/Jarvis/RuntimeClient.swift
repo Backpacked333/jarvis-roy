@@ -9,13 +9,13 @@ protocol RuntimeServing {
 
 struct RuntimeClient: RuntimeServing {
     private let base = URL(string: "http://127.0.0.1:39202")!
-    private let token = ProcessInfo.processInfo.environment["JARVIS_LOCAL_TOKEN"] ?? ""
+    private let token = LocalSession.token
 
     enum ClientError: LocalizedError {
         case configuration, response(String)
         var errorDescription: String? {
             switch self {
-            case .configuration: return "Start Jarvis using scripts/run-macos.sh to connect its local agent service."
+            case .configuration: return "Jarvis is not connected to its local agent service. Restart Jarvis; for a source build, start it with scripts/run-macos.sh."
             case .response(let message): return message
             }
         }
