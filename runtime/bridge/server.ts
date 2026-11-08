@@ -351,7 +351,6 @@ export async function startJarvisBridge(): Promise<Server> {
   const service = await JarvisService.create({
     client,
     dataDirectory: getDataDirectory(),
-    model: process.env.JARVIS_MODEL ?? "openai/gpt-4.1-mini",
   });
   const runtime = await createHarnessRuntime(getDataDirectory(), service.model);
   const server = createBridgeServer(service, BRIDGE_HOST, BRIDGE_PORT, runtime);

@@ -50,6 +50,8 @@ test("scoped prompt isolates untrusted injection and never includes room IDs, pr
   assert.equal(body.constraints.hostActions, "approval_only");
   assert.equal(body.constraints.network, "none");
   assert.equal(request.system.includes(source.authoring.goal), false);
+  assert.match(request.system, /full serialized prompt byte length/);
+  assert.match(request.system, /Honor explicitly requested node budgets when they fit room policy/);
   assert.doesNotMatch(request.prompt, /private-host|room-a|author-a|AI_GATEWAY_API_KEY/);
 });
 
@@ -395,6 +397,41 @@ test("fallback or missing model identity marks cost unknown and never silently r
     const second = await fixture.author.author({ ...source, authoring: { ...source.authoring, usage: first.usage } }, context());
     assert.equal(second.status, "failed"); assert.deepEqual(second.usage, first.usage);
     assert.deepEqual(fixture.counts, { catalogs: 1, calls: 1 });
+  }
+}));
+
+test("priced OpenAI fast aliases require the exact base model and priority tier", () => withGatewayKey(async () => {
+  for (const [model, tier, accepted] of [
+    ["openai/gpt-6-sol", "priority", true],
+    ["openai/gpt-6-sol-fast", undefined, true],
+    ["openai/gpt-6-sol", undefined, false],
+    ["openai/gpt-6-sol", "default", false],
+    ["openai/gpt-6-sol", "ultrafast", false],
+    ["openai/gpt-6-astra", "priority", false],
+    ["gpt-6-sol", "priority", false],
+    [undefined, "priority", false],
+  ] as const) {
+    const source = input(); source.room.policy.authoringBudget.estimatedUsdLimit = 1;
+    const author = createPlanAuthor({ model: "openai/gpt-6-sol-fast", fetch: async (url, init) => {
+      if (String(url).endsWith("/models")) return Response.json({ data: [{
+        id: "openai/gpt-6-sol-fast", type: "language", pricing: { input: "0.000004", output: "0.000020" },
+      }] });
+      assert.equal(JSON.parse(String(init?.body)).model, "openai/gpt-6-sol-fast");
+      return Response.json({ model, service_tier: tier,
+        choices: [{ finish_reason: "stop", message: { content: planText() } }], usage: { prompt_tokens: 100, completion_tokens: 200 } });
+    } });
+    const result = await author.author(source, context());
+    assert.equal(result.status, accepted ? "completed" : "failed");
+    assert.equal(result.usage.accounting, accepted ? "measured" : "unknown");
+    if (accepted) assert.ok(Math.abs(result.usage.estimatedUsd! - 0.0044) < 1e-12);
+    else assert.equal(result.usage.estimatedUsd, null);
+  }
+}));
+
+test("priority responses do not authorize aliases for other providers or non-fast requests", () => withGatewayKey(async () => {
+  for (const [requested, returned] of [["other/model-fast", "other/model"], ["openai/gpt-6-sol", "openai/gpt-6-sol-fast"]]) {
+    const gateway = createGatewayAuthorModel({ model: requested, fetch: async () => Response.json({ model: returned, service_tier: "priority" }) });
+    await assert.rejects(gateway.complete({ system: "JSON only", prompt: "{}", maxOutputTokens: 64, signal: context().signal }, true), /unpriced or unidentified/);
   }
 }));
 

@@ -1,6 +1,7 @@
 import { defineAgent } from "eve";
+import { modelSelection } from "./lib/model.ts";
 
 export default defineAgent({
-  model: process.env.JARVIS_MODEL || "openai/gpt-4.1-mini",
+  model: modelSelection,
   defaultTools: false,
 });

@@ -107,7 +107,10 @@ export function createGatewayAuthorModel(options: Pick<PlanAuthorOptions, "model
       let result: any;
       try { result = await readBoundedJson(response, input.signal); }
       catch { throw new GatewayError("AI Gateway response unreadable or over limit; usage is unknown", true); }
-      if (requirePricedModel && result?.model !== options.model) {
+      // Gateway reports OpenAI fast aliases as the base model with the priority tier.
+      const priorityAlias = options.model.startsWith("openai/") && options.model.endsWith("-fast") &&
+        result?.model === options.model.slice(0, -5) && result?.service_tier === "priority";
+      if (requirePricedModel && result?.model !== options.model && !priorityAlias) {
         throw new GatewayError("AI Gateway returned an unpriced or unidentified model; authoring cost is unknown", true, true);
       }
       const choice = result?.choices?.[0];
