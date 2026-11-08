@@ -28,6 +28,7 @@ function isTaskRecord(value: unknown): value is TaskRecord {
     (value.userMessage === undefined || value.userMessage === null || typeof value.userMessage === "string") &&
     (value.sessionId === undefined || typeof value.sessionId === "string") &&
     (value.lateReply === undefined || typeof value.lateReply === "string") &&
+    (value.responseUnconfirmed === undefined || typeof value.responseUnconfirmed === "boolean") &&
     (value.replyParts === undefined || (object(value.replyParts) &&
       Object.values(value.replyParts).every((part) => typeof part === "string"))) &&
     (value.observingDeliveries === undefined || (Number.isSafeInteger(value.observingDeliveries) &&
@@ -85,7 +86,7 @@ export class TaskStore {
       }
       this.attachConversation(task);
       this.records.set(task.id, task);
-      if (!TERMINAL_STATUSES.has(task.status) || task.observingDeliveries || task.cancellationPending) {
+      if (!TERMINAL_STATUSES.has(task.status) || task.observingDeliveries || task.cancellationPending || task.responseUnconfirmed) {
         task.status = "interrupted";
         task.approvals = [];
         task.cancelRequested = false;

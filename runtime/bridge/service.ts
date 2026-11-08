@@ -31,6 +31,7 @@ const CANCEL_TIMEOUT_MS = 15_000;
 const BLOCKED_QUESTION_TITLE = "Question blocked";
 const BLOCKED_QUESTION_DETAIL = "This question cannot be answered here. Stop the task and request a non-sensitive clarification.";
 const BLOCKED_QUESTION_REASON = "This question was blocked by the clarification safety policy.";
+const UNCONFIRMED_RESPONSE = "Response submission is unconfirmed. Do not retry this approval or answer. Stop this task and confirm cancellation before continuing; already-completed actions are not rolled back.";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -318,7 +319,15 @@ export class JarvisService {
       return publicTask(task);
     } catch (cause) {
       this.submittingInteractions.delete(submissionKey);
-      throw new BridgeError(redactText(errorMessage(cause)), 502);
+      await this.store.update(taskId, (record) => {
+        if (record.cancelConfirmed) return;
+        record.responseUnconfirmed = true;
+        record.status = "interrupted";
+        record.approvals = [];
+        record.error = `${UNCONFIRMED_RESPONSE} ${redactText(errorMessage(cause)).slice(0, 2_000)}`;
+      });
+      this.pendingOptions.get(taskId)?.clear();
+      throw new BridgeError(UNCONFIRMED_RESPONSE, 502);
     }
   }
 
@@ -537,6 +546,10 @@ export class JarvisService {
           if (reply) task.lateReply = redactText(reply);
           return;
         }
+        if (task.responseUnconfirmed && result.status !== "cancelled") {
+          if (reply) task.lateReply = redactText(reply);
+          return;
+        }
         if (reply !== undefined) task.reply = redactText(reply);
         if (result.status === "completed") {
           task.status = "completed";
@@ -549,6 +562,7 @@ export class JarvisService {
           task.error = redactText(errorMessage(asRecord(result.error).message));
           task.approvals = [];
         } else if (result.status === "cancelled") {
+          task.responseUnconfirmed = false;
           task.cancelConfirmed = true;
           task.status = Object.values(task.childTasks).some((child) => child.outcome === undefined)
             ? "interrupted" : "cancelled";
@@ -646,6 +660,7 @@ export class JarvisService {
             append("Turn completed.");
           } else if (outcome === "cancelled") {
             task.turnId ??= stringValue(data.turnId);
+            task.responseUnconfirmed = false;
             task.cancelConfirmed = true;
             task.status = Object.values(task.childTasks).some((child) => child.outcome === undefined)
               ? "interrupted" : "cancelled";
@@ -692,7 +707,7 @@ export class JarvisService {
           break;
         }
         case "interaction.opened": {
-          if (task.cancelConfirmed) break;
+          if (task.cancelConfirmed || task.responseUnconfirmed) break;
           const interactionId = stringValue(data.interactionId);
           const request = asRecord(data.request);
           if (!interactionId) break;
@@ -802,7 +817,7 @@ export class JarvisService {
             const partId = stringValue(data.partId) ?? "reply";
             task.replyParts = { ...task.replyParts, [partId]: redactText(data.value) };
             const reply = Object.values(task.replyParts).join("\n");
-            if (task.cancelConfirmed) task.lateReply = reply;
+            if (task.cancelConfirmed || task.responseUnconfirmed) task.lateReply = reply;
             else task.reply = reply;
           }
           break;
@@ -830,6 +845,11 @@ export class JarvisService {
           }
           break;
         }
+      }
+      if (task.responseUnconfirmed) {
+        task.status = "interrupted";
+        task.approvals = [];
+        task.error = UNCONFIRMED_RESPONSE;
       }
     });
 
