@@ -1,0 +1,136 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos-dmg:
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      # Only booleans are derived here; secret values are exposed solely to the steps that need them.
+      HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' }}
+      HAS_NOTARY: ${{ secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+
+      - name: Check the tag matches the app version
+        run: |
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' macos/Info.plist)"
+          if [[ "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match CFBundleShortVersionString $VERSION."
+            exit 1
+          fi
+
+      - name: Import the Developer ID certificate into a temporary keychain
+        if: env.HAS_SIGNING == 'true'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEYCHAIN="$RUNNER_TEMP/jarvis-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          CERT="$RUNNER_TEMP/jarvis-signing.p12"
+          trap 'rm -f "$CERT"' EXIT
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$CERT"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT" -k "$KEYCHAIN" -f pkcs12 -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          # Prepend the temporary keychain to the user search list.
+          OLD_KEYCHAINS=()
+          while IFS= read -r line; do
+            line="${line#"${line%%[![:space:]]*}"}"; line="${line#\"}"; line="${line%\"}"
+            [[ -n "$line" ]] && OLD_KEYCHAINS+=("$line")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$KEYCHAIN" ${OLD_KEYCHAINS[@]+"${OLD_KEYCHAINS[@]}"}
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application/ { print $2; exit }')"
+          if [[ -z "$IDENTITY" ]]; then
+            echo "::error::No Developer ID Application identity found in the imported certificate."
+            exit 1
+          fi
+          {
+            echo "JARVIS_CODESIGN_IDENTITY=$IDENTITY"
+            echo "JARVIS_SIGNING_KEYCHAIN=$KEYCHAIN"
+          } >> "$GITHUB_ENV"
+
+      - name: Store notarization credentials in the temporary keychain
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          xcrun notarytool store-credentials jarvis-notary \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" \
+            --keychain "$JARVIS_SIGNING_KEYCHAIN" >/dev/null
+          {
+            echo "JARVIS_NOTARY_PROFILE=jarvis-notary"
+            echo "JARVIS_NOTARY_KEYCHAIN=$JARVIS_SIGNING_KEYCHAIN"
+          } >> "$GITHUB_ENV"
+
+      - name: Warn about an unsigned build
+        if: env.HAS_SIGNING != 'true' || env.HAS_NOTARY != 'true'
+        run: echo "::warning::Signing or notarization secrets are missing; this release will not be notarized."
+
+      - name: Build, sign and smoke-test the DMG
+        run: ./scripts/package-macos.sh
+
+      - name: Write release notes
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          {
+            echo "Jarvis $VERSION for macOS 14+ ($(uname -m))."
+            echo
+            if [[ -n "${JARVIS_NOTARY_PROFILE:-}" ]]; then
+              echo "Signed with Developer ID, notarized and stapled."
+            elif [[ -n "${JARVIS_CODESIGN_IDENTITY:-}" ]]; then
+              echo "> [!WARNING]"
+              echo "> Signed with Developer ID but **not notarized**. Gatekeeper will warn when it is opened."
+            else
+              echo "> [!WARNING]"
+              echo "> This build is **ad-hoc signed and not notarized** (signing secrets were not configured)."
+              echo "> Gatekeeper will block or warn when it is opened. Treat it as a test build."
+            fi
+            echo
+            echo "Verify the download with \`shasum -a 256 -c\` against the attached \`.sha256\` file."
+          } > "$RUNNER_TEMP/release-notes.md"
+
+      - name: Create a draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          ASSETS=(dist/*.dmg dist/*.dmg.sha256)
+          if (( ${#ASSETS[@]} < 2 )); then echo "::error::Release assets are missing."; exit 1; fi
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "Jarvis ${GITHUB_REF_NAME#v}" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            "${ASSETS[@]}"
+
+      - name: Delete the temporary keychain
+        if: always() && env.JARVIS_SIGNING_KEYCHAIN != ''
+        run: security delete-keychain "$JARVIS_SIGNING_KEYCHAIN" || true

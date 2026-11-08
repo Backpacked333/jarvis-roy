@@ -2,7 +2,7 @@
 
 A native macOS assistant with persistent conversations, opt-in **Hey Jarvis** listening, cloud reasoning, live web research, and explicitly approved desktop/account actions. Inspired by the [Awesome Jarvis blueprint](https://github.com/csells/awesome-jarvis/blob/main/blueprint.md); an independent implementation, not an unrestricted agent or an offline assistant.
 
-**Source-build preview. There is no signed installer or notarized consumer download.** The build ad-hoc signs local app/helper bundles. Configuration is not proof of a working account, permission, or provider. See [verification](#development-and-verification) for what tests do—and do not—prove.
+**Preview. You build the installer yourself; there is no published, notarized consumer download.** `scripts/package-macos.sh` produces a self-contained `Jarvis.app` and `.dmg` that is ad-hoc signed by default (Gatekeeper warns), or Developer ID signed and notarized when you supply your own identity. Configuration is not proof of a working account, permission, or provider. See [verification](#development-and-verification) for what tests do—and do not—prove.
 
 ## Implemented
 
@@ -30,7 +30,19 @@ A native macOS assistant with persistent conversations, opt-in **Hey Jarvis** li
 
 Text conversations do not require Docker or a speech-provider key. No database account or Vercel deployment is required. Model, research and voice use may be billed by their providers. Dependencies remain pinned to Eve `1.0.0-rc.6` and Zod `4.6.7`; upgrades require protocol/migration review.
 
-## Reproducible setup
+## Standalone app (DMG)
+
+Build a double-clickable app that bundles a pinned, SHA-256-verified Node 24, the built Eve runtime, the bridge and only its production dependencies. No system Node, terminal launcher or source checkout is needed to run it.
+
+```sh
+./scripts/package-macos.sh
+```
+
+This produces `dist/Jarvis-<version>-<arch>.dmg` and a `.sha256` file for the host architecture, then smoke-tests the bundled services headlessly. Drag **Jarvis** to Applications and open it. Ad-hoc builds are not notarized, so the first open may need **System Settings → Privacy & Security → Open Anyway**. To sign and notarize with your own Apple Developer account, set `JARVIS_CODESIGN_IDENTITY` (a "Developer ID Application" identity) and optionally `JARVIS_NOTARY_PROFILE` (a `notarytool` keychain profile). Pushing a `v*` tag runs `.github/workflows/release.yml`, which creates a **draft** GitHub release with the DMG. It signs only when the repository's signing secrets are configured; otherwise the release notes mark it ad-hoc.
+
+On first launch the app shows a setup screen. Enter your Vercel AI Gateway key and, if you want them, the optional integrations. Keys are stored in **your macOS login Keychain on this Mac** (service `ai.backpacked.jarvisroy`, not synced). The app never displays a saved key; it can only replace or remove one. Non-secret settings (model, feature flags, Home Assistant URL, voice ID, worker image and paths) are stored in `~/Library/Application Support/JarvisRoy/standalone-config.json` (mode 0600). Change them in **Jarvis → Settings… (⌘,)** and restart services. They are never changeable over the local API. The app generates a fresh in-memory local token on every launch. It starts a bundled supervisor, passing the keys once over stdin (never argv, environment, defaults or logs), and shows the workspace only after the services report ready. Quitting stops the bridge first, so room workers are reaped, then the runtime. Logs are in `~/Library/Application Support/JarvisRoy/logs`. Optional room workers still need your own Docker and controller venv; the app auto-detects `~/Library/Application Support/JarvisRoy/workers-venv/bin/python` (create it with `python3 -m venv` and `pip install -r /Applications/Jarvis.app/Contents/Resources/runtime/workers/requirements.txt`) and common Docker paths. See [the standalone design](docs/standalone-app.md) for the exact protocol and bundle layout.
+
+## Reproducible setup (from source)
 
 ```sh
 git clone https://github.com/Backpacked333/jarvis-roy.git
@@ -39,7 +51,7 @@ cd jarvis-roy
 ./scripts/run-macos.sh
 ```
 
-The setup script runs `npm ci`, builds Eve, builds both Swift executables and bundles the helper. The launcher prompts for `AI_GATEWAY_API_KEY` without echoing it if missing; it does not persist it. Keep that terminal open. Quitting Jarvis stops the launcher-owned services. Launch with the script, not by double-clicking the app: the script starts authenticated loopback services and supplies a fresh local token.
+The setup script runs `npm ci`, builds Eve, builds both Swift executables and bundles the helper. The launcher prompts for `AI_GATEWAY_API_KEY` without echoing it if missing; it does not persist it. Keep that terminal open. Quitting Jarvis stops the launcher-owned services. Launch the source build with the script: it starts authenticated loopback services and supplies a fresh local token. When the app sees that token in its environment it runs in launcher mode, starts no services of its own, and reads configuration only from the shell.
 
 In the app, choose **New conversation**, then type a message. Ask for an analysis; see the real task state. Ask to save a preference; inspect and deny its approval first. After completion, send a follow-up in the same conversation. Create another thread to keep unrelated context separate.
 
@@ -53,7 +65,7 @@ The initial Python image is intentionally offline and cannot run arbitrary npm/n
 
 ### Opt-in capabilities
 
-Open **Capabilities** in the sidebar for the actual server's configuration status and setup instructions. No credentials can be entered or stored in UI defaults. Set configuration in the launching shell, then quit/relaunch for changes to take effect. Flags require the exact value `1`; unset/empty/`0` is off.
+Open **Capabilities** in the sidebar for the actual server's configuration status and setup instructions. In the standalone app, use **Settings** (Keychain for keys). With the source launcher, no credentials can be entered or stored in the UI; set configuration in the launching shell, then quit/relaunch for changes to take effect. Flags require the exact value `1`; unset/empty/`0` is off.
 
 ```sh
 # Enable only the features you want; these do not grant macOS permissions.
@@ -128,7 +140,7 @@ SwiftUI → Rooms / conversations / separate approval and question cards
 
 `defaultTools: false` remains in both agents. No default shell/browser/filesystem tool is enabled. The narrow authored terminal is independently opt-in. All mutations and private screen/account reads use runtime `always()` approval. Full exact JSON arguments are shown without truncation; missing/redacted/over-131,072-character arguments are deny-only, enforced server-side. Credential-like inputs are conservatively refused, not hidden then approved. Webpages, screen text, emails, calendar entries, memories and tool results are untrusted data, never authorization.
 
-Both local services remain loopback-only and bearer authenticated; the bridge rejects Origin-bearing browser requests. Do not tunnel, proxy or expose the ports. Launch environments are allowlisted: the native UI gets minimal OS context and the ephemeral local token, **no model/integration keys or unrelated environment**. Credentials are never saved in UI defaults. Native process helpers receive minimal secret-free environments. A malicious process running as your OS user is outside this local boundary.
+Both local services remain loopback-only and bearer authenticated; the bridge rejects Origin-bearing browser requests. Do not tunnel, proxy or expose the ports. Launch environments are allowlisted: the native UI gets minimal OS context and the ephemeral local token, **no model/integration keys or unrelated environment**. In the standalone app, the UI process reads Keychain items only immediately before launch and writes them once to the bundled supervisor's stdin. The supervisor then applies the same per-process allowlist (`scripts/launch-env.mjs`). Credentials are never saved in UI defaults, the config file, argv or logs. Native process helpers receive minimal secret-free environments. A malicious process running as your OS user is outside this local boundary.
 
 **Stop all / ⌘. immediately mutes capture and interrupts speech before asking for cancellation.** Cancellation needs runtime confirmation; unconfirmed threads stay blocked. Late output is labeled separately. Already-completed effects remain; cancellation is **not rollback**, and deliberately detached terminal descendants may escape cleanup. Do not repeat uncertain sends or mutations: inspect the target app/device. Hashed operation markers persist uncertain writes across sessions; there is no automatic retry/reset button.
 
@@ -185,6 +197,7 @@ For native acceptance: launch, create two threads, confirm separate transcripts/
 - `runtime/agent/`: pinned Eve agent, exact root policy, analyst, tool implementations and embedded native scripts.
 - `runtime/bridge/`: authenticated API, persistence, approval review, capability reporting.
 - `runtime/test/`: executable isolated tests.
-- `scripts/`: setup, helper/app build and filtered local lifecycle.
+- `scripts/`: setup, helper/app build, filtered local lifecycle, the bundled `supervisor.mjs`, and packaging (`package-macos.sh`, `fetch-node.mjs`, `stage-runtime.mjs`, `smoke-bundle.mjs`).
+- `macos/Sources/Jarvis/Standalone/`: app-mode token, Keychain store, settings, supervisor client and setup UI.
 
-The runtime is a source-build checkout: bundled native scripts and shared tool state survive `eve build`; the launcher uses the checked-in bridge source with Node 24 and built Eve output. The helper has no source-file dependency at runtime. Packaging the full Node runtime into a standalone distributable installer remains future work.
+The runtime is a source-build checkout: bundled native scripts and shared tool state survive `eve build`; the launcher uses the checked-in bridge source with Node 24 and built Eve output. The helper has no source-file dependency at runtime. `scripts/package-macos.sh` packages the same runtime into the standalone app. Signing, notarization and real launch of the DMG are verified only by the macOS CI job and your own Mac, not by Linux tests.
