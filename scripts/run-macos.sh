@@ -31,7 +31,7 @@ if [[ -z "${AI_GATEWAY_API_KEY:-}" ]]; then
 fi
 export JARVIS_LOCAL_TOKEN="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
 export JARVIS_DATA_DIR="${JARVIS_DATA_DIR:-$HOME/Library/Application Support/JarvisRoy}"
-export JARVIS_MODEL="${JARVIS_MODEL:-openai/gpt-4.1-mini}"
+export JARVIS_MODEL="${JARVIS_MODEL:-openai/gpt-6-sol-fast}"
 if [[ -z "${JARVIS_WORKER_PYTHON:-}" && -x "$ROOT/runtime/workers/.venv/bin/python" ]]; then
   export JARVIS_WORKER_PYTHON="$ROOT/runtime/workers/.venv/bin/python"
 fi

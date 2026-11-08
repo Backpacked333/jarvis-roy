@@ -212,6 +212,7 @@ test("authorized live production composition authors and executes a harmless pla
     "run_check with python -I -S -c 'assert open(\"hello.txt\").read() == \"Hello from integrated Jarvis\\n\"; print(\"passed\")'; " +
     "final_answer with a brief factual result. No other actions, network, files or questions.");
   assert.equal(plan.nodes.length, 1);
+  console.log(JSON.stringify({ livePlanLimits: plan.nodes[0].limits }));
   assert.ok(plan.nodes[0].limits.maxModelCalls <= 4 && plan.nodes[0].limits.maxTokens <= 24_000);
   const run = await f.run(room, plan);
   const done = await f.wait((s) => s.runs.find((r) => r.id === run.id)?.status === "completed");

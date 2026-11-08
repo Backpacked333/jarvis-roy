@@ -33,6 +33,13 @@ test("launcher uses filtered environments and the absolute bundled helper", asyn
   for (const target of ["ui", "runtime", "bridge"]) assert.ok(script.includes(`launch-env.mjs" ${target}`));
 });
 
+test("model selection reaches both trusted services but not the native UI", () => {
+  const source = { JARVIS_MODEL: "openai/gpt-6-sol-fast" };
+  assert.equal(environmentFor("runtime", source).JARVIS_MODEL, source.JARVIS_MODEL);
+  assert.equal(environmentFor("bridge", source).JARVIS_MODEL, source.JARVIS_MODEL);
+  assert.equal(environmentFor("ui", source).JARVIS_MODEL, undefined);
+});
+
 test("native permission disclosures distinguish local wake detection from cloud transcription", async () => {
   const plist = await readFile(new URL("../../macos/Info.plist", import.meta.url), "utf8");
   const usage = (key: string) => plist.match(new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`))?.[1] ?? "";

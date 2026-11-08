@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { configuredModel } from "../agent/lib/model.ts";
 import { containsCredentialLikeData, deleteMemory, listMemories } from "../agent/lib/memory.ts";
 import { BridgeError, errorMessage } from "./errors.ts";
 import { redactText } from "./redaction.ts";
@@ -139,7 +140,7 @@ export class JarvisService {
     return new JarvisService(
       store,
       options.client,
-      options.model ?? process.env.JARVIS_MODEL ?? "openai/gpt-4.1-mini",
+      options.model ?? configuredModel(),
     );
   }
 

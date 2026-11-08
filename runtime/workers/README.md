@@ -279,13 +279,13 @@ An explicit, paid-model opt-in fixture is also supplied:
 
 ```sh
 # Only with authorized credentials already in the environment:
-export JARVIS_WORKER_MODEL='openai/gpt-4.1-mini'
+export JARVIS_WORKER_MODEL='openai/gpt-6-sol-fast'
 JARVIS_WORKER_LIVE_TEST=1 node runtime/workers/live-fixture.ts
 ```
 
 It is capped at four model calls/four tool steps, 24,000 admitted total tokens,
 512 output tokens per call and 60 seconds, with no external tools/network. One
-authorized live run verified a real hello.txt, an actual Python assertion,
+previous authorized live run with `openai/gpt-4.1-mini` verified a real hello.txt, an actual Python assertion,
 immutable artifact bytes and cleanup: three calls/three steps, measured 4,368
 input + 123 output tokens. This is separate from the synthetic-provider tests,
 not proof of general task quality or native Mac operation.

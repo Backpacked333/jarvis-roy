@@ -72,7 +72,7 @@ read -r -s -p 'Tavily key: ' TAVILY_API_KEY; printf '\n'; export TAVILY_API_KEY
 | Variable | Behavior |
 | --- | --- |
 | `AI_GATEWAY_API_KEY` | Required inference credential, trusted runtime/bridge only; never passed to generated workers |
-| `JARVIS_MODEL` | Default `openai/gpt-4.1-mini` |
+| `JARVIS_MODEL` | Default `openai/gpt-6-sol-fast` (GPT-6 Sol Fast through Vercel AI Gateway); unset/empty uses this default |
 | `JARVIS_DATA_DIR` | Default `~/Library/Application Support/JarvisRoy` |
 | `JARVIS_ENABLE_DESKTOP` | Default off; enable helper-based screen/AX tools |
 | `JARVIS_ENABLE_TERMINAL` | Default off; enable unsandboxed terminal tool |
@@ -87,6 +87,8 @@ read -r -s -p 'Tavily key: ' TAVILY_API_KEY; printf '\n'; export TAVILY_API_KEY
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | Bridge-only key and one selected voice; no credentials in native frames, query strings or worker environments |
 
 To disable, unset the relevant flag or key(s) and relaunch. No risky configuration is mutable over the API. Runtime tools refuse disabled/unconfigured services even if the model proposes them.
+
+Conversations, the analyst, Room plan authoring and worker reasoning share `JARVIS_MODEL`. To switch an existing installation, export `JARVIS_MODEL=openai/gpt-6-sol-fast` in the launch shell and restart Jarvis through `./scripts/run-macos.sh`. An existing nonempty override takes precedence over the default. No separate OpenAI key is needed; ElevenLabs voice models are unchanged. Model inference is billed through Gateway; check its [live model catalog](https://ai-gateway.vercel.sh/v1/models) for current pricing. Room token/call limits remain unchanged; estimated-dollar admission is not a provider billing cap.
 
 Tavily setup: [quickstart](https://docs.tavily.com/documentation/quickstart), [Search](https://docs.tavily.com/documentation/api-reference/endpoint/search), [Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract). Queries/URLs go to Tavily; no login/paywall bypass. DNS preflight rejects local/special addresses, but Tavily resolves and fetches downstream pages itself; Jarvis cannot pin its DNS or fully control provider redirects. Retrieval time is not publication time; content may be cached.
 
@@ -168,7 +170,7 @@ CI uses **macos-15** to build both native executables and run native logic/integ
 
 Run real isolated tests locally with `JARVIS_WORKER_DOCKER_TESTS=1 JARVIS_WORKER_CODING_TESTS=1 JARVIS_WORKER_KERNEL_TESTS=1 JARVIS_WORKER_PYTHON="$PWD/runtime/workers/.venv/bin/python" npm --prefix runtime test` after explicitly setting up both platform-pinned images. The coding profile supports offline Node/Python builds and native helpers inside the disposable sandbox; it does not download packages. Declared outputs are published separately from bounded private checkpoint scratch. Optional live fixtures spend provider credits and require explicit opt-in; see [worker tests and setup](runtime/workers/README.md). Do not put production credentials in CI.
 
-For the bounded production-composition live proof, configure your key, pinned image and venv, then run `JARVIS_HARNESS_LIVE_TEST=1 JARVIS_WORKER_MODEL=openai/gpt-4.1-mini node --experimental-strip-types --test --test-name-pattern='authorized live production' runtime/test/harness-integration.test.ts` from the root. It uses real author/worker calls and checks actual artifact bytes; invalid model responses fail closed rather than retrying silently. This fixture is not voice or native UI acceptance.
+For the bounded production-composition live proof, configure your key, pinned image and venv, then run `JARVIS_HARNESS_LIVE_TEST=1 JARVIS_WORKER_MODEL=openai/gpt-6-sol-fast node --experimental-strip-types --test --test-name-pattern='authorized live production' runtime/test/harness-integration.test.ts` from the root. It uses real author/worker calls and checks actual artifact bytes; invalid model responses fail closed rather than retrying silently. This fixture is not voice or native UI acceptance.
 
 **Verification levels:** compile/unit results are available in [Checks](https://github.com/Backpacked333/jarvis-roy/actions/workflows/checks.yml). Recorded Mac acceptance has verified real-model conversation continuity/isolation/restart, approval/denial/cancellation, missing-audio fallback, harmless terminal execution, TextEdit inspection/approved edits, refusal after a document changes, and screen OCR. These are bounded fixture results, not universal app compatibility. Desktop acceptance used existing OS trust, not a newly granted/denied permission flow. Actual microphone/synthesis, wake acoustics/battery, broader controls/menu targets/secure fields, TCC attribution, live Apple accounts/delivery, Tavily credentials and Home Assistant devices still require explicit hardware/provider acceptance. No live personal accounts, sends, purchases, terminal actions on a user's machine, or physical device changes are used as test fixtures.
 
