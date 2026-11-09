@@ -8,6 +8,7 @@ import {
   HarnessApprovalSchema, QuestionSchema, type AnswerQuestionRequest, type Question, type QuestionPrompt, type VoiceAnswerRequest,
 } from "./interactions.ts";
 import { ContinuationSchema, type Continuation, type WorkerRunner } from "./worker.ts";
+import type { RoomArchive, RoomArchiveSummary } from "../harness-kernel/archive.ts";
 
 export const CreateRoomRequestSchema = z.strictObject({
   requestId: IdSchema, title: z.string().trim().min(1).max(120), description: z.string().max(2_000), policy: RoomPolicySchema,
@@ -102,6 +103,9 @@ export interface HarnessService {
   retryNode(roomId: string, runId: string, nodeId: string, input: z.infer<typeof RetryNodeRequestSchema>): Promise<Run>;
   answerQuestion(input: AnswerQuestionRequest): Promise<Question>;
   artifact(roomId: string, runId: string, artifactId: string): Promise<ArtifactManifest>;
+  archiveRoom?(roomId: string, expectedRevision: number): Promise<RoomArchiveSummary>;
+  listArchives?(roomId?: string): Promise<RoomArchiveSummary[]>;
+  readArchive?(archiveId: string, roomId: string): Promise<RoomArchive>;
 }
 
 export interface WorkerRunnerOptions {

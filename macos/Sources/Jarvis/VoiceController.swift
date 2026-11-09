@@ -17,8 +17,18 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     @Published private(set) var handsFreeEnabled = false
     @Published private(set) var handsFreeStatus = "Hands-free is off"
     @Published private(set) var state: HarnessVoiceState = .idle
+    @Published var captureMode: VoiceCaptureMode = .conversation
+    var continuousConnectionEnabled = false
+    var onSpeechDrained: ((String) -> Void)?
+    var onCaptureStarted: ((String, Int) -> Void)?
+    private var speechQueue = VoiceSpeechQueue()
+    private var streamPlaying = false
+    private var holdUntil: TimeInterval = 0
+    private var speechLatency: RuntimeLatencySpan?
+    private var captureLatency: RuntimeLatencySpan?
 
     var capturedContext: HarnessVoiceContext? { turn.mode == .idle ? nil : turn.context }
+    var captureInProgress: Bool { turn.mode == .capture }
 
     var onCommand: ((String) -> Void)?
     var onUtterance: ((HarnessVoiceUtterance) -> Void)?
@@ -125,7 +135,9 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
 
     private func beginCapture(context: HarnessVoiceContext, fromWake: Bool) async {
         guard !Task.isCancelled else { return }
-        cancelActive()
+        let interruptStarted = isSpeaking ? now() : nil
+        cancelActive(preserveConnection: continuousConnectionEnabled)
+        if let interruptStarted { RuntimeDiagnostics.shared.elapsed("voice_interrupt_complete", role: "voice", since: interruptStarted, at: now()) }
         guard audioInputAvailable() else {
             fail("No usable microphone was found. Connect an input device in System Settings → Sound, then explicitly enable listening again. Typing still works.")
             return
@@ -135,7 +147,10 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
             return
         }
         self.fromWake = fromWake
-        let ticket = turn.begin(.capture, context: context)
+        let ticket = turn.begin(.capture, context: context, reuseSession: continuousConnectionEnabled)
+        captureLatency = RuntimeLatencySpan(generation: ticket, startedAt: now())
+        RuntimeDiagnostics.shared.record("voice_capture_requested", role: "voice")
+        onCaptureStarted?(turn.sessionId, ticket)
         transcript = ""
         error = nil
         changeState(.connecting)
@@ -178,6 +193,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
             isListening = true; isCapturingCommand = true
             wakeStatus = "Hands-free listening · audio sent to ElevenLabs"
             changeState(.listening)
+            recordCaptureReady(ticket)
             return
         }
         guard current(ticket), cloudConsentGranted, !hasInputTap, !isSpeaking, turn.mode == .capture, !turn.committed else { return }
@@ -198,6 +214,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         isCapturingCommand = true
         wakeStatus = "Listening · audio sent to ElevenLabs · pauses while Jarvis speaks"
         changeState(.listening)
+        recordCaptureReady(ticket)
     }
 
     // Finish is a commit. Stop/mute/interrupt discard partial recognition instead.
@@ -259,9 +276,11 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     }
 
     func interrupt() {
+        let interruptStarted = isSpeaking ? now() : nil
         handsFreeEnabled = false
         handsFreeStatus = "Hands-free is off"
         cancelActive()
+        if let interruptStarted { RuntimeDiagnostics.shared.elapsed("voice_interrupt_complete", role: "voice", since: interruptStarted, at: now()) }
         wakeStatus = wakeWordEnabled ? "Wake paused · explicitly rearm or start listening" : "Voice interrupted · microphone off"
         changeState(.interrupted)
     }
@@ -276,13 +295,70 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     func speak(_ text: String) { speak(text, context: contextProvider?() ?? HarnessVoiceContext()) }
 
     func speak(_ text: String, context: HarnessVoiceContext) {
+        speakTracked(text, receiptID: UUID().uuidString, context: context)
+    }
+
+    func speakTracked(_ text: String, receiptID: String, context: HarnessVoiceContext) {
+        beginSpeechStream(receiptID, context: context)
+        appendSpeechStream(receiptID, text: text)
+        endSpeechStream(receiptID)
+    }
+
+    func beginSpeechStream(_ id: String, context: HarnessVoiceContext) {
+        cancelActive(preserveConnection: continuousConnectionEnabled)
+        speechQueue.begin(id: id, context: context)
+    }
+
+    func appendSpeechStream(_ id: String, text: String) {
+        guard speechQueue.streamID == id else { return }
+        do {
+            try speechQueue.append(id: id, text: text)
+            if !streamPlaying { playNextSegment() }
+        } catch { fail("The spoken stream exceeded its text limit. The complete reply remains on screen.") }
+    }
+
+    func endSpeechStream(_ id: String) {
+        guard speechQueue.streamID == id else { return }
+        do {
+            try speechQueue.end(id: id)
+            if !streamPlaying { playNextSegment() }
+        } catch { fail(error.localizedDescription) }
+    }
+
+    func holdConversationPause() {
+        guard turn.mode == .capture, !turn.committed else { return }
+        holdUntil = now() + 15
+        wakeStatus = "Take your time · Finish commits this turn"
+    }
+
+    private func playNextSegment() {
+        guard let id = speechQueue.streamID else { return }
+        while let next = speechQueue.next() {
+            // Formatting-only updates carry no audio and must not leave the
+            // queue waiting for a provider drain that can never arrive.
+            guard !next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let context = speechQueue.context
+            streamPlaying = true
+            playSpeechSegment(next, context: context)
+            return
+        }
+        if speechQueue.finished {
+            speechQueue.cancel()
+            streamPlaying = false
+            onSpeechDrained?(id)
+        }
+    }
+
+    private func playSpeechSegment(_ text: String, context: HarnessVoiceContext) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        cancelActive()
+        cancelActive(preserveConnection: continuousConnectionEnabled, clearSpeech: false)
         guard cloudConsentGranted else { fail("ElevenLabs voice is off until you explicitly allow cloud voice for this session. Typing still works."); return }
         guard audioOutputAvailable() else { fail("No usable audio output was found. Connect speakers or headphones. The reply remains available as text."); return }
         guard text.utf16.count <= 4_000 else { fail("This reply is too long for one voice turn. Read it as text or speak a shorter selection."); return }
-        let ticket = turn.begin(.playback, context: context)
+        let ticket = turn.begin(.playback, context: context, reuseSession: continuousConnectionEnabled)
+        speechLatency = RuntimeLatencySpan(generation: ticket, startedAt: now())
+        RuntimeDiagnostics.shared.record("voice_speech_requested", role: "voice")
         error = nil
         changeState(.connecting)
         wakeStatus = "Microphone paused while Jarvis speaks"
@@ -335,7 +411,10 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
                     }
                 }
             case "audio":
-                if let data = try turn.audio(frame) { try play(data, ticket: turn.generation) }
+                if let data = try turn.audio(frame) {
+                    recordSpeechMilestone(.firstPCM, code: "voice_first_pcm", at: now())
+                    try play(data, ticket: turn.generation)
+                }
             case "audio_end":
                 try turn.endAudio()
                 playbackDrain.end()
@@ -351,6 +430,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         try playbackDrain.scheduled(data.count)
         if usingDuplex {
             try duplex.play(data) { [weak self] in self?.played(data.count, ticket: ticket) }
+            recordSpeechMilestone(.playbackScheduled, code: "voice_playback_scheduled", at: now())
             lastPlaybackAt = now()
             isSpeaking = true
             changeState(.speaking)
@@ -382,12 +462,16 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
                 self?.played(data.count, ticket: ticket)
             }
         }) else { throw VoiceTransportError.disconnected }
+        recordSpeechMilestone(.playbackScheduled, code: "voice_playback_scheduled", at: now())
         isSpeaking = true
         changeState(.speaking)
     }
 
     private func played(_ bytes: Int, ticket: Int) {
         guard turn.current(ticket), turn.mode == .playback else { return }
+        if !usingDuplex, let renderedAt = meter.firstActiveRenderTime {
+            recordSpeechMilestone(.firstOutputRendered, code: "voice_first_output_rendered", at: renderedAt)
+        }
         do {
             try playbackDrain.played(bytes)
             lastPlaybackAt = now()
@@ -397,10 +481,17 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
 
     private func beginDuplexCapture(context: HarnessVoiceContext, preRoll: Data, answerWindow: Bool) throws {
         guard usingDuplex, handsFreeEnabled, cloudConsentGranted else { throw VoiceAcousticError.unavailable }
+        let interruptStarted = now()
         duplex.interruptPlayback()
-        transport.disconnect()
+        if !answerWindow { RuntimeDiagnostics.shared.elapsed("voice_barge_in_stop_complete", role: "voice", since: interruptStarted, at: now()) }
+        speechLatency = nil
+        speechQueue.cancel(); streamPlaying = false
+        if !continuousConnectionEnabled { transport.disconnect() }
         monitor?.cancel()
-        let ticket = turn.begin(.capture, context: context)
+        let ticket = turn.begin(.capture, context: context, reuseSession: continuousConnectionEnabled)
+        captureLatency = RuntimeLatencySpan(generation: ticket, startedAt: now())
+        RuntimeDiagnostics.shared.record("voice_capture_requested", role: "voice")
+        onCaptureStarted?(turn.sessionId, ticket)
         handsFreeTurn.cancel()
         playbackDrain = VoicePlaybackDrain()
         pendingDuplexPCM = preRoll
@@ -443,6 +534,9 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     private func monitorDuplex(_ ticket: Int, now: TimeInterval) throws {
         if duplexFinishing { try finishDuplexWhenDrained(); return }
         let signal = try duplex.poll()
+        if turn.mode == .playback, let renderedAt = signal.firstOutputRenderTime {
+            recordSpeechMilestone(.firstOutputRendered, code: "voice_first_output_rendered", at: renderedAt)
+        }
         emitLevels(input: signal.inputRMS, playback: signal.playbackRMS)
         if turn.mode == .playback {
             handsFreeTurn.observe(signal.pcm, echo: signal.echo)
@@ -455,7 +549,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
             if signal.speech && !signal.echo { lastDuplexSpeechAt = now }
             try pumpDuplexPCM()
             if duplexAnswerWindow, lastDuplexSpeechAt == nil, now - captureStarted > 8 { completeTurn(); return }
-            if now - captureStarted > 45 || lastDuplexSpeechAt.map({ now - $0 > 1.2 }) == true { finishListening() }
+            if now - captureStarted > captureMode.maximumSeconds || (now >= holdUntil && lastDuplexSpeechAt.map({ now - $0 > captureMode.silenceSeconds }) == true) { finishListening() }
         }
     }
 
@@ -479,12 +573,17 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
                         try self.pumpInput()
                         if let input = self.input {
                             let lastVoice = input.voiceActivity
-                            if now - self.captureStarted > 45 || (lastVoice != nil && now - lastVoice! > 1.2) || (lastVoice == nil && now - self.captureStarted > 8) { self.finishListening() }
+                            if now - self.captureStarted > self.captureMode.maximumSeconds || (now >= self.holdUntil && lastVoice != nil && now - lastVoice! > self.captureMode.silenceSeconds) || (lastVoice == nil && now - self.captureStarted > 8) { self.finishListening() }
                         }
                     }
                     if self.isSpeaking {
                         guard self.audioOutputAvailable(), self.playbackBytes == 0 || now - self.lastPlaybackAt < 3 else { throw VoiceTransportError.disconnected }
-                        if !self.usingDuplex { self.emitLevels(playback: self.meter.read(at: now)) }
+                        if !self.usingDuplex {
+                            self.emitLevels(playback: self.meter.read(at: now))
+                            if let renderedAt = self.meter.firstActiveRenderTime {
+                                self.recordSpeechMilestone(.firstOutputRendered, code: "voice_first_output_rendered", at: renderedAt)
+                            }
+                        }
                     }
                 } catch { self.fail(error.localizedDescription); return }
             }
@@ -492,24 +591,45 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     }
 
     private func completeTurn() {
+        if turn.mode == .playback, speechQueue.streamID != nil {
+            streamPlaying = false
+            if !speechQueue.isEmpty {
+                playNextSegment()
+                return
+            }
+            if !speechQueue.finished {
+                cancelActive(preserveConnection: continuousConnectionEnabled, clearSpeech: false)
+                changeState(.thinking)
+                return
+            }
+            let receiptID = speechQueue.streamID!
+            speechQueue.cancel()
+            onSpeechDrained?(receiptID)
+        }
         if usingDuplex, handsFreeEnabled, cloudConsentGranted, turn.mode == .playback,
            let context = handsFreeTurn.answer(generation: turn.generation, drain: playbackDrain) {
             do { try beginDuplexCapture(context: context, preRoll: Data(), answerWindow: true) }
             catch { fail(error.localizedDescription) }
             return
         }
-        cancelActive()
+        cancelActive(preserveConnection: continuousConnectionEnabled)
         changeState(.idle)
         if wakeWordEnabled { scheduleWake(after: 0.6) }
         else { wakeStatus = "Voice idle · microphone off" }
     }
 
-    private func cancelActive() {
+    private func cancelActive(preserveConnection: Bool = false, clearSpeech: Bool = true) {
+        speechLatency = nil; captureLatency = nil
+        let hadActiveTurn = turn.mode != .idle
+        if clearSpeech { speechQueue.cancel(); streamPlaying = false }
+        holdUntil = 0
         turn.invalidate()
+        if preserveConnection, hadActiveTurn { try? transport.send(turn.frame("interrupt")) }
+        if !preserveConnection { turn.renewTransportSession() }
         wakeGate.begin(.idle)
         monitor?.cancel(); monitor = nil
         wakeRestart?.cancel(); wakeRestart = nil
-        transport.disconnect()
+        if !preserveConnection { transport.disconnect() }
         duplex.stop(); usingDuplex = false
         handsFreeTurn.cancel(); pendingDuplexPCM.removeAll(); lastDuplexSpeechAt = nil; duplexAnswerWindow = false; duplexFinishing = false
         JarvisStopAudioEngine(engine, hasInputTap)
@@ -523,6 +643,14 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     }
 
     private func current(_ ticket: Int) -> Bool { turn.current(ticket) && !Task.isCancelled }
+    private func recordCaptureReady(_ ticket: Int) {
+        guard let duration = captureLatency?.finish(.captureReady, generation: ticket, at: now()) else { return }
+        RuntimeDiagnostics.shared.record("voice_capture_ready", role: "voice", durationMilliseconds: duration)
+    }
+    private func recordSpeechMilestone(_ milestone: RuntimeLatencySpan.Milestone, code: String, at time: TimeInterval) {
+        guard let duration = speechLatency?.finish(milestone, generation: turn.generation, at: time) else { return }
+        RuntimeDiagnostics.shared.record(code, role: "voice", durationMilliseconds: duration)
+    }
     private func changeState(_ state: HarnessVoiceState) { self.state = state; onStateChange?(state) }
     private func emitLevels(input: Double = 0, playback: Double = 0) {
         onAudioLevels?(.init(inputRMS: input, playbackRMS: playback, generation: turn.generation))

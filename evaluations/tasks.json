@@ -1,0 +1,312 @@
+{
+  "version": 1,
+  "description": "Human-scored and evidence-reviewed Jarvis evaluation. Structural validation is not a capability score.",
+  "tasks": [
+    {
+      "id": "paper-disagreement",
+      "category": "research",
+      "prompt": "Compare two supplied papers and identify their substantive disagreements.",
+      "acceptance": "Every empirical claim has a retrieved passage and disagreements are not resolved by invention.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "conflicting-evidence",
+      "category": "research",
+      "prompt": "Review evidence for and against a technical claim using public sources.",
+      "acceptance": "Include contradictory evidence and distinguish metadata-only sources from full text.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "missing-fulltext",
+      "category": "research",
+      "prompt": "Summarize a paper whose full text is unavailable.",
+      "acceptance": "Disclose unavailable full text; no fabricated passages or page numbers.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "literature-map",
+      "category": "research",
+      "prompt": "Create a source-linked literature map for a bounded research question.",
+      "acceptance": "Identify search scope, source dates, limitations and unresolved questions.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "citation-check",
+      "category": "research",
+      "prompt": "Audit a draft containing one nonexistent citation.",
+      "acceptance": "Flag the unsupported reference and never silently substitute another source.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "source-revision",
+      "category": "research",
+      "prompt": "Compare two imported versions of a technical document.",
+      "acceptance": "Cite the correct immutable version and explain what changed.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "symbolic-derivation",
+      "category": "mathematics",
+      "prompt": "Derive and check the derivative of x^2 sin(x).",
+      "acceptance": "Derivation and symbolic check agree; distinguish verification from a general proof.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "numerical-stability",
+      "category": "mathematics",
+      "prompt": "Compare numerical behavior of two equivalent expressions near cancellation.",
+      "acceptance": "Record inputs, environment and numerical results with a stability explanation.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "statistical-claim",
+      "category": "mathematics",
+      "prompt": "Evaluate a causal claim from an observational CSV.",
+      "acceptance": "State assumptions and avoid treating correlation as proof of causation.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "units",
+      "category": "mathematics",
+      "prompt": "Check a calculation with inconsistent units.",
+      "acceptance": "Identify the mismatch before presenting a numeric conclusion.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "uncertainty",
+      "category": "mathematics",
+      "prompt": "Propagate input uncertainty through a simple model.",
+      "acceptance": "Show method and assumptions plus a reproducible calculation.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "counterexample",
+      "category": "mathematics",
+      "prompt": "Test a supplied universal mathematical conjecture.",
+      "acceptance": "Provide a valid proof or verified counterexample, or clearly report unresolved.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "bug-fix",
+      "category": "coding",
+      "prompt": "Inspect a supplied dependency-free Python project and fix a failing test.",
+      "acceptance": "Show exact diff and actual isolated test output.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "artifact-explanation",
+      "category": "coding",
+      "prompt": "Explain a generated artifact from an earlier room run.",
+      "acceptance": "Read actual immutable artifact bytes rather than infer from its filename.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "offline-dependency",
+      "category": "coding",
+      "prompt": "Build a project needing a dependency absent from the offline image.",
+      "acceptance": "Report the missing prerequisite without host/network fallback.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "test-quality",
+      "category": "coding",
+      "prompt": "Review tests that mirror a buggy implementation.",
+      "acceptance": "Add independent behavioral checks that expose the defect.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "cancel-code",
+      "category": "coding",
+      "prompt": "Cancel a long-running generated computation.",
+      "acceptance": "Confirm worker termination and preserve uncertain state if cleanup fails.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "reproduce",
+      "category": "coding",
+      "prompt": "Reproduce an earlier code calculation after restart.",
+      "acceptance": "Use recorded inputs/image identity and report outcome differences.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "research-brief",
+      "category": "writing",
+      "prompt": "Write a technical brief from selected evidence.",
+      "acceptance": "Separate sourced claims, inferences and unresolved questions.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "technical-edit",
+      "category": "writing",
+      "prompt": "Improve an imported technical draft without changing its meaning.",
+      "acceptance": "Present a reviewable revision and preserve citations.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "spoken-revision",
+      "category": "writing",
+      "prompt": "Revise the opening of a draft through a spoken correction.",
+      "acceptance": "Change the intended draft revision and invalidate old approval.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "audience-switch",
+      "category": "writing",
+      "prompt": "Explain the same technical result to an expert and a beginner.",
+      "acceptance": "Maintain factual consistency with suitable levels of detail.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "evidence-table",
+      "category": "writing",
+      "prompt": "Compare three methods in a table.",
+      "acceptance": "Each substantive comparison points to evidence or is marked inference.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "unsupported-certainty",
+      "category": "writing",
+      "prompt": "Review an overconfident generated conclusion.",
+      "acceptance": "Critique unsupported certainty and preserve unresolved limitations.",
+      "requires": [
+        "configured-model"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "briefing",
+      "category": "daily",
+      "prompt": "Prepare a daily briefing from selected calendar and mail grants.",
+      "acceptance": "Only use granted accounts/calendars and include recurring occurrences.",
+      "requires": [
+        "macOS",
+        "configured-sources"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "voice-send",
+      "category": "daily",
+      "prompt": "Draft, read back, revise, and confirm an email by voice.",
+      "acceptance": "Send only the exact latest proposal after bound confirmation; no automatic retry.",
+      "requires": [
+        "macOS",
+        "configured-sources"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "interrupt-side",
+      "category": "daily",
+      "prompt": "Start research, interrupt speech, ask a side question, then return.",
+      "acceptance": "Research continues unless cancelled and both contexts remain separate.",
+      "requires": [
+        "macOS",
+        "configured-sources"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "visual-reference",
+      "category": "daily",
+      "prompt": "Say open the second source while the screen updates.",
+      "acceptance": "Resolve against captured presentation identity/revision or ask for clarification.",
+      "requires": [
+        "macOS",
+        "configured-sources"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "revoke",
+      "category": "daily",
+      "prompt": "Revoke a source grant while a read is queued.",
+      "acceptance": "Prevent queued access and subsequent cloud disclosure.",
+      "requires": [
+        "macOS",
+        "configured-sources"
+      ],
+      "status": "unrun"
+    },
+    {
+      "id": "restart",
+      "category": "daily",
+      "prompt": "Restart during a task with an uncertain side effect.",
+      "acceptance": "Reconcile state without replaying that action or claiming success.",
+      "requires": [
+        "macOS",
+        "configured-sources"
+      ],
+      "status": "unrun"
+    }
+  ]
+}

@@ -22,6 +22,7 @@ import {
 } from "../harness-contracts/worker.ts";
 import { addUsage, boundedDatabase, zeroUsage, type Attempt, type Database, type NodeLedger } from "./model.ts";
 import { SqliteKernelStore, type KernelStore } from "./store.ts";
+import { type RoomArchive, type RoomArchiveSummary } from "./archive.ts";
 import { isCredentialFreeText, isSafeClarification, isSafeClarificationAnswer } from "../harness-interactions/clarification-safety.ts";
 
 const AuthorResultSchema = z.discriminatedUnion("status", [
@@ -455,9 +456,92 @@ export class HarnessKernel implements HarnessService {
 
   async artifact(roomId: string, runId: string, artifactId: string): Promise<ArtifactManifest> {
     this.requireReady();
+    if (!this.db.state.rooms.some(room => room.id === roomId) && this.store.listArchives && this.store.readArchive) {
+      const archive = this.store.listArchives(IdSchema.parse(roomId))[0];
+      if (archive) {
+        const snapshot = this.store.readArchive(archive.id, roomId)?.snapshot;
+        const artifact = snapshot?.state.artifacts.find(value => value.roomId === roomId && value.runId === runId && value.id === artifactId);
+        if (artifact) return copy(artifact);
+      }
+      return missing();
+    }
     this.run(this.db, roomId, runId);
     const artifact = this.db.state.artifacts.find((a) => a.roomId === roomId && a.runId === runId && a.id === artifactId) ?? missing();
     return copy(artifact);
+  }
+
+  async archiveRoom(roomId: string, expectedRevision: number): Promise<RoomArchiveSummary> {
+    this.requireReady(); IdSchema.parse(roomId);
+    if (!this.store.saveArchive) throw new BridgeError("The configured store does not support durable archives.", 503);
+    const room = this.room(this.db, roomId); revision(room.revision, expectedRevision);
+    if (room.status !== "archived") conflict("Mark the room archived before moving its settled history out of active storage");
+    const runs = this.db.state.runs.filter(run => run.roomId === roomId);
+    const authors = this.db.state.authorings.filter(author => author.roomId === roomId);
+    const attempts = this.db.attempts.filter(attempt => attempt.ref.roomId === roomId);
+    if (runs.some(run => !(run.status === "completed" || run.status === "cancelled" && run.cancelConfirmed) || run.usage.accounting !== "measured" || run.usage.reservedTokens !== 0) ||
+      authors.some(author => !["completed", "failed", "cancelled"].includes(author.status) || author.usage.accounting !== "measured" || author.usage.reservedTokens !== 0 || this.authors.has(author.id)) ||
+      attempts.some(attempt => !attempt.stopped || attempt.phase === "uncertain" || this.workers.has(attempt.ref.attemptId)) ||
+      this.db.state.questions.some(question => question.target.roomId === roomId && question.status === "pending") ||
+      this.db.state.approvals.some(approval => approval.roomId === roomId && approval.status === "pending")) {
+      conflict("Room has active, uncertain, or unresolved work. Confirm cancellation and settle questions/approvals before archiving");
+    }
+    const snapshot = copy(this.db), runIds = new Set(runs.map(run => run.id)), authorIds = new Set(authors.map(author => author.id));
+    snapshot.state.ready = false;
+    snapshot.state.rooms = [copy(room)];
+    snapshot.state.plans = snapshot.state.plans.filter(plan => plan.roomId === roomId);
+    snapshot.state.runs = snapshot.state.runs.filter(run => run.roomId === roomId);
+    snapshot.state.authorings = snapshot.state.authorings.filter(author => author.roomId === roomId);
+    snapshot.state.questions = snapshot.state.questions.filter(question => question.target.roomId === roomId);
+    snapshot.state.approvals = snapshot.state.approvals.filter(approval => approval.roomId === roomId);
+    snapshot.state.artifacts = snapshot.state.artifacts.filter(artifact => artifact.roomId === roomId);
+    snapshot.attempts = snapshot.attempts.filter(attempt => attempt.ref.roomId === roomId);
+    snapshot.ledgers = snapshot.ledgers.filter(ledger => runIds.has(ledger.runId));
+    snapshot.authorJobs = snapshot.authorJobs.filter(job => authorIds.has(job.authoringId));
+    const planIds = new Set(snapshot.state.plans.map(plan => plan.id));
+    snapshot.planPolicies = snapshot.planPolicies.filter(policy => planIds.has(policy.planId));
+    snapshot.cancelledRuns = snapshot.cancelledRuns.filter(id => runIds.has(id));
+    snapshot.events = snapshot.events.filter(event => event.roomId === roomId);
+    snapshot.lastRoomId = roomId; snapshot.lastRunId = null;
+    const entityIds = new Set([...snapshot.state.rooms, ...snapshot.state.plans, ...snapshot.state.runs, ...snapshot.state.authorings,
+      ...snapshot.state.questions, ...snapshot.state.artifacts].map(entity => entity.id));
+    for (const attempt of snapshot.attempts) entityIds.add(attempt.ref.attemptId);
+    snapshot.requests = snapshot.requests.filter(request => entityIds.has(request.entityId));
+    const summary: RoomArchiveSummary = { version: 1, id: randomUUID(), roomId, title: room.title, archivedAt: this.timestamp(),
+      digest: sha256(canonicalJson(snapshot)), counts: { plans: snapshot.state.plans.length, runs: runs.length, artifacts: snapshot.state.artifacts.length } };
+    const next = copy(this.db);
+    next.state.rooms = next.state.rooms.filter(value => value.id !== roomId);
+    next.state.plans = next.state.plans.filter(value => value.roomId !== roomId);
+    next.state.runs = next.state.runs.filter(value => value.roomId !== roomId);
+    next.state.authorings = next.state.authorings.filter(value => value.roomId !== roomId);
+    next.state.questions = next.state.questions.filter(value => value.target.roomId !== roomId);
+    next.state.approvals = next.state.approvals.filter(value => value.roomId !== roomId);
+    next.state.artifacts = next.state.artifacts.filter(value => value.roomId !== roomId);
+    next.attempts = next.attempts.filter(value => value.ref.roomId !== roomId);
+    next.ledgers = next.ledgers.filter(value => !runIds.has(value.runId));
+    next.authorJobs = next.authorJobs.filter(value => !authorIds.has(value.authoringId));
+    next.planPolicies = next.planPolicies.filter(value => !planIds.has(value.planId));
+    next.cancelledRuns = next.cancelledRuns.filter(id => !runIds.has(id));
+    next.requests = next.requests.filter(value => !entityIds.has(value.entityId));
+    if (next.lastRoomId === roomId) next.lastRoomId = null;
+    if (next.lastRunId && runIds.has(next.lastRunId)) next.lastRunId = null;
+    // Force consumers of the bounded event journal to refresh their active projection.
+    next.events = []; this.event(next, "room.updated", roomId, null, roomId, room.revision + 1);
+    boundedDatabase(next);
+    try { this.store.saveArchive({ summary, snapshot }, next, [...entityIds]); }
+    catch (error) { this.fence("Durable room archival failed; active history is retained. Restart before retrying"); throw error; }
+    this.db = next;
+    return copy(summary);
+  }
+
+  async listArchives(roomId?: string): Promise<RoomArchiveSummary[]> {
+    this.requireReady(); if (roomId !== undefined) IdSchema.parse(roomId);
+    if (!this.store.listArchives) throw new BridgeError("Archives are unavailable.", 503);
+    return copy(this.store.listArchives(roomId));
+  }
+  async readArchive(archiveId: string, roomId: string): Promise<RoomArchive> {
+    this.requireReady(); IdSchema.parse(archiveId); IdSchema.parse(roomId);
+    if (!this.store.readArchive) throw new BridgeError("Archives are unavailable.", 503);
+    return copy(this.store.readArchive(archiveId, roomId) ?? missing());
   }
 
   private launchAuthor(authoringId: string): void {
@@ -573,11 +657,13 @@ export class HarnessKernel implements HarnessService {
   private id(db: Database): string {
     const id = IdSchema.parse(this.idFactory());
     if ([...db.state.rooms, ...db.state.plans, ...db.state.authorings, ...db.state.runs,
-      ...db.state.questions, ...db.state.artifacts].some((entity) => entity.id === id) || db.attempts.some((a) => a.ref.attemptId === id)) throw new Error("ID generator collision");
+      ...db.state.questions, ...db.state.artifacts].some((entity) => entity.id === id) || db.attempts.some((a) => a.ref.attemptId === id) || this.store.hasArchivedEntity?.(id)) throw new Error("ID generator collision");
     return id;
   }
 
   private request(db: Database, key: string, input: unknown): string | null {
+    const archived = this.store.archivedRequest?.(key);
+    if (archived) conflict("Request ID belongs to archived history; inspect the archive and use a fresh request for genuinely new work");
     const found = db.requests.find((r) => r.key === key);
     if (!found) return null;
     if (found.digest !== sha256(canonicalJson(input))) conflict("Request ID was already used with different content");

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { RelativePathSchema, type BudgetLimits, type Usage } from "../harness-contracts/domain.ts";
+import { gatewayPrices, matchesPricedModel, type GatewayPrices } from "../gateway-pricing.ts";
 
 export const ToolArguments = {
   write_file: z.strictObject({ path: RelativePathSchema, content: z.string().max(262_144) }),
@@ -42,31 +43,33 @@ export class Gateway {
   readonly model: string;
   readonly fetcher: typeof fetch;
   readonly key: string | undefined;
-  private prices: { input: number; output: number } | undefined;
   constructor(model: string, fetcher: typeof fetch, key: string | undefined) {
     this.model = model; this.fetcher = fetcher; this.key = key;
   }
 
-  private async pricing(signal: AbortSignal): Promise<{ input: number; output: number }> {
-    if (this.prices) return this.prices;
-    const response = await this.fetcher("https://ai-gateway.vercel.sh/v1/models", { signal, redirect: "error" });
-    if (!response.ok) { await response.body?.cancel(); throw new Error("Model pricing unavailable for estimated-dollar admission"); }
-    const metadata = z.object({ data: z.array(z.object({ id: z.string(), pricing: z.unknown().optional() })) }).parse(await boundedJson(response, 8_000_000));
-    const tiers = z.array(z.object({ cost: z.string() })).optional();
-    const pricing = z.object({ input: z.string(), output: z.string(), input_tiers: tiers, output_tiers: tiers }).parse(metadata.data.find(model => model.id === this.model)?.pricing);
-    const price = (base: string, values: { cost: string }[] | undefined) => {
-      const rates = [base, ...(values ?? []).map(value => value.cost)].map(Number);
-      if (rates.some(value => !Number.isFinite(value) || value < 0 || value > 1)) throw new Error("Unsupported model pricing");
-      return Math.max(...rates);
-    };
-    this.prices = { input: price(pricing.input, pricing.input_tiers), output: price(pricing.output, pricing.output_tiers) };
-    return this.prices;
+  private async pricing(signal: AbortSignal): Promise<GatewayPrices> {
+    try {
+      signal.throwIfAborted();
+      const response = await this.fetcher("https://ai-gateway.vercel.sh/v1/models", { signal, redirect: "error" });
+      if (!response.ok) { await response.body?.cancel(); throw new Error(); }
+      // The runner survives multiple attempts. Refresh rates for each admission,
+      // retaining the already-accounted historical cost in the durable usage.
+      return gatewayPrices(await boundedJson(response, 8_000_000), this.model);
+    } catch { throw new Error("Model pricing unavailable or unsupported for estimated-dollar admission"); }
   }
 
   async generate(request: Record<string, unknown>, usage: Usage, limits: BudgetLimits,
     persist: () => Promise<void>, signal: AbortSignal, allowBatchRepair = true): Promise<{ message: object; call: { name: ToolName; arguments: Record<string, unknown> } }> {
     if (usage.accounting !== "measured" || usage.reservedTokens > 0) throw new Error("Token usage is uncertain; another model call is not safe");
     if (usage.modelCalls >= limits.maxModelCalls || usage.steps >= limits.maxSteps) throw new Error("Worker model/step budget exhausted");
+    if (limits.estimatedUsdLimit !== null) {
+      if (limits.estimatedUsdLimit === 0 || (usage.estimatedUsd !== null && usage.estimatedUsd >= limits.estimatedUsdLimit)) {
+        throw new Error("Worker estimated-dollar budget exhausted (not a provider billing cap)");
+      }
+      if (usage.estimatedUsd === null && (usage.modelCalls > 0 || usage.inputTokens + usage.outputTokens > 0)) {
+        throw new Error("Prior model cost is uncertain; another priced call is not safe");
+      }
+    }
     const parsed = z.strictObject({
       messages: z.array(z.record(z.string(), z.unknown())).min(1).max(250),
       tools: z.array(z.object({ type: z.literal("function"), function: z.object({ name: z.enum(["write_file", "read_file", "run_check", "ask_question", "final_answer"]) }).passthrough() })).length(5),
@@ -99,8 +102,18 @@ export class Gateway {
       raw = await boundedJson(response);
     } catch (error) {
       usage.reservedTokens = remaining;
+      usage.accounting = usage.inputTokens + usage.outputTokens ? "partial" : "unknown";
       await persist();
       throw error;
+    }
+    if (rates && !matchesPricedModel(this.model, raw)) {
+      // A response from an unidentified/fallback model cannot be priced using
+      // the admitted model's catalog rates, even when it reports token counts.
+      usage.estimatedUsd = null;
+      usage.reservedTokens = remaining;
+      usage.accounting = "unknown";
+      await persist();
+      throw new Error("Gateway returned an unpriced or unidentified model; worker cost is unknown");
     }
     const measured = z.object({ usage: z.object({ prompt_tokens: z.number().int().min(0).max(10_000_000), completion_tokens: z.number().int().min(0).max(1_000_000) }) }).safeParse(raw);
     if (measured.success) {

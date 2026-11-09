@@ -1,0 +1,32 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
+import test from "node:test";
+import { JarvisService } from "../bridge/service.ts";
+import { FakeEveClient, event } from "./helpers.ts";
+
+test("text previews stream before completion while reasoning and preview text stay out of durable transcripts", async t => {
+  const dataDirectory = await mkdtemp(join(tmpdir(), "jarvis-speech-preview-"));
+  t.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  const client = new FakeEveClient(), service = await JarvisService.create({ dataDirectory, client });
+  const seen: string[] = [];
+  const unsubscribe = service.subscribeTasks(tasks => { for (const task of tasks) if (task.speechPreview) seen.push(task.speechPreview); });
+  t.after(unsubscribe);
+  const task = await service.createTask("Explain the result");
+  client.session.initial.emit(event("turn.started", { turnId: "turn-1" }, 1));
+  client.session.initial.emit(event("content.delta", { partId: "reason", kind: "reasoning", delta: "private internal reasoning" }, 2));
+  client.session.initial.emit(event("content.delta", { partId: "answer", kind: "text", delta: "The result is " }, 3));
+  client.session.initial.emit(event("content.delta", { partId: "answer", delta: "ready to inspect." }, 4));
+  for (let i = 0; i < 100 && !seen.some(value => value.includes("ready to inspect")); i++) await delay(10);
+  assert.ok(seen.includes("The result is ready to inspect."));
+  assert.ok(seen.every(value => !value.includes("internal reasoning")));
+  assert.equal((await service.state()).tasks[0].reply, "");
+  assert.ok(!(await readFile(join(dataDirectory, "tasks.json"), "utf8")).includes("ready to inspect"));
+  client.session.initial.emit(event("content.completed", { partId: "answer", kind: "text", phase: "reply", value: "The result is ready to inspect." }, 5));
+  client.session.initial.finish({ status: "completed", reply: "The result is ready to inspect." });
+  await service.waitForObservedDelivery(task.id);
+  assert.equal(service.taskSnapshot()[0].speechPreview, undefined);
+  assert.equal((await service.state()).tasks[0].reply, "The result is ready to inspect.");
+});

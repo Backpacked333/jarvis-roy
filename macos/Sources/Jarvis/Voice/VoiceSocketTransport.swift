@@ -23,14 +23,16 @@ final class VoiceSocketTransport: VoiceSocketTransporting {
     private var queuedBytes = 0
     private var epoch = 0
 
-    init(token: String = ProcessInfo.processInfo.environment["JARVIS_LOCAL_TOKEN"] ?? "") {
+    init(token: String = RuntimeConnection.localToken) {
         self.token = token
         let config = URLSessionConfiguration.ephemeral
         config.httpCookieStorage = nil
         config.urlCache = nil
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.timeoutIntervalForRequest = 8
-        config.timeoutIntervalForResource = 90
+        // The authenticated socket spans multiple independently bounded turns.
+        // Keep it alive through the bridge's ten-minute session lease.
+        config.timeoutIntervalForResource = 660
         session = URLSession(configuration: config, delegate: VoiceNoRedirectDelegate(), delegateQueue: nil)
     }
     private func request(_ path: String, websocket: Bool = false) throws -> URLRequest {
@@ -50,6 +52,7 @@ final class VoiceSocketTransport: VoiceSocketTransporting {
         return status
     }
     func connect() throws {
+        if socket != nil { return }
         disconnect()
         let socket = session.webSocketTask(with: try request("/v1/voice/stream", websocket: true))
         socket.maximumMessageSize = 32_768

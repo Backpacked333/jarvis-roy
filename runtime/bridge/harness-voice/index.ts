@@ -208,7 +208,7 @@ class VoiceConnection {
         sessionStarted.parse(value);
         if (turn.ready) throw new Error("Duplicate session");
         turn.ready = true;
-        turn.deadline = turn.started + 60_000;
+        turn.deadline = turn.started + (process.env.JARVIS_ENABLE_ASSISTANT === "1" ? 80_000 : 60_000);
         this.send({ type: "state", state: "listening", detail: "Microphone audio is sent to ElevenLabs Scribe" });
         return;
       }

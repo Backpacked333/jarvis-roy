@@ -8,6 +8,7 @@ struct VoiceDuplexSignal {
     var echo = false
     var inputRMS = 0.0
     var playbackRMS = 0.0
+    var firstOutputRenderTime: TimeInterval?
 }
 
 @MainActor
@@ -81,7 +82,8 @@ final class VoiceDuplexAudio: VoiceDuplexAudioServing {
         let echo = VoiceEchoVeto.matches(near.bytes, reference: far.bytes)
         let speech = decision.accept(confidence: result.confidence, end: result.end,
                                      capturedSeconds: Double(capturedSamples) / 16_000, echo: echo, level: VoicePCM.rms(near.bytes))
-        return VoiceDuplexSignal(pcm: pcm, speech: speech, echo: echo, inputRMS: rms, playbackRMS: outputMeter.read(at: now))
+        return VoiceDuplexSignal(pcm: pcm, speech: speech, echo: echo, inputRMS: rms,
+                                playbackRMS: outputMeter.read(at: now), firstOutputRenderTime: outputMeter.firstActiveRenderTime)
     }
 
     func play(_ data: Data, completed: @escaping () -> Void) throws {
