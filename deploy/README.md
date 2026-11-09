@@ -84,6 +84,21 @@ receives the native or cloud-runtime authority, and the public gateway never
 receives the native token. Restart reconciles durable work; it does not replay
 uncertain commands.
 
+## Roll back a preview increment
+
+Stop the writer services before changing the checkout or configuration. The
+first rollback option is to disable the affected feature flags while preserving
+the state directory; this retains objectives, receipts, grants and deletion
+tombstones for later reconciliation. Do not copy a live SQLite database, run
+two checkouts against the same state, or point older code at a newer schema.
+
+For a code downgrade that requires an older schema, keep the current state and
+its encrypted backup intact. Restore a matching pre-upgrade backup into a new
+private directory, follow the recovery-review procedure below, and reconcile
+all effects since that backup before selecting it for activation. Old approvals
+must not become valid again. Record the selected source commit, configuration
+and archive digest, then rerun readiness before enabling services.
+
 ## Encrypted off-host backup and restore drill
 
 Keep a random 32-byte key encoded as 64 lowercase hex characters in a root-owned

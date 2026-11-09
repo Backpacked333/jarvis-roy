@@ -286,6 +286,7 @@ test("Stop fences a passkey completion while cancellation is pending and after f
       return undefined;
     });
     const stopping = f.service.stop(), rejected = assert.rejects(stopping, /Stop is incomplete/);
+    assert.equal(await f.service.verifiedCall(callSid), null, "Stop revokes local proof before waiting on provider cancellation");
     await cancellationStarted;
     await assert.rejects(f.service.authorizeCall(callSid, proof), /Fresh call-bound/);
     assert.equal(await f.service.readCall(callSid), null); assert.equal(await f.service.verifiedCall(callSid), null);

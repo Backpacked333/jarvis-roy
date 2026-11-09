@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { constants } from "node:fs";
 import { chmod, link, lstat, open, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -21,6 +22,9 @@ import type { LocalEmbeddingProvider } from "./embeddings.ts";
 export * from "./contracts.ts";
 export type { LocalEmbeddingProvider, EmbeddingIdentity } from "./embeddings.ts";
 type Purpose = "local" | "cloud";
+type ReadAuditEvent = { at: string; projectId: string; operation: string; resourceId: string | null; purpose: Purpose | null };
+type ReadAuditBatch = { events: ReadAuditEvent[]; closed: boolean };
+const BATCHED_READ_OPERATIONS = new Set(["read", "source_read", "passage_read", "context_retrieval", "search"]);
 type GrantRequest = { grantId: string; projectId: string; resourceId: string; operation: ReadGrant["operations"][number]; purpose: Purpose };
 export interface KnowledgeOptions { dataDirectory: string; enabled?: boolean; fetch?: typeof fetch; extractPdf?: PdfExtractor; now?: () => Date; embeddingProvider?: LocalEmbeddingProvider; backgroundIndexing?: boolean }
 export interface KnowledgeRouteContext { nativeAuthenticated: boolean }
@@ -37,6 +41,7 @@ export class KnowledgeService {
   private readonly now: () => Date;
   private connection: DatabaseSync | undefined;
   private readonly activeReads = new Map<string, Set<AbortController>>();
+  private readonly readAuditBatches = new AsyncLocalStorage<ReadAuditBatch>();
   private readonly options: KnowledgeOptions;
   private preferenceQueue: Promise<void> = Promise.resolve();
   private preferenceGeneration = 0;
@@ -232,10 +237,55 @@ export class KnowledgeService {
     try { const result = operation(); db.exec("COMMIT"); return result; }
     catch (error) { try { db.exec("ROLLBACK"); } catch {} throw error; }
   }
-  private audit(projectId: string, operation: string, resourceId: string | null, purpose: Purpose | null = null): void {
-    this.db().prepare("INSERT INTO access_log(at,project_id,operation,resource_id,purpose) VALUES (?,?,?,?,?)")
-      .run(this.now().toISOString(), projectId, operation, resourceId, purpose);
+  /** Only audit writes are buffered. Every source/grant/revision check still
+   * reads current committed state. No database transaction spans an await. */
+  async withReadAuditBatch<T>(operation: () => Promise<T>, validate: (result: T) => void): Promise<T> {
+    const parent = this.readAuditBatches.getStore();
+    if (parent && !parent.closed) { const result = await operation(); validate(result); return result; }
+    const batch: ReadAuditBatch = { events: [], closed: false };
+    return this.readAuditBatches.run(batch, async () => {
+      try { const result = await operation(); validate(result); return result; }
+      finally {
+        // Failed assemblies still record their intermediate reads. Late work
+        // inheriting this async context must return to immediate durable audit.
+        batch.closed = true; this.flushReadAuditBatch(batch);
+      }
+    });
+  }
+  /** Final disclosure guards must remain synchronous: checks, durable audit
+   * commit, then the caller's response write, with no intervening await. */
+  withReadAuditBatchSync<T>(operation: () => T): T {
+    const run = () => {
+      const result = operation();
+      if (result && typeof (result as { then?: unknown }).then === "function") throw new Error("Final read authorization must be synchronous");
+      return result;
+    };
+    const parent = this.readAuditBatches.getStore();
+    if (parent && !parent.closed) return run();
+    const batch: ReadAuditBatch = { events: [], closed: false };
+    return this.readAuditBatches.run(batch, () => {
+      try { return run(); }
+      finally { batch.closed = true; this.flushReadAuditBatch(batch); }
+    });
+  }
+  private flushReadAuditBatch(batch: ReadAuditBatch): void {
+    if (!batch.events.length) return;
+    this.transaction(() => this.writeAuditEvents(batch.events));
+    batch.events.length = 0;
+  }
+  private writeAuditEvents(events: ReadAuditEvent[]): void {
+    const statement = this.db().prepare("INSERT INTO access_log(at,project_id,operation,resource_id,purpose) VALUES (?,?,?,?,?)");
+    for (const event of events) statement.run(event.at, event.projectId, event.operation, event.resourceId, event.purpose);
     this.db().exec("DELETE FROM access_log WHERE sequence < (SELECT COALESCE(MAX(sequence),0)-10000 FROM access_log)");
+  }
+  private audit(projectId: string, operation: string, resourceId: string | null, purpose: Purpose | null = null): void {
+    const event = { at: this.now().toISOString(), projectId, operation, resourceId, purpose };
+    const batch = this.readAuditBatches.getStore();
+    if (batch && !batch.closed && BATCHED_READ_OPERATIONS.has(operation)) {
+      if (batch.events.length >= 65_536) throw new BridgeError("Context read audit limit exceeded.", 413);
+      batch.events.push(event); return;
+    }
+    this.writeAuditEvents([event]);
   }
   listGrants(projectId: string): ReadGrant[] {
     KnowledgeId.parse(projectId);

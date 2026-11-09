@@ -1,0 +1,2416 @@
+{
+  "version": 1,
+  "evaluationKind": "offline_deterministic_context_regression_and_warm_latency",
+  "startedAt": "2026-11-09T11:19:45.929Z",
+  "repository": {
+    "commitAtStart": "ed4c3f67c98a2d3409c3f4fba8d3b031cfe49bac",
+    "workingTreeDirtyAtStart": true,
+    "codeSha256": {
+      "evaluations/offline-context.mjs": "524f87c8d87dc25b5edfa4f75aae7741828ba29d9d681ee6a2974d2760f1e304",
+      "runtime/bridge/context-runtime.ts": "b44fbd39925a89e704e4a964ee08b538f929806736fc2b3bf6f4c3b17173ea32",
+      "runtime/bridge/context/contracts.ts": "e77b95929b20f941d63b7695a110bcca3f426842b6b3def97fdc8e7ad6b86cd6",
+      "runtime/bridge/context/index.ts": "61d03e72aa0e4515fcf8136171653b351de513e7ce9265f2384c9b0a345d9633",
+      "runtime/bridge/continuity/contracts.ts": "1b03c508da98d4cca4a05b233047db2506ec32e628e8696e689b4cb6047d8cd9",
+      "runtime/bridge/continuity/index.ts": "6e8905a686ba6a4b90b6b34e55a6beaddf422ded118041713b07b990169d9a5f",
+      "runtime/bridge/knowledge/agent-tools.ts": "01d4f9f1ac2401b345f30755c3b4f2f1b1403747cf8101202b7ff7fea3e588ea",
+      "runtime/bridge/knowledge/context-retrieval.ts": "17f957271d57e5fd05e1473ecac5c6c1c74a2156a71e3da929ad70f642de22b4",
+      "runtime/bridge/knowledge/contracts.ts": "9c0b1b6388aad4a0f8dfe5ec4844fc913be4b58bba78b2cd58f62cdc917d28d9",
+      "runtime/bridge/knowledge/embeddings.ts": "67c9ecf61c546236823cc5c8d9b750c92711388927fe67edf9a593803b9f44fe",
+      "runtime/bridge/knowledge/extract.ts": "9119e1d43b758136d39f243c97acaa2ed6a5c9232575b456f0a66fdfbb51d7c4",
+      "runtime/bridge/knowledge/index.ts": "08d6923b7ca33c4fcf4c3cdb675d37e7f6c9de09f466c9df003efeb815e8e3f1",
+      "runtime/bridge/knowledge/linux-embeddings.ts": "b99b2b3fdd0ef84d38b9cc1c109b31c9e11f1292c80c25445444ead863c7fbd9",
+      "runtime/bridge/knowledge/retrieval.ts": "c517ee91ba33b8929c707fcabd9fa6612713b6160228f5c882648537cd4e4314",
+      "runtime/bridge/memory/contracts.ts": "d8b78f0b826a6b643c6644c1b20df3175f50559105b05882779b4a1dbdd0d950",
+      "runtime/bridge/memory/index.ts": "dd8217c14f1569249b038e1568c105a28f1bb5caa16904da718f0eea29564abf",
+      "runtime/bridge/memory/store.ts": "aaa6f4837d80a8bb00c4d7a3244cbe9addf865b442b04479e03689fcc582be11",
+      "runtime/bridge/retained-context.ts": "fe6ac43d695287270a42ba7c410adac3c3fbc90082d40f17bb1cf8d6893f8c13",
+      "runtime/package-lock.json": "d415c9690f9aeafdabbfb2a6bb78c4a2d382417c6705986ff551ff8c63289f97"
+    },
+    "commitAtEnd": "ed4c3f67c98a2d3409c3f4fba8d3b031cfe49bac",
+    "codeStableDuringRun": true
+  },
+  "environment": {
+    "fixtureLabel": "Managed Linux implementation workspace; not the proposed reference VM or target Mac",
+    "platform": "linux",
+    "release": "6.18.57",
+    "arch": "x64",
+    "node": "v24.22.1",
+    "cpuModel": "AMD EPYC 7763 64-Core Processor",
+    "logicalCPUsReported": 5,
+    "availableParallelism": 4,
+    "cgroupCpuMax": "400000 100000",
+    "cgroupMemoryMaxBytes": "34359738368",
+    "hostMemoryBytesReported": 35743748096,
+    "loadAverageAtStart": [
+      0.57,
+      1.03,
+      1.55
+    ],
+    "network": "disabled by harness; no provider or embedding request",
+    "concurrency": "single sequential evaluation process; other workspace load not controlled",
+    "loadAverageAtEnd": [
+      0.71,
+      1.04,
+      1.55
+    ]
+  },
+  "configuration": {
+    "knowledge": true,
+    "memory": true,
+    "continuity": true,
+    "semanticRetrieval": false,
+    "embeddingProvider": null,
+    "backgroundIndexing": false,
+    "purpose": "cloud",
+    "nativeFixtureGrantsCloudAllowed": true,
+    "packetBudget": {
+      "maxBytes": 32768,
+      "maxTokens": 12000,
+      "maxItems": 12
+    },
+    "measuredBoundary": "createContextRuntime.current(): source/memory/history/checkpoint retrieval, current authorization, packet budgeting, final reauthorization, durable usage manifest",
+    "excluded": [
+      "corpus import",
+      "service startup",
+      "warmup",
+      "Eve or model inference",
+      "network",
+      "HTTP routing",
+      "SwiftUI",
+      "audio",
+      "remote retained-context brokers"
+    ],
+    "scopeAndHistory": "Deterministic in-process contextSnapshot fixture; production KnowledgeService, MemoryService, ContinuityService and createContextRuntime"
+  },
+  "fixture": {
+    "path": "runtime/test/fixtures/retrieval-150.json",
+    "sha256": "42f0531286f649eac1c54a43f39ab646f9a43cce10b0f6da16bf192594b9061a",
+    "sourceCount": 30,
+    "sourceTextBytes": 1595,
+    "queries": 150,
+    "historyMessages": 12,
+    "projectMemoryFacts": 30,
+    "globalPinnedPreferences": 1,
+    "excludedForeignMemories": 1,
+    "excludedNoCloudMemories": 1,
+    "continuityProjects": 20,
+    "sessionsPerProject": 5,
+    "approvedPins": 1,
+    "sourceDigests": [
+      {
+        "id": "fatigue",
+        "sha256": "26dfc31a9e278be15997850b8547303bfd7f6c174a3087cf2d3db246e7faf0d7"
+      },
+      {
+        "id": "photosynthesis",
+        "sha256": "37d4a85e1e694683fa7e213f4b34812456950ed124700f80f78c7332e8af44d2"
+      },
+      {
+        "id": "osmosis",
+        "sha256": "86b7e46ce9ff5fd56e0bb76548002bb18c85a251ce0709dd6a0ef891e4a71c11"
+      },
+      {
+        "id": "entropy",
+        "sha256": "28de17cfd3d726ee5bc74a1b72b4dc3ad4b41062eb43f49baef11c4689e4720a"
+      },
+      {
+        "id": "quicksort",
+        "sha256": "3eb57dc6768a86620113124ce0821a325a6d95da47de4e1cfc0cb502e756a1a6"
+      },
+      {
+        "id": "recursion",
+        "sha256": "d78fd57d09895cc6e85eb87511ff1fe89c7f0cde8623dc217fa1943814bc99b7"
+      },
+      {
+        "id": "mutex",
+        "sha256": "6863b21a9341c1fd91ab500b81ac3a9ab02453a738f4ea5fb4d2e994c1146206"
+      },
+      {
+        "id": "deadlock",
+        "sha256": "d8134daef0c33dff513bc062af15cb6885695725a38f2f0c86a89ef86cd63233"
+      },
+      {
+        "id": "indexing",
+        "sha256": "bfda908274faf05513527ca701a4bdc0fc8c17c0af0318035a6040575e5b4092"
+      },
+      {
+        "id": "transactions",
+        "sha256": "55420b36cf638fbb422580734d99de95c78ffa16efbcbf4e655db10948c65d51"
+      },
+      {
+        "id": "volatility",
+        "sha256": "890d4df67bec550ffd5fd0e2ac9aad034d7944f81110b440a88849102dab0dc3"
+      },
+      {
+        "id": "inflation",
+        "sha256": "78e1444453ed86859e24ba1a6dcf05be8d79be57b984d419a2ebfb3faef85851"
+      },
+      {
+        "id": "bonds",
+        "sha256": "495c5b6596b1e9d4f2f370b07543beba9bb77f2eef7dc865f94a5763b109d719"
+      },
+      {
+        "id": "diversification",
+        "sha256": "c05a8d8081db54bf3c1fe971132354a7a30d50833a3c8b2e05d543464e8ec92f"
+      },
+      {
+        "id": "bayesian",
+        "sha256": "2c0d779c8fd8964b7572a6c1edf0684c9b0bbf81233e3974d3e9d3595204850c"
+      },
+      {
+        "id": "bootstrap",
+        "sha256": "8846aca761f7b2f9ad9af79a4addc0c1ca6935ac5a582060917c8f7c2d3dff1e"
+      },
+      {
+        "id": "regression",
+        "sha256": "cc936ab1b65bd1de207e87f72e70a506496f9689d0f5a043ce681c84275342d4"
+      },
+      {
+        "id": "confounding",
+        "sha256": "3d43a37406f5aa66330c5c4fe48628ad536034a3b363b339dcef2ef8496ed31e"
+      },
+      {
+        "id": "diffusion",
+        "sha256": "396215d693815a786b38e47a20c1c8b4178bb439694021f9b55d649b6c5de944"
+      },
+      {
+        "id": "catalysis",
+        "sha256": "6ce0e9291035c37ecbdbde8db3043c769d40921a46bf74fa723fbcbeea43b67f"
+      },
+      {
+        "id": "oxidation",
+        "sha256": "80dfafe21ae325edcdae8e82234696bea47269681be46f7b03956566c039ca3d"
+      },
+      {
+        "id": "isotopes",
+        "sha256": "7b70cf23f7b9c3cca670490e01aff796512fb79ecb6061ee1a16a17d99a5c3de"
+      },
+      {
+        "id": "orbit",
+        "sha256": "cf41070d82c0da5991c62565dea55aa90dfb621e7e44b72d21b2c2eb3afe581c"
+      },
+      {
+        "id": "telescope",
+        "sha256": "1b684f9e6d5d857218c8a1996c07b72a20ab5e650bf44b42b84836ff6f77b332"
+      },
+      {
+        "id": "seismic",
+        "sha256": "1290d68c77196372c970bf30ac9713b483942c690a152251e69eb45f3bc101c8"
+      },
+      {
+        "id": "erosion",
+        "sha256": "6f2f384f4a107b1bfa758ef622cb415ae269dad8f382632efbf7e982a65a4f83"
+      },
+      {
+        "id": "alliteration",
+        "sha256": "4d827ca08f3bf08fdf99ea65805ca05ef30b8202971f768c09251f2d5596177f"
+      },
+      {
+        "id": "metaphor",
+        "sha256": "f1308a0a41c2225eb1b5c2c28c922af221b76f89761ac16b09633cf77df12c24"
+      },
+      {
+        "id": "counterpoint",
+        "sha256": "c14847663e6720d0b464984fac6b716352e1e1c3536174cf2b75b6d4386f7334"
+      },
+      {
+        "id": "harmony",
+        "sha256": "e1ee12a1510e75e693dbec5fc784513fee9b352558ebbdbc929ff08abd6ab706"
+      }
+    ]
+  },
+  "retrieval": {
+    "cases": [
+      {
+        "id": "fatigue-1",
+        "expectedSource": "fatigue",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "fatigue-2",
+        "expectedSource": "fatigue",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "fatigue-3",
+        "expectedSource": "fatigue",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "fatigue-4",
+        "expectedSource": "fatigue",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "fatigue-5",
+        "expectedSource": "fatigue",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "photosynthesis-1",
+        "expectedSource": "photosynthesis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "photosynthesis-2",
+        "expectedSource": "photosynthesis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "photosynthesis-3",
+        "expectedSource": "photosynthesis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "photosynthesis-4",
+        "expectedSource": "photosynthesis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "photosynthesis-5",
+        "expectedSource": "photosynthesis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "osmosis-1",
+        "expectedSource": "osmosis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "osmosis-2",
+        "expectedSource": "osmosis",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "osmosis-3",
+        "expectedSource": "osmosis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "osmosis-4",
+        "expectedSource": "osmosis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "osmosis-5",
+        "expectedSource": "osmosis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "entropy-1",
+        "expectedSource": "entropy",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "entropy-2",
+        "expectedSource": "entropy",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "entropy-3",
+        "expectedSource": "entropy",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "entropy-4",
+        "expectedSource": "entropy",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "entropy-5",
+        "expectedSource": "entropy",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "quicksort-1",
+        "expectedSource": "quicksort",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "quicksort-2",
+        "expectedSource": "quicksort",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "quicksort-3",
+        "expectedSource": "quicksort",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "quicksort-4",
+        "expectedSource": "quicksort",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "quicksort-5",
+        "expectedSource": "quicksort",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "recursion-1",
+        "expectedSource": "recursion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "recursion-2",
+        "expectedSource": "recursion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "recursion-3",
+        "expectedSource": "recursion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "recursion-4",
+        "expectedSource": "recursion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "recursion-5",
+        "expectedSource": "recursion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "mutex-1",
+        "expectedSource": "mutex",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "mutex-2",
+        "expectedSource": "mutex",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "mutex-3",
+        "expectedSource": "mutex",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "mutex-4",
+        "expectedSource": "mutex",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "mutex-5",
+        "expectedSource": "mutex",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "deadlock-1",
+        "expectedSource": "deadlock",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "deadlock-2",
+        "expectedSource": "deadlock",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "deadlock-3",
+        "expectedSource": "deadlock",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "deadlock-4",
+        "expectedSource": "deadlock",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "deadlock-5",
+        "expectedSource": "deadlock",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "indexing-1",
+        "expectedSource": "indexing",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "indexing-2",
+        "expectedSource": "indexing",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "indexing-3",
+        "expectedSource": "indexing",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "indexing-4",
+        "expectedSource": "indexing",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "indexing-5",
+        "expectedSource": "indexing",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "transactions-1",
+        "expectedSource": "transactions",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "transactions-2",
+        "expectedSource": "transactions",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "transactions-3",
+        "expectedSource": "transactions",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "transactions-4",
+        "expectedSource": "transactions",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "transactions-5",
+        "expectedSource": "transactions",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "volatility-1",
+        "expectedSource": "volatility",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "volatility-2",
+        "expectedSource": "volatility",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "volatility-3",
+        "expectedSource": "volatility",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "volatility-4",
+        "expectedSource": "volatility",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "volatility-5",
+        "expectedSource": "volatility",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "inflation-1",
+        "expectedSource": "inflation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "inflation-2",
+        "expectedSource": "inflation",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "inflation-3",
+        "expectedSource": "inflation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "inflation-4",
+        "expectedSource": "inflation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "inflation-5",
+        "expectedSource": "inflation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bonds-1",
+        "expectedSource": "bonds",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bonds-2",
+        "expectedSource": "bonds",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bonds-3",
+        "expectedSource": "bonds",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bonds-4",
+        "expectedSource": "bonds",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bonds-5",
+        "expectedSource": "bonds",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diversification-1",
+        "expectedSource": "diversification",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diversification-2",
+        "expectedSource": "diversification",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diversification-3",
+        "expectedSource": "diversification",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diversification-4",
+        "expectedSource": "diversification",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diversification-5",
+        "expectedSource": "diversification",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bayesian-1",
+        "expectedSource": "bayesian",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bayesian-2",
+        "expectedSource": "bayesian",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bayesian-3",
+        "expectedSource": "bayesian",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bayesian-4",
+        "expectedSource": "bayesian",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bayesian-5",
+        "expectedSource": "bayesian",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bootstrap-1",
+        "expectedSource": "bootstrap",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bootstrap-2",
+        "expectedSource": "bootstrap",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bootstrap-3",
+        "expectedSource": "bootstrap",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bootstrap-4",
+        "expectedSource": "bootstrap",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bootstrap-5",
+        "expectedSource": "bootstrap",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "regression-1",
+        "expectedSource": "regression",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "regression-2",
+        "expectedSource": "regression",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "regression-3",
+        "expectedSource": "regression",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "regression-4",
+        "expectedSource": "regression",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "regression-5",
+        "expectedSource": "regression",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "confounding-1",
+        "expectedSource": "confounding",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "confounding-2",
+        "expectedSource": "confounding",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "confounding-3",
+        "expectedSource": "confounding",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "confounding-4",
+        "expectedSource": "confounding",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "confounding-5",
+        "expectedSource": "confounding",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diffusion-1",
+        "expectedSource": "diffusion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diffusion-2",
+        "expectedSource": "diffusion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diffusion-3",
+        "expectedSource": "diffusion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diffusion-4",
+        "expectedSource": "diffusion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diffusion-5",
+        "expectedSource": "diffusion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "catalysis-1",
+        "expectedSource": "catalysis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "catalysis-2",
+        "expectedSource": "catalysis",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "catalysis-3",
+        "expectedSource": "catalysis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "catalysis-4",
+        "expectedSource": "catalysis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "catalysis-5",
+        "expectedSource": "catalysis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "oxidation-1",
+        "expectedSource": "oxidation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "oxidation-2",
+        "expectedSource": "oxidation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "oxidation-3",
+        "expectedSource": "oxidation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "oxidation-4",
+        "expectedSource": "oxidation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "oxidation-5",
+        "expectedSource": "oxidation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "isotopes-1",
+        "expectedSource": "isotopes",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "isotopes-2",
+        "expectedSource": "isotopes",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "isotopes-3",
+        "expectedSource": "isotopes",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "isotopes-4",
+        "expectedSource": "isotopes",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "isotopes-5",
+        "expectedSource": "isotopes",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "orbit-1",
+        "expectedSource": "orbit",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "orbit-2",
+        "expectedSource": "orbit",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "orbit-3",
+        "expectedSource": "orbit",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "orbit-4",
+        "expectedSource": "orbit",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "orbit-5",
+        "expectedSource": "orbit",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "telescope-1",
+        "expectedSource": "telescope",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "telescope-2",
+        "expectedSource": "telescope",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "telescope-3",
+        "expectedSource": "telescope",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "telescope-4",
+        "expectedSource": "telescope",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "telescope-5",
+        "expectedSource": "telescope",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "seismic-1",
+        "expectedSource": "seismic",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "seismic-2",
+        "expectedSource": "seismic",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "seismic-3",
+        "expectedSource": "seismic",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "seismic-4",
+        "expectedSource": "seismic",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "seismic-5",
+        "expectedSource": "seismic",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "erosion-1",
+        "expectedSource": "erosion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "erosion-2",
+        "expectedSource": "erosion",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "erosion-3",
+        "expectedSource": "erosion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "erosion-4",
+        "expectedSource": "erosion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "erosion-5",
+        "expectedSource": "erosion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "alliteration-1",
+        "expectedSource": "alliteration",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "alliteration-2",
+        "expectedSource": "alliteration",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "alliteration-3",
+        "expectedSource": "alliteration",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "alliteration-4",
+        "expectedSource": "alliteration",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "alliteration-5",
+        "expectedSource": "alliteration",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "metaphor-1",
+        "expectedSource": "metaphor",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "metaphor-2",
+        "expectedSource": "metaphor",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "metaphor-3",
+        "expectedSource": "metaphor",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "metaphor-4",
+        "expectedSource": "metaphor",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "metaphor-5",
+        "expectedSource": "metaphor",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "counterpoint-1",
+        "expectedSource": "counterpoint",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "counterpoint-2",
+        "expectedSource": "counterpoint",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "counterpoint-3",
+        "expectedSource": "counterpoint",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "counterpoint-4",
+        "expectedSource": "counterpoint",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "counterpoint-5",
+        "expectedSource": "counterpoint",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "harmony-1",
+        "expectedSource": "harmony",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "harmony-2",
+        "expectedSource": "harmony",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "harmony-3",
+        "expectedSource": "harmony",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "harmony-4",
+        "expectedSource": "harmony",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "harmony-5",
+        "expectedSource": "harmony",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      }
+    ],
+    "expectedTopK": 3,
+    "passed": 150,
+    "failed": 0,
+    "citationFailures": 0,
+    "foreignResults": 0
+  },
+  "continuity": {
+    "projects": [
+      {
+        "projectId": "fixture",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-1",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-2",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-3",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-4",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-5",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-6",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-7",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-8",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-9",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-10",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-11",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-12",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-13",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-14",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-15",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-16",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-17",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-18",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-19",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      }
+    ],
+    "eventReplayChecks": 100,
+    "restart": true,
+    "pinsSurvived": true,
+    "passed": 20,
+    "failed": 0
+  },
+  "contextAssembly": {
+    "warmupAttempts": 5,
+    "warmupFailures": [],
+    "attempts": 30,
+    "samples": [
+      {
+        "index": 0,
+        "caseId": "fatigue-1",
+        "milliseconds": 63.052815,
+        "selectedItems": 12,
+        "packetBytes": 10702,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 1,
+        "caseId": "fatigue-2",
+        "milliseconds": 104.194252,
+        "selectedItems": 12,
+        "packetBytes": 11419,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 2,
+        "caseId": "fatigue-3",
+        "milliseconds": 54.271349,
+        "selectedItems": 12,
+        "packetBytes": 10711,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 3,
+        "caseId": "fatigue-4",
+        "milliseconds": 59.758324,
+        "selectedItems": 12,
+        "packetBytes": 10691,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 4,
+        "caseId": "fatigue-5",
+        "milliseconds": 75.828974,
+        "selectedItems": 12,
+        "packetBytes": 10855,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 5,
+        "caseId": "photosynthesis-1",
+        "milliseconds": 52.125141,
+        "selectedItems": 12,
+        "packetBytes": 10742,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 6,
+        "caseId": "photosynthesis-2",
+        "milliseconds": 51.505919,
+        "selectedItems": 12,
+        "packetBytes": 11459,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 7,
+        "caseId": "photosynthesis-3",
+        "milliseconds": 66.156898,
+        "selectedItems": 12,
+        "packetBytes": 10751,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 8,
+        "caseId": "photosynthesis-4",
+        "milliseconds": 51.551718,
+        "selectedItems": 12,
+        "packetBytes": 10731,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 9,
+        "caseId": "photosynthesis-5",
+        "milliseconds": 59.731918,
+        "selectedItems": 12,
+        "packetBytes": 10895,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 10,
+        "caseId": "osmosis-1",
+        "milliseconds": 59.719423,
+        "selectedItems": 12,
+        "packetBytes": 10712,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 11,
+        "caseId": "osmosis-2",
+        "milliseconds": 66.782793,
+        "selectedItems": 12,
+        "packetBytes": 11429,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 12,
+        "caseId": "osmosis-3",
+        "milliseconds": 54.254013,
+        "selectedItems": 12,
+        "packetBytes": 10721,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 13,
+        "caseId": "osmosis-4",
+        "milliseconds": 64.0712,
+        "selectedItems": 12,
+        "packetBytes": 10701,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 14,
+        "caseId": "osmosis-5",
+        "milliseconds": 62.099487,
+        "selectedItems": 12,
+        "packetBytes": 10865,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 15,
+        "caseId": "entropy-1",
+        "milliseconds": 48.556461,
+        "selectedItems": 12,
+        "packetBytes": 10708,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 16,
+        "caseId": "entropy-2",
+        "milliseconds": 65.925471,
+        "selectedItems": 12,
+        "packetBytes": 11425,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 17,
+        "caseId": "entropy-3",
+        "milliseconds": 62.792605,
+        "selectedItems": 12,
+        "packetBytes": 10717,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 18,
+        "caseId": "entropy-4",
+        "milliseconds": 103.183056,
+        "selectedItems": 12,
+        "packetBytes": 10697,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 19,
+        "caseId": "entropy-5",
+        "milliseconds": 70.957634,
+        "selectedItems": 12,
+        "packetBytes": 10861,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 20,
+        "caseId": "quicksort-1",
+        "milliseconds": 64.987883,
+        "selectedItems": 12,
+        "packetBytes": 10690,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 21,
+        "caseId": "quicksort-2",
+        "milliseconds": 59.692368,
+        "selectedItems": 12,
+        "packetBytes": 11407,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 22,
+        "caseId": "quicksort-3",
+        "milliseconds": 51.776715,
+        "selectedItems": 12,
+        "packetBytes": 10699,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 23,
+        "caseId": "quicksort-4",
+        "milliseconds": 56.598617,
+        "selectedItems": 12,
+        "packetBytes": 10679,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 24,
+        "caseId": "quicksort-5",
+        "milliseconds": 48.274583,
+        "selectedItems": 12,
+        "packetBytes": 10843,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 25,
+        "caseId": "recursion-1",
+        "milliseconds": 48.213125,
+        "selectedItems": 12,
+        "packetBytes": 10706,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 26,
+        "caseId": "recursion-2",
+        "milliseconds": 54.663663,
+        "selectedItems": 12,
+        "packetBytes": 11423,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 27,
+        "caseId": "recursion-3",
+        "milliseconds": 49.758129,
+        "selectedItems": 12,
+        "packetBytes": 10715,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 28,
+        "caseId": "recursion-4",
+        "milliseconds": 46.182869,
+        "selectedItems": 12,
+        "packetBytes": 10695,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 29,
+        "caseId": "recursion-5",
+        "milliseconds": 59.116663,
+        "selectedItems": 12,
+        "packetBytes": 10859,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      }
+    ],
+    "failures": [],
+    "expectedSourceSelected": 30,
+    "sourceCitationFailures": 0,
+    "scopeFailures": 0,
+    "timing": {
+      "unit": "milliseconds",
+      "method": "nearest_rank",
+      "successfulSamples": 30,
+      "failedSamples": 0,
+      "p50": 59.692368,
+      "p95": 103.183056,
+      "min": 46.182869,
+      "max": 104.194252,
+      "mean": 61.192802
+    }
+  },
+  "finalAuthorization": {
+    "measured": true,
+    "boundary": "Synchronous runtime.assembler.revalidate(packet), matching the final HTTP disclosure guard; JSON/network send excluded",
+    "samples": [
+      {
+        "index": 0,
+        "caseId": "fatigue-1",
+        "milliseconds": 6.818169
+      },
+      {
+        "index": 1,
+        "caseId": "fatigue-2",
+        "milliseconds": 21.639994
+      },
+      {
+        "index": 2,
+        "caseId": "fatigue-3",
+        "milliseconds": 6.323187
+      },
+      {
+        "index": 3,
+        "caseId": "fatigue-4",
+        "milliseconds": 6.825024
+      },
+      {
+        "index": 4,
+        "caseId": "fatigue-5",
+        "milliseconds": 6.029782
+      },
+      {
+        "index": 5,
+        "caseId": "photosynthesis-1",
+        "milliseconds": 4.432668
+      },
+      {
+        "index": 6,
+        "caseId": "photosynthesis-2",
+        "milliseconds": 15.389169
+      },
+      {
+        "index": 7,
+        "caseId": "photosynthesis-3",
+        "milliseconds": 4.305239
+      },
+      {
+        "index": 8,
+        "caseId": "photosynthesis-4",
+        "milliseconds": 6.094517
+      },
+      {
+        "index": 9,
+        "caseId": "photosynthesis-5",
+        "milliseconds": 8.924981
+      },
+      {
+        "index": 10,
+        "caseId": "osmosis-1",
+        "milliseconds": 6.965064
+      },
+      {
+        "index": 11,
+        "caseId": "osmosis-2",
+        "milliseconds": 7.230207
+      },
+      {
+        "index": 12,
+        "caseId": "osmosis-3",
+        "milliseconds": 8.799252
+      },
+      {
+        "index": 13,
+        "caseId": "osmosis-4",
+        "milliseconds": 4.190035
+      },
+      {
+        "index": 14,
+        "caseId": "osmosis-5",
+        "milliseconds": 3.939928
+      },
+      {
+        "index": 15,
+        "caseId": "entropy-1",
+        "milliseconds": 4.768943
+      },
+      {
+        "index": 16,
+        "caseId": "entropy-2",
+        "milliseconds": 12.092924
+      },
+      {
+        "index": 17,
+        "caseId": "entropy-3",
+        "milliseconds": 5.744951
+      },
+      {
+        "index": 18,
+        "caseId": "entropy-4",
+        "milliseconds": 7.64716
+      },
+      {
+        "index": 19,
+        "caseId": "entropy-5",
+        "milliseconds": 4.616659
+      },
+      {
+        "index": 20,
+        "caseId": "quicksort-1",
+        "milliseconds": 3.644959
+      },
+      {
+        "index": 21,
+        "caseId": "quicksort-2",
+        "milliseconds": 4.239987
+      },
+      {
+        "index": 22,
+        "caseId": "quicksort-3",
+        "milliseconds": 4.346728
+      },
+      {
+        "index": 23,
+        "caseId": "quicksort-4",
+        "milliseconds": 7.301841
+      },
+      {
+        "index": 24,
+        "caseId": "quicksort-5",
+        "milliseconds": 7.466369
+      },
+      {
+        "index": 25,
+        "caseId": "recursion-1",
+        "milliseconds": 4.156057
+      },
+      {
+        "index": 26,
+        "caseId": "recursion-2",
+        "milliseconds": 4.912925
+      },
+      {
+        "index": 27,
+        "caseId": "recursion-3",
+        "milliseconds": 3.252372
+      },
+      {
+        "index": 28,
+        "caseId": "recursion-4",
+        "milliseconds": 5.843196
+      },
+      {
+        "index": 29,
+        "caseId": "recursion-5",
+        "milliseconds": 7.849946
+      }
+    ],
+    "failures": [],
+    "timing": {
+      "unit": "milliseconds",
+      "method": "nearest_rank",
+      "successfulSamples": 30,
+      "failedSamples": 0,
+      "p50": 6.029782,
+      "p95": 15.389169,
+      "min": 3.252372,
+      "max": 21.639994
+    }
+  },
+  "limitations": [
+    "Tiny synthetic 30-source corpus with direct lexical labels; not research quality or difficult personal-corpus retrieval.",
+    "No E5 weights provisioned or loaded, no neural retrieval/reranking quality measured.",
+    "No human or expert review and no model-generated answers.",
+    "Managed Linux workspace is not a reference VM or physical Mac; shared workload and storage are uncontrolled.",
+    "Warm in-process assembly latency is not UI feedback, first audio, end-to-end turn latency, or a release gate pass.",
+    "20×5 continuity checks validate durable scope/replay/pin behavior, not semantic episodic understanding."
+  ],
+  "liveGates": {
+    "e5Inference": "unrun",
+    "humanRetrievalReview": "unrun",
+    "fixed30Tasks": "unrun",
+    "physicalMacLatency": "unrun",
+    "referenceVMPerformance": "unrun"
+  },
+  "storage": {
+    "knowledge/knowledge.sqlite": 471040,
+    "memory/memory.sqlite": 147456,
+    "continuity/continuity.sqlite": 311296
+  },
+  "phaseProfile": {
+    "scope": "Only calls begun during measured current(); setup, warmup and post-timing assertions excluded",
+    "timings": "Inclusive and overlapping; do not sum nested phase durations",
+    "phases": [
+      {
+        "name": "memory.recall",
+        "calls": 30,
+        "callsPerAssembly": 1,
+        "totalMs": 727.5959900000071,
+        "p50Ms": 23.172271999999793,
+        "p95Ms": 34.80383599999914,
+        "meanMs": 24.2531996666669
+      },
+      {
+        "name": "memory.authorize",
+        "calls": 2382,
+        "callsPerAssembly": 79.4,
+        "totalMs": 657.1592019999625,
+        "p50Ms": 0.1895429999985936,
+        "p95Ms": 0.5948979999993753,
+        "meanMs": 0.2758854752308827
+      },
+      {
+        "name": "knowledge.readPassage",
+        "calls": 2304,
+        "callsPerAssembly": 76.8,
+        "totalMs": 392.5782929999914,
+        "p50Ms": 0.10472499999923457,
+        "p95Ms": 0.3996449999995093,
+        "meanMs": 0.1703898841145796
+      },
+      {
+        "name": "knowledge.retrieveContext",
+        "calls": 30,
+        "callsPerAssembly": 1,
+        "totalMs": 177.64775200000076,
+        "p50Ms": 5.598688000000038,
+        "p95Ms": 8.692680999998629,
+        "meanMs": 5.921591733333359
+      },
+      {
+        "name": "continuity.recordContextUse",
+        "calls": 30,
+        "callsPerAssembly": 1,
+        "totalMs": 132.31146400000034,
+        "p50Ms": 4.273850999999922,
+        "p95Ms": 7.512872999999672,
+        "meanMs": 4.410382133333345
+      },
+      {
+        "name": "knowledge.requireGrant",
+        "calls": 4104,
+        "callsPerAssembly": 136.8,
+        "totalMs": 130.56124399999862,
+        "p50Ms": 0.018814999999449356,
+        "p95Ms": 0.09050899999965623,
+        "meanMs": 0.03181316861598407
+      },
+      {
+        "name": "memory.reconcile",
+        "calls": 30,
+        "callsPerAssembly": 1,
+        "totalMs": 120.395992999991,
+        "p50Ms": 3.3581759999997303,
+        "p95Ms": 9.4684529999995,
+        "meanMs": 4.013199766666366
+      },
+      {
+        "name": "continuity.authorizeCheckpoint",
+        "calls": 210,
+        "callsPerAssembly": 7,
+        "totalMs": 74.14062099999683,
+        "p50Ms": 0.2407279999988532,
+        "p95Ms": 0.6433180000003631,
+        "meanMs": 0.3530505761904611
+      },
+      {
+        "name": "continuity.checkpoint",
+        "calls": 30,
+        "callsPerAssembly": 1,
+        "totalMs": 29.356445000003077,
+        "p50Ms": 0.7738009999993665,
+        "p95Ms": 2.2981700000000274,
+        "meanMs": 0.9785481666667692
+      },
+      {
+        "name": "knowledge.audit",
+        "calls": 2334,
+        "callsPerAssembly": 77.8,
+        "totalMs": 21.57682700001351,
+        "p50Ms": 0.005430000001069857,
+        "p95Ms": 0.01230299999951967,
+        "meanMs": 0.009244570265644177
+      },
+      {
+        "name": "memory.semantic",
+        "calls": 30,
+        "callsPerAssembly": 1,
+        "totalMs": 1.136949999992794,
+        "p50Ms": 0.028652999999394524,
+        "p95Ms": 0.10604799999964598,
+        "meanMs": 0.03789833333309313
+      }
+    ]
+  },
+  "completedAt": "2026-11-09T11:19:58.143Z",
+  "status": "completed"
+}

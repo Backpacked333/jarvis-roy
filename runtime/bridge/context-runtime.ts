@@ -122,22 +122,32 @@ export function createContextRuntime(service: JarvisService, knowledge: Knowledg
     },
   });
   return {
-    assembler,
+    assembler: { ...assembler,
+      // The HTTP route's final check stays synchronous and commits its own
+      // fresh audit events before the response can disclose the packet.
+      revalidate: (packet: Parameters<typeof assembler.revalidate>[0]) => knowledge.withReadAuditBatchSync(() => assembler.revalidate(packet)),
+    },
     async preview(raw: unknown, signal?: AbortSignal) {
       const input = ContextPreviewSchema.parse(raw);
       if (containsCredentialLikeData(input.query)) throw new BridgeError("Context queries cannot contain credentials.", 400);
-      return assembler.assemble({ version: 1, scope: { projectId: input.projectId, conversationId: input.conversationId ?? null, taskId: null },
+      return knowledge.withReadAuditBatch(() => assembler.assemble({ version: 1, scope: { projectId: input.projectId, conversationId: input.conversationId ?? null, taskId: null },
         query: input.query, purpose: input.purpose, currentTurn: { text: input.query },
-        budget: { maxBytes: 32_768, maxTokens: input.maxTokens, maxItems: input.maxItems }, pins: input.pins }, signal);
+        budget: { maxBytes: 32_768, maxTokens: input.maxTokens, maxItems: input.maxItems }, pins: input.pins }, signal), packet => assembler.revalidate(packet));
     },
     async current(scope: { projectId: string; conversationId: string; taskId: string }, query?: string, maxTokens = 12_000, signal?: AbortSignal) {
       const snapshot = service.contextSnapshot(scope.projectId, scope.conversationId, scope.taskId);
       const text = query ?? snapshot.currentTurn.trim().slice(0, 1000);
       if (containsCredentialLikeData(text)) throw new BridgeError("Context queries cannot contain credentials.", 400);
-      const packet = await assembler.assemble({ version: 1, scope, purpose: "cloud", query: text || "current conversation", currentTurn: { text: snapshot.currentTurn },
-        pins: continuity?.enabled ? continuity.getWorkingSet(scope.projectId).pins : [],
-        budget: { maxBytes: 32_768, maxTokens, maxItems: 12 } }, signal);
-      await assembler.revalidateAsync(packet, signal);
+      const packet = await knowledge.withReadAuditBatch(async () => {
+        const packet = await assembler.assemble({ version: 1, scope, purpose: "cloud", query: text || "current conversation", currentTurn: { text: snapshot.currentTurn },
+          pins: continuity?.enabled ? continuity.getWorkingSet(scope.projectId).pins : [],
+          budget: { maxBytes: 32_768, maxTokens, maxItems: 12 } }, signal);
+        await assembler.revalidateAsync(packet, signal);
+        return packet;
+      }, packet => assembler.revalidate(packet));
+      // The audit commit may fail. Only record supplied-context references after
+      // it succeeds, with a fresh synchronous authorization after the await.
+      knowledge.withReadAuditBatchSync(() => assembler.revalidate(packet));
       if (continuity?.enabled) continuity.recordContextUse(packet);
       return packet;
     },

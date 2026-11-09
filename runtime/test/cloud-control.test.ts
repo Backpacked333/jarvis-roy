@@ -3,7 +3,7 @@ import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from "
 import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { once } from "node:events";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
@@ -19,6 +19,8 @@ import { createCloudRuntimeBroker } from "../bridge/cloud-runtime-broker.ts";
 import type { ObjectiveRuntime } from "../bridge/objective-runtime.ts";
 import type { JarvisService } from "../bridge/service.ts";
 import type { ContinuityService } from "../bridge/continuity/index.ts";
+import { createCloudApplication } from "../bridge/cloud-main.ts";
+import { BridgeError } from "../bridge/errors.ts";
 
 const sha = (text: string | Uint8Array) => createHash("sha256").update(text).digest();
 const bootstrap = randomBytes(32).toString("base64url");
@@ -207,6 +209,48 @@ test("cloud remote reviews reconcile only exact durable action receipts after ex
       assert.equal(executions, 1);
     } finally { await native.close(); await f.cleanup(); }
   }
+});
+
+test("an approved action awaiting executor binding cannot revive after an unconfirmed Stop and Resume", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "jarvis-cloud-approval-stop-")), origin = "https://jarvis.example";
+  let bound!: () => void, release!: () => void, executions = 0;
+  const binding = new Promise<void>(resolve => { bound = resolve; }), blocked = new Promise<void>(resolve => { release = resolve; });
+  const action: ReviewableAction = { taskId: "task", interactionId: "approval", revision: 1, optionId: "approve", toolName: "save_note",
+    exactArguments: "{}", reviewText: "Save the reviewed note", voiceAllowed: true };
+  const app = await createCloudApplication({ dataDirectory: directory, env: { JARVIS_ENABLE_CLOUD: "1", JARVIS_RUNTIME_PROFILE: "cloud", JARVIS_CLOUD_ORIGIN: origin,
+    JARVIS_CLOUD_BOOTSTRAP_TOKEN: bootstrap, JARVIS_LOCAL_TOKEN: randomBytes(32).toString("base64url"), JARVIS_CLOUD_RUNTIME_TOKEN: randomBytes(32).toString("base64url") },
+    rpc: async operation => {
+      if (operation === "read_action") return action;
+      if (operation === "bind_executor") { bound(); await blocked; return { version: 1 }; }
+      if (operation === "execute_action") { executions++; return { version: 1, status: "completed", code: "ok" }; }
+      if (operation === "stop") throw new BridgeError("Fixture bridge Stop could not be confirmed", 503);
+      if (operation === "resume") return { version: 1, resumed: true };
+      throw new Error("Unexpected operation");
+    } });
+  const server = createServer(app.handler); server.listen(0, "127.0.0.1"); await once(server, "listening");
+  try {
+    const start = await app.control.startPairing({ deviceId: "mac", label: "Mac" }, bootstrap);
+    const paired = await app.control.completePairing({ pairingId: start.pairingId, deviceId: "mac" }, start.pairingToken);
+    const device = app.control.authenticateDevice(paired.deviceToken), auth = new TestAuthenticator();
+    const enrollment = await app.control.startEnrollment(device), registration = await app.control.registrationOptions(enrollment.enrollmentToken);
+    await app.control.finishRegistration(enrollment.enrollmentToken, registration.challengeId, auth.registration(registration.options.challenge, origin));
+    const challenge = await app.control.authenticationOptions();
+    const login = await app.control.finishAuthentication(challenge.challengeId, auth.assertion(challenge.options.challenge, origin));
+    const owner = app.control.authenticateOwner(login.sessionToken);
+    const proposal = await app.control.createActionProposal({ projectId: "project", deviceId: "cloud-runtime",
+      ref: { taskId: "task", interactionId: "approval", revision: 1, optionId: "approve" } });
+    const approval = await app.control.approvalOptions(proposal.id, owner);
+    const pending = app.control.finishApproval(proposal.id, approval.challengeId, auth.assertion(approval.options.challenge, origin), owner);
+    await binding;
+    const lifecycle = (name: "stop" | "resume") => new Promise<number>((resolve, reject) => {
+      const request = httpRequest({ hostname: "127.0.0.1", port: (server.address() as { port: number }).port, method: "POST", path: `/v1/cloud/${name}`,
+        headers: { host: "jarvis.example", authorization: `Bearer ${paired.deviceToken}` } }, response => { response.resume(); response.on("end", () => resolve(response.statusCode!)); });
+      request.on("error", reject); request.end();
+    });
+    assert.equal(await lifecycle("stop"), 503); assert.equal(app.control.admission().stopped, true);
+    assert.equal(await lifecycle("resume"), 200); assert.equal(app.control.admission().ready, true);
+    release(); assert.equal((await pending).status, "unknown"); assert.equal(executions, 0);
+  } finally { release(); await app.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
 });
 
 test("durability failure before authorization prevents execution and fences further work", async () => {

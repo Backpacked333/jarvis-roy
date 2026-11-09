@@ -88,8 +88,11 @@ export class IntegrationService {
     this.twilio?.stop(); this.store.put("control", "global", { stopped: true }); this.store.put("control", "stop_status", { status: "stopping" }); this.telegram?.stopOutbound(); this.outreach?.cancelPending();
   }
   private async performStop(includeRootHook: boolean): Promise<void> {
-    const operations = [Promise.resolve().then(() => this.stopLocal()), Promise.resolve().then(() => this.twilio?.cancelCalls())];
-    if (includeRootHook) operations.push(Promise.resolve().then(() => this.options.hooks.onStop()));
+    const attempt = (operation: () => void | Promise<void>): Promise<void> => {
+      try { return Promise.resolve(operation()); } catch (error) { return Promise.reject(error); }
+    };
+    const operations = [attempt(() => this.stopLocal()), attempt(() => this.twilio?.cancelCalls())];
+    if (includeRootHook) operations.push(attempt(() => this.options.hooks.onStop()));
     const results = await Promise.allSettled(operations), failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
     if (failures.length) {
       try { this.store?.put("control", "stop_status", { status: "uncertain", failedOperations: failures.length }); } catch {}

@@ -120,6 +120,9 @@ returns to the original executor, which rereads the exact pending action.
 Telegram messages, telephone transcripts and generic “yes” never grant action
 authority. Queued/approved work is not reported as a completed external effect;
 only an exact observed receipt can resolve an uncertain result.
+Automatic remote outcome reconciliation currently has exact successful receipts
+for Google mutations. Room and general desktop effects can remain unknown pending
+inspection; completing an assistant task is not proof that those effects occurred.
 
 Owner calls use Twilio through the shared speech adapter. A call begins with a
 generic greeting; a call-specific passkey verification and disclosure policy
