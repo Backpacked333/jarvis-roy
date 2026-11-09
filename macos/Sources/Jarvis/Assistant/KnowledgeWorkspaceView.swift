@@ -25,7 +25,12 @@ struct KnowledgeGrant: Decodable, Identifiable {
         return expiry > now
     }
 }
-struct KnowledgeMatch: Decodable { let source: KnowledgeSource, passage: KnowledgePassage }
+struct KnowledgeMatch: Decodable {
+    let source: KnowledgeSource, passage: KnowledgePassage, explanation: KnowledgeSearchExplanation?
+    init(source: KnowledgeSource, passage: KnowledgePassage, explanation: KnowledgeSearchExplanation? = nil) {
+        self.source = source; self.passage = passage; self.explanation = explanation
+    }
+}
 
 @MainActor
 final class KnowledgeWorkspaceModel: ObservableObject {
@@ -41,6 +46,11 @@ final class KnowledgeWorkspaceModel: ObservableObject {
     @Published var selectedBundle = ""
     @Published var contextResources: [[String: Any]] = []
     @Published var contextResult = ""
+    @Published private(set) var embeddings: KnowledgeEmbeddingStatus?
+    @Published private(set) var retrieval: KnowledgeRetrievalInfo?
+    @Published private(set) var indexing = false
+    private var readRevision = 0
+    private var contextReadRevision = 0
     let projectID: String
     let client: AssistantClient
     init(projectID: String, client: AssistantClient) { self.projectID = projectID; self.client = client }
@@ -61,6 +71,10 @@ final class KnowledgeWorkspaceModel: ObservableObject {
             guard loadedSources.allSatisfy({ $0.version == 1 && $0.projectId == projectID }),
                   loadedGrants.allSatisfy({ $0.version == 1 && $0.projectId == projectID }) else { throw AssistantClientError.invalidResponse }
             sources = loadedSources; grants = loadedGrants
+            struct Status: Decodable { let version: Int, enabled: Bool, embeddings: KnowledgeEmbeddingStatus }
+            let status = try await client.value(Status.self, path: "/v1/knowledge/status")
+            guard status.version == 1, status.embeddings.local, status.embeddings.provider?.local != false else { throw AssistantClientError.invalidResponse }
+            embeddings = status.embeddings
             error = nil
         } catch { self.error = error.localizedDescription }
     }
@@ -117,43 +131,71 @@ final class KnowledgeWorkspaceModel: ObservableObject {
     }
 
     func search() async {
-        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { matches = []; return }
+        readRevision += 1
+        let ticket = readRevision, capturedQuery = query
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { matches = []; retrieval = nil; return }
         do {
-            struct Result: Decodable { let matches: [KnowledgeMatch] }
-            let result = try await client.value(Result.self, path: "/v1/knowledge/search", method: "POST", body: [
-                "projectId": projectID, "query": query, "purpose": "local", "limit": 10, "includeArchived": false,
-            ]).matches
+            struct Result: Decodable { let version: Int, matches: [KnowledgeMatch], retrieval: KnowledgeRetrievalInfo, contentTrust: String }
+            let reply = try await client.value(Result.self, path: "/v1/knowledge/context", method: "POST", body: [
+                "projectId": projectID, "query": capturedQuery, "purpose": "local", "limit": 10, "includeArchived": false, "maxPerSource": 2, "indexBudget": 0,
+            ])
+            guard ticket == readRevision, capturedQuery == query else { return }
+            guard reply.version == 1, reply.contentTrust == "untrusted", reply.retrieval.provider?.local != false else { throw AssistantClientError.invalidResponse }
+            let result = reply.matches
             guard result.allSatisfy({ $0.source.version == 1 && $0.source.projectId == projectID && $0.passage.projectId == projectID && $0.passage.sourceVersionId == $0.source.id }) else { throw AssistantClientError.invalidResponse }
-            matches = result
+            matches = result; retrieval = reply.retrieval
             error = nil
+        } catch { if ticket == readRevision { self.error = error.localizedDescription } }
+    }
+    func indexSources() async {
+        guard !indexing else { return }
+        indexing = true; defer { indexing = false }
+        do {
+            struct Reply: Decodable { let version: Int, provider: KnowledgeEmbeddingIdentity?, status: String, indexed: Int, cached: Int, remaining: Int }
+            let reply = try await client.value(Reply.self, path: "/v1/knowledge/index", method: "POST", body: ["projectId": projectID, "limit": 64])
+            guard reply.version == 1, reply.provider?.local != false else { throw AssistantClientError.invalidResponse }
+            notice = reply.status == "indexed" ? "Indexed \(reply.indexed) passages on this Mac. \(reply.remaining) remain; \(reply.cached) are cached." :
+                "Local semantic indexing is unavailable. Text search remains available. Enable semantic retrieval in Settings and restart services."
+            if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await search() }
+            await refresh()
         } catch { self.error = error.localizedDescription }
     }
     func inspect(_ source: KnowledgeSource) async {
+        readRevision += 1; let ticket = readRevision
         do {
             struct Result: Decodable { let source: KnowledgeSource, passages: [KnowledgePassage] }
             let value = try await client.value(Result.self, path: "/v1/knowledge/sources/\(source.id)?projectId=\(projectQuery)&purpose=local")
             guard value.source.version == 1, value.source.id == source.id, value.source.projectId == projectID,
                   value.passages.allSatisfy({ $0.projectId == projectID && $0.sourceVersionId == source.id }) else { throw AssistantClientError.invalidResponse }
+            guard ticket == readRevision else { return }
             matches = value.passages.map { KnowledgeMatch(source: value.source, passage: $0) }
-        } catch { self.error = error.localizedDescription }
+            retrieval = nil
+        } catch { if ticket == readRevision { self.error = error.localizedDescription } }
     }
     func remove(_ source: KnowledgeSource) async {
+        invalidateReadResults()
         do {
             _ = try await client.data("/v1/knowledge/sources/\(source.id)?projectId=\(projectQuery)", method: "DELETE")
-            matches.removeAll { $0.source.id == source.id }; await refresh()
+            invalidateReadResults(); await refresh()
         } catch { self.error = error.localizedDescription }
     }
     func revoke(_ grant: KnowledgeGrant) async {
+        invalidateReadResults()
         do {
             _ = try await client.data("/v1/grants/\(grant.id)/revoke", method: "POST", body: ["expectedRevision": grant.revision])
-            matches = []; contextResult = ""; await refresh()
+            invalidateReadResults(); await refresh()
         } catch { self.error = error.localizedDescription }
     }
     func changeCloudUse(_ grant: KnowledgeGrant, allowed: Bool) async {
+        invalidateReadResults()
         do {
             _ = try await client.data("/v1/grants/\(grant.id)", method: "PATCH", body: ["expectedRevision": grant.revision, "cloudAllowed": allowed])
-            await refresh()
+            invalidateReadResults(); await refresh()
         } catch { self.error = error.localizedDescription }
+    }
+    private func invalidateReadResults() {
+        readRevision += 1; contextReadRevision += 1
+        matches = []; retrieval = nil; contextResult = ""
     }
     func exportProject() async {
         let panel = NSSavePanel(); panel.nameFieldStringValue = "Jarvis-project.json"; panel.allowedContentTypes = [.json]
@@ -167,19 +209,25 @@ final class KnowledgeWorkspaceModel: ObservableObject {
     }
 
     func discoverContext() async {
+        contextReadRevision += 1
+        let ticket = contextReadRevision, kind = contextKind, bundle = selectedBundle
+        contextResources = []
         do {
-            var body: [String: Any] = ["projectId": projectID, "kind": contextKind]
-            if contextKind == "window" { body["bundleId"] = selectedBundle }
+            var body: [String: Any] = ["projectId": projectID, "kind": kind]
+            if kind == "window" { body["bundleId"] = bundle }
             let data = try await client.data("/v1/context/resources", method: "POST", body: body)
             guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any], payload["version"] as? Int == 1,
                   payload["projectId"] as? String == projectID,
                   let resources = payload["resources"] as? [[String: Any]] else { throw AssistantClientError.invalidResponse }
+            guard ticket == contextReadRevision, kind == contextKind, kind != "window" || bundle == selectedBundle else { return }
             contextResources = resources; error = nil
-        } catch { self.error = error.localizedDescription }
+        } catch { if ticket == contextReadRevision { self.error = error.localizedDescription } }
     }
     func grantAndRead(_ resource: [String: Any]) async {
         guard let kind = resource["resourceKind"] as? String, let id = resource["resourceId"] as? String,
               let label = resource["label"] as? String, let target = resource["target"] as? [String: Any] else { return }
+        contextReadRevision += 1; let ticket = contextReadRevision
+        contextResult = ""
         do {
             let operation = kind == "window" ? "inspect_window" : kind == "calendar" ? "read_calendar" : "read_mail"
             let grant = try await client.value(KnowledgeGrant.self, path: "/v1/grants", method: "POST", body: [
@@ -187,6 +235,7 @@ final class KnowledgeWorkspaceModel: ObservableObject {
                 "operations": [operation], "cloudAllowed": cloudAllowed, "expiresAt": NSNull(),
             ])
             guard grant.version == 1, grant.projectId == projectID, grant.resourceId == id else { throw AssistantClientError.invalidResponse }
+            guard ticket == contextReadRevision else { return }
             let formatter = ISO8601DateFormatter()
             var body: [String: Any] = ["projectId": projectID, "grantId": grant.id, "resourceId": id, "purpose": "local", "kind": kind]
             if kind == "window" { body["target"] = target }
@@ -197,10 +246,13 @@ final class KnowledgeWorkspaceModel: ObservableObject {
                 body["request"] = ["action": "list_inbox", "accountId": target["accountId"] ?? "", "since": formatter.string(from: Date().addingTimeInterval(-7 * 86_400)), "limit": 25]
             }
             let result = try await client.data("/v1/context/read", method: "POST", body: body)
+            guard ticket == contextReadRevision else { return }
             let object = try JSONSerialization.jsonObject(with: result)
+            guard let response = object as? [String: Any], response["version"] as? Int == 1,
+                  response["projectId"] as? String == projectID, response["resourceId"] as? String == id else { throw AssistantClientError.invalidResponse }
             contextResult = String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self)
             await refresh()
-        } catch { self.error = error.localizedDescription }
+        } catch { if ticket == contextReadRevision { self.error = error.localizedDescription } }
     }
     private func mimeType(_ url: URL) -> String {
         switch url.pathExtension.lowercased() {
@@ -212,6 +264,7 @@ final class KnowledgeWorkspaceModel: ObservableObject {
     }
 }
 
+@MainActor
 struct KnowledgeWorkspaceView: View {
     @StateObject private var model: KnowledgeWorkspaceModel
     @Environment(\.dismiss) private var dismiss
@@ -234,6 +287,19 @@ struct KnowledgeWorkspaceView: View {
                 TextField("Search this project's evidence", text: $model.query).onSubmit { Task { await model.search() } }
                 Button("Search") { Task { await model.search() } }
             }
+            HStack {
+                Label(model.embeddings?.available == true ? "Semantic lookup runs on this Mac" : "Text lookup ready · semantic lookup unavailable",
+                      systemImage: model.embeddings?.available == true ? "sparkle.magnifyingglass" : "text.magnifyingglass")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(model.indexing ? "Indexing locally…" : "Index next 64 passages") { Task { await model.indexSources() } }
+                    .disabled(model.indexing || model.busy || !AssistantFeatures.semanticRetrieval)
+            }
+            if let retrieval = model.retrieval {
+                Text("\(retrieval.mode == "hybrid" ? "Text + semantic retrieval" : "Text retrieval") · \(retrieval.coverage.indexedPassages) of \(retrieval.coverage.eligiblePassages) passages indexed · up to \(retrieval.diversity.maxPerSource) matches per source")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(Array(retrieval.warnings.enumerated()), id: \.offset) { _, warning in Text(warning).font(.caption).foregroundStyle(.orange) }
+            }
             TabView {
                 if AssistantFeatures.research && (researchPreference || ProcessInfo.processInfo.environment["JARVIS_ENABLE_RESEARCH"] == "1") {
                     ResearchWorkspaceView(projectID: model.projectID, client: model.client, sources: model.sources)
@@ -254,6 +320,7 @@ struct KnowledgeWorkspaceView: View {
                                     Text(match.source.title).font(.headline)
                                     Text(match.passage.locator.page.map { "Page \($0)" } ?? "Lines \(match.passage.locator.lineStart)–\(match.passage.locator.lineEnd)").font(.caption).foregroundStyle(.secondary)
                                     Text(match.passage.text).textSelection(.enabled)
+                                    if let explanation = match.explanation { Text(explanation.summary).font(.caption).foregroundStyle(.secondary) }
                                     Text("Evidence \(match.passage.id)").font(.caption2.monospaced()).foregroundStyle(.secondary)
                                 }.padding(12)
                             }
@@ -297,6 +364,10 @@ struct KnowledgeWorkspaceView: View {
                         Button("Revoke") { Task { await model.revoke(grant) } }.disabled(grant.revokedAt != nil)
                     }
                 }.tabItem { Label("Read grants", systemImage: "lock.shield") }
+                MemoryWorkspaceView(projectID: model.projectID, client: model.client)
+                    .id("memory-" + model.projectID).tabItem { Label("Memory", systemImage: "brain") }
+                ContextInspectorView(projectID: model.projectID, client: model.client)
+                    .id("context-" + model.projectID).tabItem { Label("Context", systemImage: "list.bullet.rectangle") }
                 ScrollView {
                     ArchiveWorkspaceView(projectID: model.projectID, client: model.client)
                         .id(model.projectID).padding(18)

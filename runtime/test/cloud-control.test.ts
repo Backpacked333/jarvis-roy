@@ -1,0 +1,468 @@
+import assert from "node:assert/strict";
+import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createServer, request as httpRequest } from "node:http";
+import { once } from "node:events";
+import { DatabaseSync } from "node:sqlite";
+import test from "node:test";
+import { WebSocket } from "ws";
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
+import { CloudControlPlane, CloudStore, createCloudGateway, verifyRemoteApprovalReceipt, cloudCommandDigest, remoteActionCommand,
+  type CloudOptions, type CloudActor, type CloudCommand, type DeviceReceipt } from "../bridge/cloud/index.ts";
+import type { ReviewableAction } from "../bridge/assistant/index.ts";
+import { cloudReviewJs } from "../bridge/cloud/web.ts";
+import { ObjectiveService, type ChildObservation, type ObjectiveAdapter } from "../bridge/objectives/index.ts";
+import { NativeCloudRuntime } from "../bridge/native-cloud-runtime.ts";
+import { createCloudRuntimeBroker } from "../bridge/cloud-runtime-broker.ts";
+import type { ObjectiveRuntime } from "../bridge/objective-runtime.ts";
+import type { JarvisService } from "../bridge/service.ts";
+import type { ContinuityService } from "../bridge/continuity/index.ts";
+import { createCloudApplication } from "../bridge/cloud-main.ts";
+import { BridgeError } from "../bridge/errors.ts";
+
+const sha = (text: string | Uint8Array) => createHash("sha256").update(text).digest();
+const bootstrap = randomBytes(32).toString("base64url");
+// A software test authenticator builds genuine COSE/CBOR and signs assertions.
+// Production verifies these through @simplewebauthn/server, not an injected verifier.
+function cbor(value: unknown): Buffer {
+  const size = (major: number, length: number) => {
+    if (length < 24) return Buffer.from([(major << 5) | length]);
+    if (length < 256) return Buffer.from([(major << 5) | 24, length]);
+    const result = Buffer.alloc(3); result[0] = (major << 5) | 25; result.writeUInt16BE(length, 1); return result;
+  };
+  if (typeof value === "number") return size(value < 0 ? 1 : 0, value < 0 ? -value - 1 : value);
+  if (typeof value === "string") { const bytes = Buffer.from(value); return Buffer.concat([size(3, bytes.length), bytes]); }
+  if (value instanceof Uint8Array) return Buffer.concat([size(2, value.length), value]);
+  const entries = value instanceof Map ? [...value.entries()] : Object.entries(value as Record<string, unknown>);
+  return Buffer.concat([size(5, entries.length), ...entries.flatMap(([key, entry]) => [cbor(key), cbor(entry)])]);
+}
+class TestAuthenticator {
+  private readonly pair = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  private readonly bytes = randomBytes(32);
+  readonly id = this.bytes.toString("base64url");
+  private counter = 0;
+  registration(challenge: string, origin: string, flags = 0x45): RegistrationResponseJSON {
+    const key = this.pair.publicKey.export({ format: "jwk" }), rpId = new URL(origin).hostname;
+    const cose = cbor(new Map<number, unknown>([[1, 2], [3, -7], [-1, 1], [-2, Buffer.from(key.x!, "base64url")], [-3, Buffer.from(key.y!, "base64url")]]));
+    const length = Buffer.alloc(2); length.writeUInt16BE(this.bytes.length);
+    const authData = Buffer.concat([sha(rpId), Buffer.from([flags]), Buffer.alloc(4), Buffer.alloc(16), length, this.bytes, cose]);
+    return { id: this.id, rawId: this.id, type: "public-key", clientExtensionResults: {}, response: {
+      clientDataJSON: Buffer.from(JSON.stringify({ type: "webauthn.create", challenge, origin, crossOrigin: false })).toString("base64url"),
+      attestationObject: cbor({ fmt: "none", attStmt: {}, authData }).toString("base64url"), transports: ["internal"],
+    } };
+  }
+  assertion(challenge: string, origin: string, options: { flags?: number; rpId?: string } = {}): AuthenticationResponseJSON {
+    const counter = Buffer.alloc(4); counter.writeUInt32BE(++this.counter);
+    const authenticatorData = Buffer.concat([sha(options.rpId ?? new URL(origin).hostname), Buffer.from([options.flags ?? 0x05]), counter]);
+    const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.get", challenge, origin, crossOrigin: false }));
+    return { id: this.id, rawId: this.id, type: "public-key", clientExtensionResults: {}, response: {
+      clientDataJSON: clientDataJSON.toString("base64url"), authenticatorData: authenticatorData.toString("base64url"),
+      signature: sign("sha256", Buffer.concat([authenticatorData, sha(clientDataJSON)]), this.pair.privateKey).toString("base64url"),
+    } };
+  }
+}
+async function fixture(options: Partial<CloudOptions> & { noDirectAuthority?: boolean } = {}) {
+  const directory = await mkdtemp(join(tmpdir(), "jarvis-cloud-"));
+  const origin = options.publicOrigin ?? "https://jarvis.example";
+  let clock = Date.parse("2026-11-09T12:00:00.000Z"), executions = 0;
+  let action: ReviewableAction = { taskId: "task-1", interactionId: "approval-1", revision: 1, optionId: "approve",
+    toolName: "save_note", exactArguments: '{"title":"Experiment","content":"Trial A"}',
+    reviewText: 'Save note: {"title":"Experiment","content":"Trial A"}', voiceAllowed: true };
+  const config: CloudOptions = { dataDirectory: directory, publicOrigin: origin, bootstrapToken: bootstrap, now: () => new Date(clock),
+    ...(options.noDirectAuthority ? {} : { async readAction() { return structuredClone(action); }, async executeAction() { executions++; return { outcome: "completed" as const }; } }), ...options };
+  let control = await CloudControlPlane.open(config);
+  const start = await control.startPairing({ deviceId: "mac-1", label: "Personal Mac" }, bootstrap);
+  const pair = await control.completePairing({ pairingId: start.pairingId, deviceId: "mac-1" }, start.pairingToken);
+  const device = control.authenticateDevice(pair.deviceToken), frames: unknown[] = [];
+  let welcome = await control.connectDevice(device, frame => frames.push(frame), () => {});
+  const authenticator = new TestAuthenticator();
+  const enrollment = await control.startEnrollment(device), registration = await control.registrationOptions(enrollment.enrollmentToken);
+  await control.finishRegistration(enrollment.enrollmentToken, registration.challengeId, authenticator.registration(registration.options.challenge, origin));
+  async function login() { const challenge = await control.authenticationOptions(); const result = await control.finishAuthentication(challenge.challengeId, authenticator.assertion(challenge.options.challenge, origin)); return { token: result.sessionToken, actor: control.authenticateOwner(result.sessionToken) }; }
+  let session = await login();
+  return { directory, config, origin, pair, device, frames, authenticator, get control() { return control; }, get welcome() { return welcome; }, get owner() { return session.actor; }, get ownerToken() { return session.token; },
+    get action() { return action; }, set action(value: ReviewableAction) { action = value; }, executions: () => executions, advance(ms: number) { clock += ms; },
+    async propose() { return control.createActionProposal({ projectId: "project-1", deviceId: "mac-1", ref: { taskId: action.taskId, interactionId: action.interactionId, revision: action.revision, optionId: action.optionId } }); },
+    async reconnect() { welcome = await control.connectDevice(device, frame => frames.push(frame), () => {}); },
+    async restart() { await control.close(); control = await CloudControlPlane.open(config); welcome = await control.connectDevice(control.authenticateDevice(pair.deviceToken), frame => frames.push(frame), () => {}); session = await login(); },
+    async cleanup() { await control.close(); await rm(directory, { recursive: true, force: true }); },
+  };
+}
+
+test("real passkey verification binds origin, RP, user verification, exact action and one-use receipt", async () => {
+  const f = await fixture();
+  try {
+    const proposal = await f.propose(), approval = await f.control.approvalOptions(proposal.id, f.owner);
+    await assert.rejects(f.control.finishApproval(proposal.id, approval.challengeId, f.authenticator.assertion(approval.options.challenge, "https://evil.example"), f.owner));
+    await assert.rejects(f.control.finishApproval(proposal.id, approval.challengeId, f.authenticator.assertion(approval.options.challenge, f.origin, { rpId: "evil.example" }), f.owner));
+    await assert.rejects(f.control.finishApproval(proposal.id, approval.challengeId, f.authenticator.assertion(approval.options.challenge, f.origin, { flags: 0x01 }), f.owner));
+    assert.equal(f.executions(), 0);
+    const response = f.authenticator.assertion(approval.options.challenge, f.origin);
+    const result = await f.control.finishApproval(proposal.id, approval.challengeId, response, f.owner);
+    assert.equal(result.status, "completed"); assert.equal(f.executions(), 1);
+    await assert.rejects(f.control.finishApproval(proposal.id, approval.challengeId, response, f.owner), /stale|consumed/);
+    await assert.rejects(f.propose(), /already submitted/); assert.equal(f.executions(), 1);
+  } finally { await f.cleanup(); }
+});
+
+test("passkey approval rejects changed actions, expired reviews and ownership changes", async t => {
+  for (const mode of ["changed", "expired", "reconnected", "wrong-binding"] as const) await t.test(mode, async () => {
+    const f = await fixture();
+    try {
+      const proposal = await f.propose(), approval = await f.control.approvalOptions(proposal.id, f.owner);
+      if (mode === "changed") f.action = { ...f.action, revision: 2, exactArguments: '{"title":"Changed"}' };
+      if (mode === "expired") f.advance(120001);
+      if (mode === "reconnected") await f.reconnect();
+      const id = mode === "wrong-binding" ? randomUUID() : proposal.id;
+      await assert.rejects(f.control.finishApproval(id, approval.challengeId, f.authenticator.assertion(approval.options.challenge, f.origin), f.owner));
+      assert.equal(f.executions(), 0);
+    } finally { await f.cleanup(); }
+  });
+});
+
+test("native device offers yield signed commands, not completed effects; receipts and reconciliation are fenced", async () => {
+  const f = await fixture({ noDirectAuthority: true });
+  try {
+    const proposal = await f.control.offerAction(f.device, { projectId: "project-1", generation: f.welcome.generation, serverEpoch: f.welcome.serverEpoch, action: f.action });
+    const approval = await f.control.approvalOptions(proposal.id, f.owner);
+    assert.equal((await f.control.finishApproval(proposal.id, approval.challengeId, f.authenticator.assertion(approval.options.challenge, f.origin), f.owner)).status, "executing");
+    const command = f.frames.find(frame => (frame as CloudCommand).type === "command") as CloudCommand;
+    assert.equal(command.payload.kind, "action.execute"); assert.equal(command.digest, cloudCommandDigest(command));
+    if (command.payload.kind !== "action.execute") throw new Error("Wrong command");
+    const receipt = command.payload.receipt;
+    assert.equal(verifyRemoteApprovalReceipt(receipt, f.pair.receiptPublicKey, { deviceId: "mac-1", deviceGeneration: f.welcome.generation, serverEpoch: f.welcome.serverEpoch, action: f.action, now: new Date("2026-11-09T12:00:00Z") }).id, receipt.id);
+    assert.throws(() => verifyRemoteApprovalReceipt({ ...receipt, projectId: "other" }, f.pair.receiptPublicKey, { deviceId: "mac-1", deviceGeneration: f.welcome.generation, serverEpoch: f.welcome.serverEpoch, action: f.action }), /invalid/);
+    const result: DeviceReceipt = { version: 1, type: "receipt", id: randomUUID(), commandId: command.id, deviceId: "mac-1", generation: command.generation,
+      serverEpoch: command.serverEpoch, commandDigest: command.digest, status: "unknown", code: "unknown" };
+    await f.control.receiveDeviceFrame(f.device, result);
+    assert.equal(f.control.proposal(proposal.id, f.owner).status, "unknown");
+    const duplicate = await f.control.receiveDeviceFrame(f.device, result);
+    assert.ok("duplicate" in duplicate); assert.equal(duplicate.duplicate, true);
+    await f.reconnect(); await assert.rejects(f.control.receiveDeviceFrame(f.device, result), /generation/);
+    await f.control.receiveDeviceFrame(f.device, { ...result, type: "reconcile", id: randomUUID(), generation: f.welcome.generation, serverEpoch: f.welcome.serverEpoch,
+      originalGeneration: command.generation, originalServerEpoch: command.serverEpoch, status: "completed", code: "ok" });
+    assert.equal(f.control.proposal(proposal.id, f.owner).status, "completed");
+    await assert.rejects(f.control.receiveDeviceFrame(f.device, { ...result, type: "reconcile", id: randomUUID(), generation: f.welcome.generation, serverEpoch: f.welcome.serverEpoch,
+      originalGeneration: command.generation, originalServerEpoch: command.serverEpoch, status: "failed", code: "rejected" }), /replay|overwritten/);
+  } finally { await f.cleanup(); }
+});
+
+test("failed or interrupted effects never automatically execute again after restart", async () => {
+  let calls = 0; const f = await fixture({ async executeAction() { calls++; throw new Error("network outcome lost"); } });
+  try {
+    const proposal = await f.propose(), approval = await f.control.approvalOptions(proposal.id, f.owner);
+    assert.equal((await f.control.finishApproval(proposal.id, approval.challengeId, f.authenticator.assertion(approval.options.challenge, f.origin), f.owner)).status, "unknown");
+    const previousOwnerToken = f.ownerToken; await f.restart();
+    assert.throws(() => f.control.authenticateOwner(previousOwnerToken), /sign-in/);
+    await assert.rejects(f.propose(), /already submitted/); assert.equal(calls, 1);
+    assert.equal(f.control.proposal(proposal.id, f.owner).status, "unknown");
+  } finally { await f.cleanup(); }
+});
+
+test("cloud remote reviews reconcile only exact durable action receipts after expiry and restart, without replay", async () => {
+  for (const terminal of ["completed", "failed"] as const) {
+    let f!: Awaited<ReturnType<typeof fixture>>, native!: NativeCloudRuntime;
+    let executions = 0, ordinaryTaskCompleted = false, exactOutcome: "completed" | "failed" | "unknown" = "unknown";
+    let broker!: ReturnType<typeof createCloudRuntimeBroker>;
+    f = await fixture({ localExecutorId: "cloud-runtime",
+      async executeAction(action, receipt) {
+        await native.pair({ version: 1, profileId: "cloud-runtime", origin: f.origin, ...f.control.runtimeExecutorBinding() });
+        const command = remoteActionCommand(action, receipt);
+        const result = await native.execute({ version: 1, profileId: "cloud-runtime", command });
+        return { outcome: result.status, commandId: command.id };
+      },
+      readActionResult: command => broker({ version: 1, operation: "action_result", payload: { version: 1, profileId: "cloud-runtime",
+        commandId: command.id, commandDigest: command.digest, originalGeneration: command.generation, originalServerEpoch: command.serverEpoch } }) as ReturnType<NonNullable<CloudOptions["readActionResult"]>>,
+    });
+    const nativeOptions = { dataDirectory: f.directory, enabled: true, now: () => f.config.now!().getTime(),
+      authority: { async readAction() { return f.action; }, async executeAction() { executions++; } },
+      async projectForAction() { return "project-1"; },
+      async observeAction(_task: string, _room: boolean, _option: string, reference: { interactionId: string; revision: number }) {
+        assert.equal(reference.interactionId, "approval-1"); assert.equal(reference.revision, 1);
+        void ordinaryTaskCompleted; // Generic task completion supplies no effect receipt.
+        return exactOutcome;
+      },
+    };
+    native = await NativeCloudRuntime.open(nativeOptions);
+    const bindBroker = () => { broker = createCloudRuntimeBroker({ nativeCloud: native, service: {} as JarvisService,
+      objectives: {} as ObjectiveRuntime, continuity: {} as ContinuityService,
+      authority: { async readAction() { throw new Error("Result observation cannot re-read a replacement action"); }, async executeAction() { throw new Error("Reconciliation cannot execute"); } } }); };
+    bindBroker();
+    try {
+      const proposal = await f.control.createActionProposal({ projectId: "project-1", deviceId: "cloud-runtime",
+        ref: { taskId: f.action.taskId, interactionId: f.action.interactionId, revision: f.action.revision, optionId: f.action.optionId } });
+      const challenge = await f.control.approvalOptions(proposal.id, f.owner);
+      const submitted = await f.control.finishApproval(proposal.id, challenge.challengeId, f.authenticator.assertion(challenge.options.challenge, f.origin), f.owner);
+      assert.equal(submitted.status, "unknown"); assert.equal(submitted.commandId, submitted.receiptId); assert.equal(executions, 1);
+      ordinaryTaskCompleted = true;
+      assert.deepEqual(await f.control.reconcileLocalExecutions(f.owner), { checked: 1, updated: 0 });
+      assert.equal(f.control.proposal(proposal.id, f.owner).status, "unknown");
+      f.advance(300_000); await f.restart(); await native.close(); native = await NativeCloudRuntime.open(nativeOptions); bindBroker();
+      f.action = { ...f.action, revision: 2, exactArguments: "{}" };
+      await f.control.stopAll(); assert.deepEqual(f.control.admission(), { version: 1, ready: false, stopped: true, reason: "stopped" });
+      exactOutcome = terminal;
+      assert.deepEqual(await f.control.reconcileLocalExecutions(f.owner, proposal.id), { checked: 1, updated: 1 });
+      assert.equal(f.control.proposal(proposal.id, f.owner).status, terminal); assert.equal(executions, 1);
+      assert.deepEqual(await f.control.reconcileLocalExecutions(f.owner), { checked: 0, updated: 0 });
+      assert.equal(executions, 1);
+    } finally { await native.close(); await f.cleanup(); }
+  }
+});
+
+test("an approved action awaiting executor binding cannot revive after an unconfirmed Stop and Resume", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "jarvis-cloud-approval-stop-")), origin = "https://jarvis.example";
+  let bound!: () => void, release!: () => void, executions = 0;
+  const binding = new Promise<void>(resolve => { bound = resolve; }), blocked = new Promise<void>(resolve => { release = resolve; });
+  const action: ReviewableAction = { taskId: "task", interactionId: "approval", revision: 1, optionId: "approve", toolName: "save_note",
+    exactArguments: "{}", reviewText: "Save the reviewed note", voiceAllowed: true };
+  const app = await createCloudApplication({ dataDirectory: directory, env: { JARVIS_ENABLE_CLOUD: "1", JARVIS_RUNTIME_PROFILE: "cloud", JARVIS_CLOUD_ORIGIN: origin,
+    JARVIS_CLOUD_BOOTSTRAP_TOKEN: bootstrap, JARVIS_LOCAL_TOKEN: randomBytes(32).toString("base64url"), JARVIS_CLOUD_RUNTIME_TOKEN: randomBytes(32).toString("base64url") },
+    rpc: async operation => {
+      if (operation === "read_action") return action;
+      if (operation === "bind_executor") { bound(); await blocked; return { version: 1 }; }
+      if (operation === "execute_action") { executions++; return { version: 1, status: "completed", code: "ok" }; }
+      if (operation === "stop") throw new BridgeError("Fixture bridge Stop could not be confirmed", 503);
+      if (operation === "resume") return { version: 1, resumed: true };
+      throw new Error("Unexpected operation");
+    } });
+  const server = createServer(app.handler); server.listen(0, "127.0.0.1"); await once(server, "listening");
+  try {
+    const start = await app.control.startPairing({ deviceId: "mac", label: "Mac" }, bootstrap);
+    const paired = await app.control.completePairing({ pairingId: start.pairingId, deviceId: "mac" }, start.pairingToken);
+    const device = app.control.authenticateDevice(paired.deviceToken), auth = new TestAuthenticator();
+    const enrollment = await app.control.startEnrollment(device), registration = await app.control.registrationOptions(enrollment.enrollmentToken);
+    await app.control.finishRegistration(enrollment.enrollmentToken, registration.challengeId, auth.registration(registration.options.challenge, origin));
+    const challenge = await app.control.authenticationOptions();
+    const login = await app.control.finishAuthentication(challenge.challengeId, auth.assertion(challenge.options.challenge, origin));
+    const owner = app.control.authenticateOwner(login.sessionToken);
+    const proposal = await app.control.createActionProposal({ projectId: "project", deviceId: "cloud-runtime",
+      ref: { taskId: "task", interactionId: "approval", revision: 1, optionId: "approve" } });
+    const approval = await app.control.approvalOptions(proposal.id, owner);
+    const pending = app.control.finishApproval(proposal.id, approval.challengeId, auth.assertion(approval.options.challenge, origin), owner);
+    await binding;
+    const lifecycle = (name: "stop" | "resume") => new Promise<number>((resolve, reject) => {
+      const request = httpRequest({ hostname: "127.0.0.1", port: (server.address() as { port: number }).port, method: "POST", path: `/v1/cloud/${name}`,
+        headers: { host: "jarvis.example", authorization: `Bearer ${paired.deviceToken}` } }, response => { response.resume(); response.on("end", () => resolve(response.statusCode!)); });
+      request.on("error", reject); request.end();
+    });
+    assert.equal(await lifecycle("stop"), 503); assert.equal(app.control.admission().stopped, true);
+    assert.equal(await lifecycle("resume"), 200); assert.equal(app.control.admission().ready, true);
+    release(); assert.equal((await pending).status, "unknown"); assert.equal(executions, 0);
+  } finally { release(); await app.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("durability failure before authorization prevents execution and fences further work", async () => {
+  const f = await fixture(), save = CloudStore.prototype.save;
+  try {
+    const proposal = await f.propose(), approval = await f.control.approvalOptions(proposal.id, f.owner);
+    CloudStore.prototype.save = function(state) { if (state.proposals.some(proposal => proposal.status === "executing")) throw new Error("injected disk failure"); return save.call(this, state); };
+    await assert.rejects(f.control.finishApproval(proposal.id, approval.challengeId, f.authenticator.assertion(approval.options.challenge, f.origin), f.owner), /injected/);
+    assert.equal(f.executions(), 0); assert.equal(f.control.health().status, "unavailable");
+    await assert.rejects(f.propose(), /unavailable/);
+    CloudStore.prototype.save = save; await f.restart();
+    assert.equal(f.control.proposal(proposal.id, f.owner).status, "invalidated"); assert.equal(f.executions(), 0);
+  } finally { CloudStore.prototype.save = save; await f.cleanup(); }
+});
+
+test("retained immutable snapshots enforce selection, processor, device, expiry and separate disclosure policy", async () => {
+  const f = await fixture();
+  try {
+    const text = "Selected immutable experiment observation", selection = { kind: "source" as const, id: "source-version-1", revision: 1, sha256: sha(text).toString("hex") };
+    const grant = await f.control.createRetentionGrant({ deviceId: "mac-1", projectId: "project-1", selected: [selection], expiresAt: "2026-11-10T12:00:00Z", maxBytes: 5000, processors: ["research"] }, f.device);
+    const request = { requestId: "sync-1", grantId: grant.id, grantRevision: grant.revision, snapshots: [{ ...selection, text }] };
+    assert.equal((await f.control.syncSnapshots(request, f.device)).duplicate, false);
+    assert.equal((await f.control.syncSnapshots(request, f.device)).duplicate, true);
+    await assert.rejects(f.control.syncSnapshots({ ...request, snapshots: [{ ...selection, text: "changed" }] }, f.device), /reused/);
+    await assert.rejects(f.control.syncSnapshots({ ...request, requestId: "sync-2", snapshots: [{ ...selection, revision: 2, text }] }, f.device), /exact selected/);
+    assert.equal(f.control.readSnapshots("other-project", "research").length, 0); assert.equal(f.control.readSnapshots("project-1", "other-processor").length, 0);
+    const retained = f.control.readSnapshots("project-1", "research")[0]; assert.equal(retained.text, text); assert.equal(retained.grantRevision, 1);
+    assert.equal(f.control.authorizeSnapshot(retained, "project-1", "research"), true);
+    const disclosure = { projectId: "project-1", channel: "telegram" as const, destinationId: "123456", proactive: true };
+    assert.equal(f.control.authorizeDisclosure(disclosure), false);
+    const policy = await f.control.createChannelPolicy({ ...disclosure, allowDetails: true, allowProactive: false, expiresAt: "2026-11-10T12:00:00Z", proactive: undefined }, f.owner).catch(() => undefined);
+    assert.equal(policy, undefined, "Unknown policy fields must be rejected");
+    const allowed = await f.control.createChannelPolicy({ projectId: "project-1", channel: "telegram", destinationId: "123456", allowDetails: true, allowProactive: false, expiresAt: "2026-11-10T12:00:00Z" }, f.owner);
+    assert.equal(f.control.authorizeDisclosure({ ...disclosure, proactive: false }), true); assert.equal(f.control.authorizeDisclosure(disclosure), false);
+    assert.equal(f.control.authorizeDisclosure({ ...disclosure, destinationId: "999", proactive: false }), false);
+    await f.control.revokeChannelPolicy(allowed.id, f.owner); assert.equal(f.control.authorizeDisclosure({ ...disclosure, proactive: false }), false);
+    await f.control.revokeRetentionGrant(grant.id, 1, f.device); assert.equal(f.control.readSnapshots("project-1", "research").length, 0);
+    assert.equal(f.control.authorizeSnapshot(retained, "project-1", "research"), false);
+    await assert.rejects(f.control.syncSnapshots(request, f.device), /unavailable|expired/);
+    await f.restart(); assert.equal(f.control.readSnapshots("project-1", "research").length, 0);
+  } finally { await f.cleanup(); }
+});
+
+test("cloud retention expires without further disclosure and housekeeping removes stored content", async () => {
+  const f = await fixture();
+  try {
+    const text = "Unique retained payload 7e3ce375", selection = { kind: "memory", id: "memory-1", revision: 1, sha256: sha(text).toString("hex") };
+    const grant = await f.control.createRetentionGrant({ deviceId: "mac-1", projectId: "project-1", selected: [selection], expiresAt: "2026-11-09T12:00:01Z", maxBytes: 1000, processors: ["research"] }, f.device);
+    await f.control.syncSnapshots({ requestId: "one", grantId: grant.id, grantRevision: 1, snapshots: [{ ...selection, text }] }, f.device);
+    f.advance(1001); assert.equal(f.control.readSnapshots("project-1", "research").length, 0); await f.control.purgeExpired();
+    await f.control.close(); assert.equal((await readFile(join(f.directory, "cloud", "control.sqlite"))).includes(Buffer.from(text)), false);
+  } finally { await f.cleanup(); }
+});
+
+test("call passkey verification is bound to the exact still-active CallSid", async () => {
+  let active = true; const callSid = `CA${"a".repeat(32)}`, authorized: string[] = [];
+  const f = await fixture({ async readCall(id) { return active && id === callSid ? { callSid, projectId: "project-1", status: "in_progress" } : null; },
+    async authorizeCall(id, proof) { assert.ok(proof.credentialId); assert.ok(proof.ownerSessionId); authorized.push(id); } });
+  try {
+    const challenge = await f.control.callOptions(callSid, f.owner);
+    await assert.rejects(f.control.finishCall(`CA${"b".repeat(32)}`, challenge.challengeId, f.authenticator.assertion(challenge.options.challenge, f.origin), f.owner), /identity/);
+    active = false; await assert.rejects(f.control.finishCall(callSid, challenge.challengeId, f.authenticator.assertion(challenge.options.challenge, f.origin), f.owner), /ended/);
+    assert.equal(authorized.length, 0); active = true;
+    await f.control.finishCall(callSid, challenge.challengeId, f.authenticator.assertion(challenge.options.challenge, f.origin), f.owner);
+    assert.deepEqual(authorized, [callSid]);
+    await assert.rejects(f.control.finishCall(callSid, challenge.challengeId, f.authenticator.assertion(challenge.options.challenge, f.origin), f.owner), /consumed/);
+  } finally { await f.cleanup(); }
+});
+
+test("cloud gateway exposes only narrow authenticated routes and actual outbound-device websocket", async () => {
+  const server = createServer(); server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const address = server.address(); if (!address || typeof address === "string") throw new Error("No listener");
+  const origin = `http://127.0.0.1:${address.port}`;
+  let observed = false, handoffs = 0;
+  const f = await fixture({ publicOrigin: origin, allowLoopbackForTests: true,
+    async executeAction() { handoffs++; return { outcome: "unknown" }; },
+    async readActionResult(command) { assert.equal(command.payload.kind, "action.execute");
+      return observed ? { version: 1, status: "completed", code: "ok" } : { version: 1, status: "unknown", code: "unknown" }; },
+  });
+  const gateway = createCloudGateway(f.control); server.on("request", gateway.handler); server.on("upgrade", gateway.upgrade);
+  const request = (path: string, options: RequestInit = {}) => fetch(origin + path, options);
+  let ws: WebSocket | undefined;
+  try {
+    assert.equal((await request("/v1/cloud/health")).status, 200);
+    assert.equal((await request("/v1/tasks")).status, 404);
+    assert.equal((await request("/v1/cloud/overview")).status, 401);
+    assert.equal((await request("/v1/cloud/webauthn/authentication/options", { method: "POST", headers: { origin: "https://evil.example", "content-type": "application/json" }, body: "{}" })).status, 403);
+    const ownerHeaders = { cookie: `jarvis_cloud_test=${f.ownerToken}`, origin, "content-type": "application/json" };
+    assert.equal((await request("/v1/cloud/overview", { headers: ownerHeaders })).status, 200);
+    assert.equal((await request("/v1/cloud/enrollment/start", { method: "POST", headers: { authorization: "Bearer local-native-token", "content-type": "application/json" }, body: "{}" })).status, 401);
+    const page = await request("/v1/cloud/review"); assert.equal(page.status, 200); assert.match(page.headers.get("content-security-policy")!, /frame-ancestors 'none'/);
+    assert.doesNotMatch(await page.text(), /deviceToken|signingPrivateKey/); new Function(cloudReviewJs);
+    ws = new WebSocket(`ws://127.0.0.1:${address.port}/v1/cloud/device/connect?deviceId=mac-1`, { headers: { authorization: `Bearer ${f.pair.deviceToken}` } });
+    const welcomePromise = once(ws, "message"); await once(ws, "open");
+    const [welcomeBytes] = await welcomePromise, welcome = JSON.parse(String(welcomeBytes)); assert.equal(welcome.type, "device.welcome");
+    const ack = once(ws, "message"); ws.send(JSON.stringify({ version: 1, type: "heartbeat", deviceId: "mac-1", generation: welcome.generation, serverEpoch: welcome.serverEpoch }));
+    assert.equal(JSON.parse(String((await ack)[0])).type, "heartbeat.ack");
+    // Exercise the actual browser-facing HTTP ceremony with real signed data.
+    const enrollmentResponse = await request("/v1/cloud/enrollment/start", { method: "POST", headers: { authorization: `Bearer ${f.pair.deviceToken}` } });
+    const enrollment = await enrollmentResponse.json() as { enrollmentToken: string };
+    const registrationHeaders = { origin, "content-type": "application/json", "x-jarvis-enrollment-token": enrollment.enrollmentToken };
+    const registration = await (await request("/v1/cloud/webauthn/registration/options", { method: "POST", headers: registrationHeaders, body: "{}" })).json() as { challengeId: string; options: { challenge: string } };
+    const mobile = new TestAuthenticator();
+    assert.equal((await request("/v1/cloud/webauthn/registration/verify", { method: "POST", headers: registrationHeaders, body: JSON.stringify({ challengeId: registration.challengeId, response: mobile.registration(registration.options.challenge, origin) }) })).status, 200);
+    const browserHeaders = { origin, "content-type": "application/json" };
+    const login = await (await request("/v1/cloud/webauthn/authentication/options", { method: "POST", headers: browserHeaders, body: "{}" })).json() as { challengeId: string; options: { challenge: string } };
+    const signedIn = await request("/v1/cloud/webauthn/authentication/verify", { method: "POST", headers: browserHeaders, body: JSON.stringify({ challengeId: login.challengeId, response: mobile.assertion(login.options.challenge, origin) }) });
+    assert.equal(signedIn.status, 200); const cookie = signedIn.headers.get("set-cookie")!.split(";")[0];
+    const proposal = await f.propose();
+    assert.equal((await request(`/v1/cloud/actions/${proposal.id}`)).status, 401);
+    assert.equal((await request(`/v1/cloud/actions/${proposal.id}`, { headers: { cookie } })).status, 200);
+    const step = await (await request(`/v1/cloud/actions/${proposal.id}/options`, { method: "POST", headers: { ...browserHeaders, cookie }, body: "{}" })).json() as { challengeId: string; options: { challenge: string } };
+    const approved = await request(`/v1/cloud/actions/${proposal.id}/verify`, { method: "POST", headers: { ...browserHeaders, cookie }, body: JSON.stringify({ challengeId: step.challengeId, response: mobile.assertion(step.options.challenge, origin) }) });
+    assert.equal(approved.status, 200); assert.equal((await approved.json() as { status: string }).status, "unknown"); assert.equal(handoffs, 1);
+    assert.equal((await (await request(`/v1/cloud/actions/${proposal.id}`, { headers: { cookie } })).json() as { status: string }).status, "unknown");
+    observed = true;
+    const reconciled = await (await request("/v1/cloud/overview", { headers: { cookie } })).json() as { proposals: { id: string; status: string }[] };
+    assert.equal(reconciled.proposals.find(item => item.id === proposal.id)?.status, "completed");
+    assert.equal((await (await request(`/v1/cloud/actions/${proposal.id}`, { headers: { cookie } })).json() as { status: string }).status, "completed"); assert.equal(handoffs, 1);
+    const rejection = new WebSocket(`ws://127.0.0.1:${address.port}/v1/cloud/device/connect?deviceId=mac-1`, { headers: { authorization: "Bearer bad-token" } });
+    await new Promise<void>(resolve => { rejection.on("error", () => resolve()); });
+  } finally { ws?.terminate(); await gateway.close(); await new Promise<void>(resolve => server.close(() => resolve())); await f.cleanup(); }
+});
+
+test("Stop invalidates remote challenges and channel disclosure until explicit resume", async () => {
+  let callsRevoked = 0; const f = await fixture({ async revokeCallAuthorizations() { callsRevoked++; } });
+  try {
+    const proposal = await f.propose(), challenge = await f.control.approvalOptions(proposal.id, f.owner);
+    const disclosure = { projectId: "project-1", channel: "phone" as const, destinationId: "+12025550123", proactive: false };
+    await f.control.createChannelPolicy({ projectId: disclosure.projectId, channel: disclosure.channel, destinationId: disclosure.destinationId,
+      allowDetails: true, allowProactive: true, expiresAt: "2026-11-10T12:00:00Z" }, f.owner);
+    assert.equal(f.control.authorizeDisclosure(disclosure), true);
+    assert.equal((await f.control.stopAll()).callAuthorizationRevoked, true); assert.equal(callsRevoked, 1);
+    assert.equal(f.control.authorizeDisclosure(disclosure), false);
+    await assert.rejects(f.control.finishApproval(proposal.id, challenge.challengeId, f.authenticator.assertion(challenge.options.challenge, f.origin), f.owner), /stale|consumed/);
+    await assert.rejects(f.propose(), /stopped/); await f.restart(); await assert.rejects(f.propose(), /stopped/);
+    await f.control.resume(f.owner); assert.equal(f.control.authorizeDisclosure(disclosure), true);
+    assert.equal(f.control.proposal(proposal.id, f.owner).status, "invalidated"); assert.equal(f.executions(), 0);
+  } finally { await f.cleanup(); }
+});
+
+test("authenticated backup restore preserves grants and budget while fencing pending approvals and uncertain work", async () => {
+  const f = await fixture({ noDirectAuthority: true });
+  const recoveryDirectory = await mkdtemp(join(tmpdir(), "jarvis-cloud-restore-"));
+  let dispatches = 0;
+  const child: ChildObservation = { ref: { authority: "research", projectId: "project-1", runId: "research-restored-1" },
+    status: "running", accounting: "unknown", estimatedUsd: null, cancelConfirmed: false, detail: null };
+  const adapter: ObjectiveAdapter = { async dispatch() { dispatches++; return structuredClone(child); }, async inspect() { return structuredClone(child); },
+    async cancel() { return { ...structuredClone(child), status: "unknown" }; } };
+  const objectiveOptions = { dataDirectory: f.directory, enabled: true, adapters: { research: adapter }, now: () => new Date("2026-11-09T12:00:00Z") };
+  let objectives = await ObjectiveService.open(objectiveOptions), restoredControl: CloudControlPlane | undefined;
+  try {
+    const objective = await objectives.create({ version: 1, requestId: "restore-objective", projectId: "project-1", title: "Restore evidence review", goal: "Inspect existing evidence",
+      steps: [{ id: "review", authority: "research", prompt: "Review selected sources", estimatedUsd: 1, maxWallTimeMs: 60000 }] });
+    await objectives.dispatch(); await objectives.drain(); assert.equal(dispatches, 1);
+    await objectives.reserve({ requestId: "external-reservation", projectId: "project-1", authority: "fixture-provider", estimatedUsd: 2 });
+    const committed = objectives.readiness().monthlyCommittedUsd; assert.equal(committed, 3);
+    const text = "Explicitly retained source survives a verified restore", selected = { kind: "source", id: "retained-version", revision: 1, sha256: sha(text).toString("hex") };
+    const grant = await f.control.createRetentionGrant({ deviceId: "mac-1", projectId: "project-1", selected: [selected], processors: ["context"], maxBytes: 1000, expiresAt: "2026-11-10T12:00:00Z" }, f.device);
+    await f.control.syncSnapshots({ requestId: "retained-sync", grantId: grant.id, grantRevision: grant.revision, snapshots: [{ ...selected, text }] }, f.device);
+    const revoked = await f.control.createRetentionGrant({ deviceId: "mac-1", projectId: "project-1", selected: [{ ...selected, id: "revoked-version" }], processors: ["context"], maxBytes: 1000, expiresAt: "2026-11-10T12:00:00Z" }, f.device);
+    await f.control.syncSnapshots({ requestId: "revoked-sync", grantId: revoked.id, grantRevision: revoked.revision, snapshots: [{ ...selected, id: "revoked-version", text }] }, f.device);
+    await f.control.revokeRetentionGrant(revoked.id, revoked.revision, f.device);
+    const executing = await f.control.offerAction(f.device, { projectId: "project-1", generation: f.welcome.generation, serverEpoch: f.welcome.serverEpoch, action: f.action });
+    const accepted = await f.control.approvalOptions(executing.id, f.owner);
+    await f.control.finishApproval(executing.id, accepted.challengeId, f.authenticator.assertion(accepted.options.challenge, f.origin), f.owner);
+    const pending = await f.control.offerAction(f.device, { projectId: "project-1", generation: f.welcome.generation, serverEpoch: f.welcome.serverEpoch, action: { ...f.action, taskId: "task-pending" } });
+    const pendingChallenge = await f.control.approvalOptions(pending.id, f.owner), oldToken = f.ownerToken;
+    const previousCommands = f.frames.filter(frame => (frame as CloudCommand).type === "command").length; assert.equal(previousCommands, 1);
+    await objectives.close(); await f.control.close();
+    const modulePath = new URL("../../scripts/cloud-backup.mjs", import.meta.url).href;
+    const { createEncryptedBackup, restoreEncryptedBackup } = await import(modulePath);
+    const archive = join(recoveryDirectory, "snapshot.jvb"), restoredDirectory = join(recoveryDirectory, "restored"), key = randomBytes(32);
+    const backup = await createEncryptedBackup({ source: f.directory, output: archive, key }); assert.equal(backup.encrypted, true);
+    assert.equal((await readFile(archive)).includes(Buffer.from(text)), false);
+    const restored = await restoreEncryptedBackup({ archive, destination: restoredDirectory, key });
+    assert.equal(restored.authenticated, true); assert.equal(restored.activated, false);
+    restoredControl = await CloudControlPlane.open({ ...f.config, dataDirectory: restoredDirectory });
+    objectives = await ObjectiveService.open({ ...objectiveOptions, dataDirectory: restoredDirectory });
+    assert.equal(objectives.get(objective.id, "project-1").status, "interrupted");
+    assert.equal(objectives.get(objective.id, "project-1").attempts[0].status, "unknown");
+    assert.equal(objectives.readiness().monthlyCommittedUsd, committed); assert.ok(objectives.readiness().unknownReservations >= 2);
+    assert.equal(await objectives.dispatch(), 0); assert.equal(dispatches, 1);
+    assert.throws(() => restoredControl!.authenticateOwner(oldToken), /sign-in/);
+    const login = await restoredControl.authenticationOptions(); const signedIn = await restoredControl.finishAuthentication(login.challengeId, f.authenticator.assertion(login.options.challenge, f.origin));
+    const owner = restoredControl.authenticateOwner(signedIn.sessionToken);
+    assert.equal(restoredControl.proposal(executing.id, owner).status, "unknown"); assert.equal(restoredControl.proposal(pending.id, owner).status, "invalidated");
+    await assert.rejects(restoredControl.finishApproval(pending.id, pendingChallenge.challengeId, f.authenticator.assertion(pendingChallenge.options.challenge, f.origin), owner), /stale|consumed/);
+    const restoredFrames: unknown[] = [];
+    await restoredControl.connectDevice(restoredControl.authenticateDevice(f.pair.deviceToken), frame => restoredFrames.push(frame), () => {});
+    assert.equal(restoredFrames.filter(frame => (frame as CloudCommand).type === "command").length, 0);
+    assert.deepEqual(restoredControl.readSnapshots("project-1", "context").map(value => value.id), ["retained-version"]);
+    assert.equal(restoredControl.readSnapshots("other-project", "context").length, 0);
+    assert.equal((await stat(join(restoredDirectory, "cloud", "control.sqlite"))).mode & 0o777, 0o600);
+  } finally { await objectives.close(); await restoredControl?.close(); await f.cleanup(); await rm(recoveryDirectory, { recursive: true, force: true }); }
+});
+
+test("pairing, stored credential isolation and schema migration preserve private durable state", async () => {
+  const f = await fixture();
+  try {
+    await assert.rejects(f.control.startPairing({ deviceId: "other", label: "Other" }, "native-or-model-token"), /bootstrap/);
+    const start = await f.control.startPairing({ deviceId: "second", label: "Second" }, bootstrap);
+    const second = await f.control.completePairing({ pairingId: start.pairingId, deviceId: "second" }, start.pairingToken);
+    await assert.rejects(f.control.completePairing({ pairingId: start.pairingId, deviceId: "second" }, start.pairingToken), /consumed/);
+    assert.notEqual(second.deviceToken, f.pair.deviceToken);
+    await f.control.close(); const file = join(f.directory, "cloud", "control.sqlite"), contents = await readFile(file);
+    assert.equal(contents.includes(Buffer.from(f.pair.deviceToken)), false); assert.equal(contents.includes(Buffer.from(bootstrap)), false);
+    assert.equal((await stat(file)).mode & 0o777, 0o600); assert.equal((await stat(join(f.directory, "cloud"))).mode & 0o777, 0o700);
+    const db = new DatabaseSync(file); db.exec("ALTER TABLE state DROP COLUMN checksum; PRAGMA user_version=1;"); db.close();
+    await f.restart(); assert.equal(f.control.health().passkeyEnrolled, true);
+    const backups = (await readdir(join(f.directory, "cloud"))).filter(name => name.startsWith("schema-v1-")); assert.equal(backups.length, 1);
+    assert.equal((await stat(join(f.directory, "cloud", backups[0]))).mode & 0o777, 0o600);
+  } finally { await f.cleanup(); }
+  await assert.rejects(CloudControlPlane.open({ dataDirectory: "/tmp/not-created-cloud", publicOrigin: "http://public.example" }), /HTTPS/);
+});

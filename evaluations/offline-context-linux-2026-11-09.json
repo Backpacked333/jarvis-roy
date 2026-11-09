@@ -1,0 +1,6464 @@
+{
+  "version": 1,
+  "evaluationKind": "offline_deterministic_context_regression_and_warm_latency",
+  "startedAt": "2026-11-09T11:03:18.724Z",
+  "repository": {
+    "commitAtStart": "ee7ea44aa3526803f67c2e11f4e4595325292c24",
+    "workingTreeDirtyAtStart": true,
+    "codeSha256": {
+      "evaluations/offline-context.mjs": "430d87d06239e189008e4458a222290c6b913f649f098ca80bb889ea472cc887",
+      "runtime/bridge/context-runtime.ts": "0a63c35319122fc8eada2ccfdfefb03701a24d96dd3f1d05cf1e2b7bcfa5ea11",
+      "runtime/bridge/context/contracts.ts": "e77b95929b20f941d63b7695a110bcca3f426842b6b3def97fdc8e7ad6b86cd6",
+      "runtime/bridge/context/index.ts": "61d03e72aa0e4515fcf8136171653b351de513e7ce9265f2384c9b0a345d9633",
+      "runtime/bridge/continuity/contracts.ts": "1b03c508da98d4cca4a05b233047db2506ec32e628e8696e689b4cb6047d8cd9",
+      "runtime/bridge/continuity/index.ts": "6e8905a686ba6a4b90b6b34e55a6beaddf422ded118041713b07b990169d9a5f",
+      "runtime/bridge/knowledge/agent-tools.ts": "01d4f9f1ac2401b345f30755c3b4f2f1b1403747cf8101202b7ff7fea3e588ea",
+      "runtime/bridge/knowledge/context-retrieval.ts": "17f957271d57e5fd05e1473ecac5c6c1c74a2156a71e3da929ad70f642de22b4",
+      "runtime/bridge/knowledge/contracts.ts": "9c0b1b6388aad4a0f8dfe5ec4844fc913be4b58bba78b2cd58f62cdc917d28d9",
+      "runtime/bridge/knowledge/embeddings.ts": "67c9ecf61c546236823cc5c8d9b750c92711388927fe67edf9a593803b9f44fe",
+      "runtime/bridge/knowledge/extract.ts": "9119e1d43b758136d39f243c97acaa2ed6a5c9232575b456f0a66fdfbb51d7c4",
+      "runtime/bridge/knowledge/index.ts": "f848b57f2e0832c0d5de584bccc29bf3ef81130b3b95083089140e965abfe027",
+      "runtime/bridge/knowledge/linux-embeddings.ts": "b99b2b3fdd0ef84d38b9cc1c109b31c9e11f1292c80c25445444ead863c7fbd9",
+      "runtime/bridge/knowledge/retrieval.ts": "c517ee91ba33b8929c707fcabd9fa6612713b6160228f5c882648537cd4e4314",
+      "runtime/bridge/memory/contracts.ts": "d8b78f0b826a6b643c6644c1b20df3175f50559105b05882779b4a1dbdd0d950",
+      "runtime/bridge/memory/index.ts": "dd8217c14f1569249b038e1568c105a28f1bb5caa16904da718f0eea29564abf",
+      "runtime/bridge/memory/store.ts": "aaa6f4837d80a8bb00c4d7a3244cbe9addf865b442b04479e03689fcc582be11",
+      "runtime/bridge/retained-context.ts": "fe6ac43d695287270a42ba7c410adac3c3fbc90082d40f17bb1cf8d6893f8c13",
+      "runtime/package-lock.json": "d415c9690f9aeafdabbfb2a6bb78c4a2d382417c6705986ff551ff8c63289f97"
+    },
+    "commitAtEnd": "ee7ea44aa3526803f67c2e11f4e4595325292c24",
+    "codeStableDuringRun": true
+  },
+  "environment": {
+    "fixtureLabel": "Managed Linux implementation workspace; not the proposed reference VM or target Mac",
+    "platform": "linux",
+    "release": "6.18.57",
+    "arch": "x64",
+    "node": "v24.22.1",
+    "cpuModel": "AMD EPYC 7763 64-Core Processor",
+    "logicalCPUsReported": 5,
+    "availableParallelism": 4,
+    "cgroupCpuMax": "400000 100000",
+    "cgroupMemoryMaxBytes": "34359738368",
+    "hostMemoryBytesReported": 35743748096,
+    "loadAverageAtStart": [
+      1.99,
+      2.17,
+      1.9
+    ],
+    "network": "disabled by harness; no provider or embedding request",
+    "concurrency": "single sequential evaluation process; other workspace load not controlled",
+    "loadAverageAtEnd": [
+      2.07,
+      2.32,
+      2.04
+    ]
+  },
+  "configuration": {
+    "knowledge": true,
+    "memory": true,
+    "continuity": true,
+    "semanticRetrieval": false,
+    "embeddingProvider": null,
+    "backgroundIndexing": false,
+    "purpose": "cloud",
+    "nativeFixtureGrantsCloudAllowed": true,
+    "packetBudget": {
+      "maxBytes": 32768,
+      "maxTokens": 12000,
+      "maxItems": 12
+    },
+    "measuredBoundary": "createContextRuntime.current(): source/memory/history/checkpoint retrieval, current authorization, packet budgeting, final reauthorization, durable usage manifest",
+    "excluded": [
+      "corpus import",
+      "service startup",
+      "warmup",
+      "Eve or model inference",
+      "network",
+      "HTTP routing",
+      "SwiftUI",
+      "audio",
+      "remote retained-context brokers"
+    ],
+    "scopeAndHistory": "Deterministic in-process contextSnapshot fixture; production KnowledgeService, MemoryService, ContinuityService and createContextRuntime"
+  },
+  "fixture": {
+    "path": "runtime/test/fixtures/retrieval-150.json",
+    "sha256": "42f0531286f649eac1c54a43f39ab646f9a43cce10b0f6da16bf192594b9061a",
+    "sourceCount": 30,
+    "sourceTextBytes": 1595,
+    "queries": 150,
+    "historyMessages": 12,
+    "projectMemoryFacts": 30,
+    "globalPinnedPreferences": 1,
+    "excludedForeignMemories": 1,
+    "excludedNoCloudMemories": 1,
+    "continuityProjects": 20,
+    "sessionsPerProject": 5,
+    "approvedPins": 1,
+    "sourceDigests": [
+      {
+        "id": "fatigue",
+        "sha256": "26dfc31a9e278be15997850b8547303bfd7f6c174a3087cf2d3db246e7faf0d7"
+      },
+      {
+        "id": "photosynthesis",
+        "sha256": "37d4a85e1e694683fa7e213f4b34812456950ed124700f80f78c7332e8af44d2"
+      },
+      {
+        "id": "osmosis",
+        "sha256": "86b7e46ce9ff5fd56e0bb76548002bb18c85a251ce0709dd6a0ef891e4a71c11"
+      },
+      {
+        "id": "entropy",
+        "sha256": "28de17cfd3d726ee5bc74a1b72b4dc3ad4b41062eb43f49baef11c4689e4720a"
+      },
+      {
+        "id": "quicksort",
+        "sha256": "3eb57dc6768a86620113124ce0821a325a6d95da47de4e1cfc0cb502e756a1a6"
+      },
+      {
+        "id": "recursion",
+        "sha256": "d78fd57d09895cc6e85eb87511ff1fe89c7f0cde8623dc217fa1943814bc99b7"
+      },
+      {
+        "id": "mutex",
+        "sha256": "6863b21a9341c1fd91ab500b81ac3a9ab02453a738f4ea5fb4d2e994c1146206"
+      },
+      {
+        "id": "deadlock",
+        "sha256": "d8134daef0c33dff513bc062af15cb6885695725a38f2f0c86a89ef86cd63233"
+      },
+      {
+        "id": "indexing",
+        "sha256": "bfda908274faf05513527ca701a4bdc0fc8c17c0af0318035a6040575e5b4092"
+      },
+      {
+        "id": "transactions",
+        "sha256": "55420b36cf638fbb422580734d99de95c78ffa16efbcbf4e655db10948c65d51"
+      },
+      {
+        "id": "volatility",
+        "sha256": "890d4df67bec550ffd5fd0e2ac9aad034d7944f81110b440a88849102dab0dc3"
+      },
+      {
+        "id": "inflation",
+        "sha256": "78e1444453ed86859e24ba1a6dcf05be8d79be57b984d419a2ebfb3faef85851"
+      },
+      {
+        "id": "bonds",
+        "sha256": "495c5b6596b1e9d4f2f370b07543beba9bb77f2eef7dc865f94a5763b109d719"
+      },
+      {
+        "id": "diversification",
+        "sha256": "c05a8d8081db54bf3c1fe971132354a7a30d50833a3c8b2e05d543464e8ec92f"
+      },
+      {
+        "id": "bayesian",
+        "sha256": "2c0d779c8fd8964b7572a6c1edf0684c9b0bbf81233e3974d3e9d3595204850c"
+      },
+      {
+        "id": "bootstrap",
+        "sha256": "8846aca761f7b2f9ad9af79a4addc0c1ca6935ac5a582060917c8f7c2d3dff1e"
+      },
+      {
+        "id": "regression",
+        "sha256": "cc936ab1b65bd1de207e87f72e70a506496f9689d0f5a043ce681c84275342d4"
+      },
+      {
+        "id": "confounding",
+        "sha256": "3d43a37406f5aa66330c5c4fe48628ad536034a3b363b339dcef2ef8496ed31e"
+      },
+      {
+        "id": "diffusion",
+        "sha256": "396215d693815a786b38e47a20c1c8b4178bb439694021f9b55d649b6c5de944"
+      },
+      {
+        "id": "catalysis",
+        "sha256": "6ce0e9291035c37ecbdbde8db3043c769d40921a46bf74fa723fbcbeea43b67f"
+      },
+      {
+        "id": "oxidation",
+        "sha256": "80dfafe21ae325edcdae8e82234696bea47269681be46f7b03956566c039ca3d"
+      },
+      {
+        "id": "isotopes",
+        "sha256": "7b70cf23f7b9c3cca670490e01aff796512fb79ecb6061ee1a16a17d99a5c3de"
+      },
+      {
+        "id": "orbit",
+        "sha256": "cf41070d82c0da5991c62565dea55aa90dfb621e7e44b72d21b2c2eb3afe581c"
+      },
+      {
+        "id": "telescope",
+        "sha256": "1b684f9e6d5d857218c8a1996c07b72a20ab5e650bf44b42b84836ff6f77b332"
+      },
+      {
+        "id": "seismic",
+        "sha256": "1290d68c77196372c970bf30ac9713b483942c690a152251e69eb45f3bc101c8"
+      },
+      {
+        "id": "erosion",
+        "sha256": "6f2f384f4a107b1bfa758ef622cb415ae269dad8f382632efbf7e982a65a4f83"
+      },
+      {
+        "id": "alliteration",
+        "sha256": "4d827ca08f3bf08fdf99ea65805ca05ef30b8202971f768c09251f2d5596177f"
+      },
+      {
+        "id": "metaphor",
+        "sha256": "f1308a0a41c2225eb1b5c2c28c922af221b76f89761ac16b09633cf77df12c24"
+      },
+      {
+        "id": "counterpoint",
+        "sha256": "c14847663e6720d0b464984fac6b716352e1e1c3536174cf2b75b6d4386f7334"
+      },
+      {
+        "id": "harmony",
+        "sha256": "e1ee12a1510e75e693dbec5fc784513fee9b352558ebbdbc929ff08abd6ab706"
+      }
+    ]
+  },
+  "retrieval": {
+    "cases": [
+      {
+        "id": "fatigue-1",
+        "expectedSource": "fatigue",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "fatigue-2",
+        "expectedSource": "fatigue",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "fatigue-3",
+        "expectedSource": "fatigue",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "fatigue-4",
+        "expectedSource": "fatigue",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "fatigue-5",
+        "expectedSource": "fatigue",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "photosynthesis-1",
+        "expectedSource": "photosynthesis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "photosynthesis-2",
+        "expectedSource": "photosynthesis",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "photosynthesis-3",
+        "expectedSource": "photosynthesis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "photosynthesis-4",
+        "expectedSource": "photosynthesis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "photosynthesis-5",
+        "expectedSource": "photosynthesis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "osmosis-1",
+        "expectedSource": "osmosis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "osmosis-2",
+        "expectedSource": "osmosis",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "osmosis-3",
+        "expectedSource": "osmosis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "osmosis-4",
+        "expectedSource": "osmosis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "osmosis-5",
+        "expectedSource": "osmosis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "entropy-1",
+        "expectedSource": "entropy",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "entropy-2",
+        "expectedSource": "entropy",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "entropy-3",
+        "expectedSource": "entropy",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "entropy-4",
+        "expectedSource": "entropy",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "entropy-5",
+        "expectedSource": "entropy",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "quicksort-1",
+        "expectedSource": "quicksort",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "quicksort-2",
+        "expectedSource": "quicksort",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "quicksort-3",
+        "expectedSource": "quicksort",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "quicksort-4",
+        "expectedSource": "quicksort",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "quicksort-5",
+        "expectedSource": "quicksort",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "recursion-1",
+        "expectedSource": "recursion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "recursion-2",
+        "expectedSource": "recursion",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "recursion-3",
+        "expectedSource": "recursion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "recursion-4",
+        "expectedSource": "recursion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "recursion-5",
+        "expectedSource": "recursion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "mutex-1",
+        "expectedSource": "mutex",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "mutex-2",
+        "expectedSource": "mutex",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "mutex-3",
+        "expectedSource": "mutex",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "mutex-4",
+        "expectedSource": "mutex",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "mutex-5",
+        "expectedSource": "mutex",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "deadlock-1",
+        "expectedSource": "deadlock",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "deadlock-2",
+        "expectedSource": "deadlock",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "deadlock-3",
+        "expectedSource": "deadlock",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "deadlock-4",
+        "expectedSource": "deadlock",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "deadlock-5",
+        "expectedSource": "deadlock",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "indexing-1",
+        "expectedSource": "indexing",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "indexing-2",
+        "expectedSource": "indexing",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "indexing-3",
+        "expectedSource": "indexing",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "indexing-4",
+        "expectedSource": "indexing",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "indexing-5",
+        "expectedSource": "indexing",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "transactions-1",
+        "expectedSource": "transactions",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "transactions-2",
+        "expectedSource": "transactions",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "transactions-3",
+        "expectedSource": "transactions",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "transactions-4",
+        "expectedSource": "transactions",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "transactions-5",
+        "expectedSource": "transactions",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "volatility-1",
+        "expectedSource": "volatility",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "volatility-2",
+        "expectedSource": "volatility",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "volatility-3",
+        "expectedSource": "volatility",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "volatility-4",
+        "expectedSource": "volatility",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "volatility-5",
+        "expectedSource": "volatility",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "inflation-1",
+        "expectedSource": "inflation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "inflation-2",
+        "expectedSource": "inflation",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "inflation-3",
+        "expectedSource": "inflation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "inflation-4",
+        "expectedSource": "inflation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "inflation-5",
+        "expectedSource": "inflation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bonds-1",
+        "expectedSource": "bonds",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bonds-2",
+        "expectedSource": "bonds",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bonds-3",
+        "expectedSource": "bonds",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bonds-4",
+        "expectedSource": "bonds",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bonds-5",
+        "expectedSource": "bonds",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diversification-1",
+        "expectedSource": "diversification",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diversification-2",
+        "expectedSource": "diversification",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diversification-3",
+        "expectedSource": "diversification",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diversification-4",
+        "expectedSource": "diversification",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diversification-5",
+        "expectedSource": "diversification",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bayesian-1",
+        "expectedSource": "bayesian",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bayesian-2",
+        "expectedSource": "bayesian",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bayesian-3",
+        "expectedSource": "bayesian",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bayesian-4",
+        "expectedSource": "bayesian",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bayesian-5",
+        "expectedSource": "bayesian",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bootstrap-1",
+        "expectedSource": "bootstrap",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bootstrap-2",
+        "expectedSource": "bootstrap",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bootstrap-3",
+        "expectedSource": "bootstrap",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bootstrap-4",
+        "expectedSource": "bootstrap",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "bootstrap-5",
+        "expectedSource": "bootstrap",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "regression-1",
+        "expectedSource": "regression",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "regression-2",
+        "expectedSource": "regression",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "regression-3",
+        "expectedSource": "regression",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "regression-4",
+        "expectedSource": "regression",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "regression-5",
+        "expectedSource": "regression",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "confounding-1",
+        "expectedSource": "confounding",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "confounding-2",
+        "expectedSource": "confounding",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "confounding-3",
+        "expectedSource": "confounding",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "confounding-4",
+        "expectedSource": "confounding",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "confounding-5",
+        "expectedSource": "confounding",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diffusion-1",
+        "expectedSource": "diffusion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diffusion-2",
+        "expectedSource": "diffusion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diffusion-3",
+        "expectedSource": "diffusion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diffusion-4",
+        "expectedSource": "diffusion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "diffusion-5",
+        "expectedSource": "diffusion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "catalysis-1",
+        "expectedSource": "catalysis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "catalysis-2",
+        "expectedSource": "catalysis",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "catalysis-3",
+        "expectedSource": "catalysis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "catalysis-4",
+        "expectedSource": "catalysis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "catalysis-5",
+        "expectedSource": "catalysis",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "oxidation-1",
+        "expectedSource": "oxidation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "oxidation-2",
+        "expectedSource": "oxidation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "oxidation-3",
+        "expectedSource": "oxidation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "oxidation-4",
+        "expectedSource": "oxidation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "oxidation-5",
+        "expectedSource": "oxidation",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "isotopes-1",
+        "expectedSource": "isotopes",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "isotopes-2",
+        "expectedSource": "isotopes",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "isotopes-3",
+        "expectedSource": "isotopes",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "isotopes-4",
+        "expectedSource": "isotopes",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "isotopes-5",
+        "expectedSource": "isotopes",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "orbit-1",
+        "expectedSource": "orbit",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "orbit-2",
+        "expectedSource": "orbit",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "orbit-3",
+        "expectedSource": "orbit",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "orbit-4",
+        "expectedSource": "orbit",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "orbit-5",
+        "expectedSource": "orbit",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "telescope-1",
+        "expectedSource": "telescope",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "telescope-2",
+        "expectedSource": "telescope",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "telescope-3",
+        "expectedSource": "telescope",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "telescope-4",
+        "expectedSource": "telescope",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "telescope-5",
+        "expectedSource": "telescope",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "seismic-1",
+        "expectedSource": "seismic",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "seismic-2",
+        "expectedSource": "seismic",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "seismic-3",
+        "expectedSource": "seismic",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "seismic-4",
+        "expectedSource": "seismic",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "seismic-5",
+        "expectedSource": "seismic",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "erosion-1",
+        "expectedSource": "erosion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "erosion-2",
+        "expectedSource": "erosion",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "erosion-3",
+        "expectedSource": "erosion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "erosion-4",
+        "expectedSource": "erosion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "erosion-5",
+        "expectedSource": "erosion",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "alliteration-1",
+        "expectedSource": "alliteration",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "alliteration-2",
+        "expectedSource": "alliteration",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "alliteration-3",
+        "expectedSource": "alliteration",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "alliteration-4",
+        "expectedSource": "alliteration",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "alliteration-5",
+        "expectedSource": "alliteration",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "metaphor-1",
+        "expectedSource": "metaphor",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "metaphor-2",
+        "expectedSource": "metaphor",
+        "rank": 2,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "metaphor-3",
+        "expectedSource": "metaphor",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "metaphor-4",
+        "expectedSource": "metaphor",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "metaphor-5",
+        "expectedSource": "metaphor",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "counterpoint-1",
+        "expectedSource": "counterpoint",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "counterpoint-2",
+        "expectedSource": "counterpoint",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "counterpoint-3",
+        "expectedSource": "counterpoint",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "counterpoint-4",
+        "expectedSource": "counterpoint",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "counterpoint-5",
+        "expectedSource": "counterpoint",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "harmony-1",
+        "expectedSource": "harmony",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "harmony-2",
+        "expectedSource": "harmony",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "harmony-3",
+        "expectedSource": "harmony",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "harmony-4",
+        "expectedSource": "harmony",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      },
+      {
+        "id": "harmony-5",
+        "expectedSource": "harmony",
+        "rank": 1,
+        "exactCitations": true,
+        "exactScope": true,
+        "status": "passed"
+      }
+    ],
+    "expectedTopK": 3,
+    "passed": 150,
+    "failed": 0,
+    "citationFailures": 0,
+    "foreignResults": 0
+  },
+  "continuity": {
+    "projects": [
+      {
+        "projectId": "fixture",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-1",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-2",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-3",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-4",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-5",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-6",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-7",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-8",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-9",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-10",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-11",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-12",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-13",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-14",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-15",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-16",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-17",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-18",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      },
+      {
+        "projectId": "project-19",
+        "episodes": 5,
+        "uniqueSessions": 5,
+        "exactScope": true,
+        "allGoals": true,
+        "authorized": true,
+        "status": "passed"
+      }
+    ],
+    "eventReplayChecks": 100,
+    "restart": true,
+    "pinsSurvived": true,
+    "passed": 20,
+    "failed": 0
+  },
+  "contextAssembly": {
+    "warmupAttempts": 30,
+    "warmupFailures": [],
+    "attempts": 300,
+    "samples": [
+      {
+        "index": 0,
+        "caseId": "fatigue-1",
+        "milliseconds": 921.779029,
+        "selectedItems": 12,
+        "packetBytes": 10702,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 1,
+        "caseId": "fatigue-2",
+        "milliseconds": 678.356169,
+        "selectedItems": 12,
+        "packetBytes": 11419,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 2,
+        "caseId": "fatigue-3",
+        "milliseconds": 623.583886,
+        "selectedItems": 12,
+        "packetBytes": 10711,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 3,
+        "caseId": "fatigue-4",
+        "milliseconds": 694.360374,
+        "selectedItems": 12,
+        "packetBytes": 10691,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 4,
+        "caseId": "fatigue-5",
+        "milliseconds": 658.373067,
+        "selectedItems": 12,
+        "packetBytes": 10855,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 5,
+        "caseId": "photosynthesis-1",
+        "milliseconds": 1004.377579,
+        "selectedItems": 12,
+        "packetBytes": 10742,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 6,
+        "caseId": "photosynthesis-2",
+        "milliseconds": 719.262705,
+        "selectedItems": 12,
+        "packetBytes": 11459,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 7,
+        "caseId": "photosynthesis-3",
+        "milliseconds": 554.595805,
+        "selectedItems": 12,
+        "packetBytes": 10751,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 8,
+        "caseId": "photosynthesis-4",
+        "milliseconds": 536.206417,
+        "selectedItems": 12,
+        "packetBytes": 10731,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 9,
+        "caseId": "photosynthesis-5",
+        "milliseconds": 615.897264,
+        "selectedItems": 12,
+        "packetBytes": 10895,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 10,
+        "caseId": "osmosis-1",
+        "milliseconds": 629.391295,
+        "selectedItems": 12,
+        "packetBytes": 10712,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 11,
+        "caseId": "osmosis-2",
+        "milliseconds": 933.154525,
+        "selectedItems": 12,
+        "packetBytes": 11429,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 12,
+        "caseId": "osmosis-3",
+        "milliseconds": 498.924552,
+        "selectedItems": 12,
+        "packetBytes": 10721,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 13,
+        "caseId": "osmosis-4",
+        "milliseconds": 489.385507,
+        "selectedItems": 12,
+        "packetBytes": 10701,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 14,
+        "caseId": "osmosis-5",
+        "milliseconds": 508.586396,
+        "selectedItems": 12,
+        "packetBytes": 10865,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 15,
+        "caseId": "entropy-1",
+        "milliseconds": 416.134182,
+        "selectedItems": 12,
+        "packetBytes": 10708,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 16,
+        "caseId": "entropy-2",
+        "milliseconds": 713.271655,
+        "selectedItems": 12,
+        "packetBytes": 11425,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 17,
+        "caseId": "entropy-3",
+        "milliseconds": 591.508836,
+        "selectedItems": 12,
+        "packetBytes": 10717,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 18,
+        "caseId": "entropy-4",
+        "milliseconds": 637.54669,
+        "selectedItems": 12,
+        "packetBytes": 10697,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 19,
+        "caseId": "entropy-5",
+        "milliseconds": 516.912403,
+        "selectedItems": 12,
+        "packetBytes": 10861,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 20,
+        "caseId": "quicksort-1",
+        "milliseconds": 398.631366,
+        "selectedItems": 12,
+        "packetBytes": 10690,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 21,
+        "caseId": "quicksort-2",
+        "milliseconds": 497.759777,
+        "selectedItems": 12,
+        "packetBytes": 11407,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 22,
+        "caseId": "quicksort-3",
+        "milliseconds": 404.256863,
+        "selectedItems": 12,
+        "packetBytes": 10699,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 23,
+        "caseId": "quicksort-4",
+        "milliseconds": 337.372389,
+        "selectedItems": 12,
+        "packetBytes": 10679,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 24,
+        "caseId": "quicksort-5",
+        "milliseconds": 429.748721,
+        "selectedItems": 12,
+        "packetBytes": 10843,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 25,
+        "caseId": "recursion-1",
+        "milliseconds": 359.376004,
+        "selectedItems": 12,
+        "packetBytes": 10706,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 26,
+        "caseId": "recursion-2",
+        "milliseconds": 741.289352,
+        "selectedItems": 12,
+        "packetBytes": 11423,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 27,
+        "caseId": "recursion-3",
+        "milliseconds": 382.544028,
+        "selectedItems": 12,
+        "packetBytes": 10715,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 28,
+        "caseId": "recursion-4",
+        "milliseconds": 380.02637,
+        "selectedItems": 12,
+        "packetBytes": 10695,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 29,
+        "caseId": "recursion-5",
+        "milliseconds": 382.382181,
+        "selectedItems": 12,
+        "packetBytes": 10859,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 30,
+        "caseId": "mutex-1",
+        "milliseconds": 448.510424,
+        "selectedItems": 12,
+        "packetBytes": 10684,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 31,
+        "caseId": "mutex-2",
+        "milliseconds": 649.370142,
+        "selectedItems": 12,
+        "packetBytes": 11401,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 32,
+        "caseId": "mutex-3",
+        "milliseconds": 410.417854,
+        "selectedItems": 12,
+        "packetBytes": 10693,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 33,
+        "caseId": "mutex-4",
+        "milliseconds": 514.53504,
+        "selectedItems": 12,
+        "packetBytes": 10673,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 34,
+        "caseId": "mutex-5",
+        "milliseconds": 361.024455,
+        "selectedItems": 12,
+        "packetBytes": 10837,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 35,
+        "caseId": "deadlock-1",
+        "milliseconds": 215.74052,
+        "selectedItems": 12,
+        "packetBytes": 10708,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 36,
+        "caseId": "deadlock-2",
+        "milliseconds": 950.50979,
+        "selectedItems": 12,
+        "packetBytes": 11425,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 37,
+        "caseId": "deadlock-3",
+        "milliseconds": 405.048146,
+        "selectedItems": 12,
+        "packetBytes": 10717,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 38,
+        "caseId": "deadlock-4",
+        "milliseconds": 456.471682,
+        "selectedItems": 12,
+        "packetBytes": 10697,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 39,
+        "caseId": "deadlock-5",
+        "milliseconds": 322.135012,
+        "selectedItems": 12,
+        "packetBytes": 10861,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 40,
+        "caseId": "indexing-1",
+        "milliseconds": 296.397403,
+        "selectedItems": 12,
+        "packetBytes": 10704,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 41,
+        "caseId": "indexing-2",
+        "milliseconds": 664.692255,
+        "selectedItems": 12,
+        "packetBytes": 11421,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 42,
+        "caseId": "indexing-3",
+        "milliseconds": 326.48716,
+        "selectedItems": 12,
+        "packetBytes": 10713,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 43,
+        "caseId": "indexing-4",
+        "milliseconds": 384.447318,
+        "selectedItems": 12,
+        "packetBytes": 10693,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 44,
+        "caseId": "indexing-5",
+        "milliseconds": 281.137881,
+        "selectedItems": 12,
+        "packetBytes": 10857,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 45,
+        "caseId": "transactions-1",
+        "milliseconds": 289.087951,
+        "selectedItems": 12,
+        "packetBytes": 10716,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 46,
+        "caseId": "transactions-2",
+        "milliseconds": 334.812733,
+        "selectedItems": 12,
+        "packetBytes": 11433,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 47,
+        "caseId": "transactions-3",
+        "milliseconds": 293.944063,
+        "selectedItems": 12,
+        "packetBytes": 10725,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 48,
+        "caseId": "transactions-4",
+        "milliseconds": 587.919295,
+        "selectedItems": 12,
+        "packetBytes": 10705,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 49,
+        "caseId": "transactions-5",
+        "milliseconds": 286.433312,
+        "selectedItems": 12,
+        "packetBytes": 10869,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 50,
+        "caseId": "volatility-1",
+        "milliseconds": 321.741543,
+        "selectedItems": 12,
+        "packetBytes": 10714,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 51,
+        "caseId": "volatility-2",
+        "milliseconds": 292.256421,
+        "selectedItems": 12,
+        "packetBytes": 11431,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 52,
+        "caseId": "volatility-3",
+        "milliseconds": 243.193031,
+        "selectedItems": 12,
+        "packetBytes": 10723,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 53,
+        "caseId": "volatility-4",
+        "milliseconds": 249.437073,
+        "selectedItems": 12,
+        "packetBytes": 10703,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 54,
+        "caseId": "volatility-5",
+        "milliseconds": 304.485523,
+        "selectedItems": 12,
+        "packetBytes": 10867,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 55,
+        "caseId": "inflation-1",
+        "milliseconds": 674.631911,
+        "selectedItems": 12,
+        "packetBytes": 10696,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 56,
+        "caseId": "inflation-2",
+        "milliseconds": 378.504028,
+        "selectedItems": 12,
+        "packetBytes": 11413,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 57,
+        "caseId": "inflation-3",
+        "milliseconds": 259.447457,
+        "selectedItems": 12,
+        "packetBytes": 10705,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 58,
+        "caseId": "inflation-4",
+        "milliseconds": 341.734577,
+        "selectedItems": 12,
+        "packetBytes": 10685,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 59,
+        "caseId": "inflation-5",
+        "milliseconds": 270.196273,
+        "selectedItems": 12,
+        "packetBytes": 10849,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 60,
+        "caseId": "bonds-1",
+        "milliseconds": 319.636988,
+        "selectedItems": 12,
+        "packetBytes": 10684,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 61,
+        "caseId": "bonds-2",
+        "milliseconds": 578.458875,
+        "selectedItems": 12,
+        "packetBytes": 11401,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 62,
+        "caseId": "bonds-3",
+        "milliseconds": 266.704007,
+        "selectedItems": 12,
+        "packetBytes": 10693,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 63,
+        "caseId": "bonds-4",
+        "milliseconds": 272.510545,
+        "selectedItems": 12,
+        "packetBytes": 10673,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 64,
+        "caseId": "bonds-5",
+        "milliseconds": 285.952632,
+        "selectedItems": 12,
+        "packetBytes": 10837,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 65,
+        "caseId": "diversification-1",
+        "milliseconds": 304.493579,
+        "selectedItems": 12,
+        "packetBytes": 10730,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 66,
+        "caseId": "diversification-2",
+        "milliseconds": 382.626819,
+        "selectedItems": 12,
+        "packetBytes": 11447,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 67,
+        "caseId": "diversification-3",
+        "milliseconds": 467.941987,
+        "selectedItems": 12,
+        "packetBytes": 10739,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 68,
+        "caseId": "diversification-4",
+        "milliseconds": 286.631418,
+        "selectedItems": 12,
+        "packetBytes": 10719,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 69,
+        "caseId": "diversification-5",
+        "milliseconds": 374.303608,
+        "selectedItems": 12,
+        "packetBytes": 10883,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 70,
+        "caseId": "bayesian-1",
+        "milliseconds": 264.240406,
+        "selectedItems": 12,
+        "packetBytes": 10716,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 71,
+        "caseId": "bayesian-2",
+        "milliseconds": 364.379017,
+        "selectedItems": 12,
+        "packetBytes": 10866,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 72,
+        "caseId": "bayesian-3",
+        "milliseconds": 405.353487,
+        "selectedItems": 12,
+        "packetBytes": 10725,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 73,
+        "caseId": "bayesian-4",
+        "milliseconds": 522.607923,
+        "selectedItems": 12,
+        "packetBytes": 10705,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 74,
+        "caseId": "bayesian-5",
+        "milliseconds": 530.142606,
+        "selectedItems": 12,
+        "packetBytes": 10869,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 75,
+        "caseId": "bootstrap-1",
+        "milliseconds": 511.978962,
+        "selectedItems": 12,
+        "packetBytes": 10704,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 76,
+        "caseId": "bootstrap-2",
+        "milliseconds": 694.261674,
+        "selectedItems": 12,
+        "packetBytes": 11421,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 77,
+        "caseId": "bootstrap-3",
+        "milliseconds": 544.900749,
+        "selectedItems": 12,
+        "packetBytes": 10713,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 78,
+        "caseId": "bootstrap-4",
+        "milliseconds": 570.704404,
+        "selectedItems": 12,
+        "packetBytes": 10693,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 79,
+        "caseId": "bootstrap-5",
+        "milliseconds": 434.25864,
+        "selectedItems": 12,
+        "packetBytes": 10857,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 80,
+        "caseId": "regression-1",
+        "milliseconds": 592.086861,
+        "selectedItems": 12,
+        "packetBytes": 10718,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 81,
+        "caseId": "regression-2",
+        "milliseconds": 608.451291,
+        "selectedItems": 12,
+        "packetBytes": 11435,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 82,
+        "caseId": "regression-3",
+        "milliseconds": 473.450494,
+        "selectedItems": 12,
+        "packetBytes": 10727,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 83,
+        "caseId": "regression-4",
+        "milliseconds": 552.230159,
+        "selectedItems": 12,
+        "packetBytes": 10707,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 84,
+        "caseId": "regression-5",
+        "milliseconds": 561.491596,
+        "selectedItems": 12,
+        "packetBytes": 10871,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 85,
+        "caseId": "confounding-1",
+        "milliseconds": 473.145815,
+        "selectedItems": 12,
+        "packetBytes": 10712,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 86,
+        "caseId": "confounding-2",
+        "milliseconds": 551.483368,
+        "selectedItems": 12,
+        "packetBytes": 11429,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 87,
+        "caseId": "confounding-3",
+        "milliseconds": 528.650255,
+        "selectedItems": 12,
+        "packetBytes": 10721,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 88,
+        "caseId": "confounding-4",
+        "milliseconds": 567.056343,
+        "selectedItems": 12,
+        "packetBytes": 10701,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 89,
+        "caseId": "confounding-5",
+        "milliseconds": 2137.954815,
+        "selectedItems": 12,
+        "packetBytes": 10865,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 90,
+        "caseId": "diffusion-1",
+        "milliseconds": 576.364357,
+        "selectedItems": 12,
+        "packetBytes": 10714,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 91,
+        "caseId": "diffusion-2",
+        "milliseconds": 554.208875,
+        "selectedItems": 12,
+        "packetBytes": 11431,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 92,
+        "caseId": "diffusion-3",
+        "milliseconds": 467.742797,
+        "selectedItems": 12,
+        "packetBytes": 10723,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 93,
+        "caseId": "diffusion-4",
+        "milliseconds": 537.444911,
+        "selectedItems": 12,
+        "packetBytes": 10703,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 94,
+        "caseId": "diffusion-5",
+        "milliseconds": 428.082237,
+        "selectedItems": 12,
+        "packetBytes": 10867,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 95,
+        "caseId": "catalysis-1",
+        "milliseconds": 458.468203,
+        "selectedItems": 12,
+        "packetBytes": 10736,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 96,
+        "caseId": "catalysis-2",
+        "milliseconds": 497.975345,
+        "selectedItems": 12,
+        "packetBytes": 11453,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 97,
+        "caseId": "catalysis-3",
+        "milliseconds": 562.018448,
+        "selectedItems": 12,
+        "packetBytes": 10745,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 98,
+        "caseId": "catalysis-4",
+        "milliseconds": 357.634475,
+        "selectedItems": 12,
+        "packetBytes": 10725,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 99,
+        "caseId": "catalysis-5",
+        "milliseconds": 489.505092,
+        "selectedItems": 12,
+        "packetBytes": 10889,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 100,
+        "caseId": "oxidation-1",
+        "milliseconds": 757.207138,
+        "selectedItems": 12,
+        "packetBytes": 10682,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 101,
+        "caseId": "oxidation-2",
+        "milliseconds": 1057.61336,
+        "selectedItems": 12,
+        "packetBytes": 11399,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 102,
+        "caseId": "oxidation-3",
+        "milliseconds": 617.720755,
+        "selectedItems": 12,
+        "packetBytes": 10691,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 103,
+        "caseId": "oxidation-4",
+        "milliseconds": 699.038058,
+        "selectedItems": 12,
+        "packetBytes": 10671,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 104,
+        "caseId": "oxidation-5",
+        "milliseconds": 910.432778,
+        "selectedItems": 12,
+        "packetBytes": 10835,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 105,
+        "caseId": "isotopes-1",
+        "milliseconds": 490.499261,
+        "selectedItems": 12,
+        "packetBytes": 10722,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 106,
+        "caseId": "isotopes-2",
+        "milliseconds": 671.286628,
+        "selectedItems": 12,
+        "packetBytes": 11439,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 107,
+        "caseId": "isotopes-3",
+        "milliseconds": 561.830711,
+        "selectedItems": 12,
+        "packetBytes": 10731,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 108,
+        "caseId": "isotopes-4",
+        "milliseconds": 743.18366,
+        "selectedItems": 12,
+        "packetBytes": 10711,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 109,
+        "caseId": "isotopes-5",
+        "milliseconds": 505.990322,
+        "selectedItems": 12,
+        "packetBytes": 10875,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 110,
+        "caseId": "orbit-1",
+        "milliseconds": 462.704338,
+        "selectedItems": 12,
+        "packetBytes": 10678,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 111,
+        "caseId": "orbit-2",
+        "milliseconds": 1013.234901,
+        "selectedItems": 12,
+        "packetBytes": 11395,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 112,
+        "caseId": "orbit-3",
+        "milliseconds": 614.563192,
+        "selectedItems": 12,
+        "packetBytes": 10687,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 113,
+        "caseId": "orbit-4",
+        "milliseconds": 796.737355,
+        "selectedItems": 12,
+        "packetBytes": 10667,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 114,
+        "caseId": "orbit-5",
+        "milliseconds": 1374.361125,
+        "selectedItems": 12,
+        "packetBytes": 10831,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 115,
+        "caseId": "telescope-1",
+        "milliseconds": 796.194472,
+        "selectedItems": 12,
+        "packetBytes": 10696,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 116,
+        "caseId": "telescope-2",
+        "milliseconds": 1686.482841,
+        "selectedItems": 12,
+        "packetBytes": 11413,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 117,
+        "caseId": "telescope-3",
+        "milliseconds": 782.279416,
+        "selectedItems": 12,
+        "packetBytes": 10705,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 118,
+        "caseId": "telescope-4",
+        "milliseconds": 617.586678,
+        "selectedItems": 12,
+        "packetBytes": 10685,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 119,
+        "caseId": "telescope-5",
+        "milliseconds": 793.562589,
+        "selectedItems": 12,
+        "packetBytes": 10849,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 120,
+        "caseId": "seismic-1",
+        "milliseconds": 657.008296,
+        "selectedItems": 12,
+        "packetBytes": 10682,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 121,
+        "caseId": "seismic-2",
+        "milliseconds": 732.038189,
+        "selectedItems": 12,
+        "packetBytes": 11399,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 122,
+        "caseId": "seismic-3",
+        "milliseconds": 605.464663,
+        "selectedItems": 12,
+        "packetBytes": 10691,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 123,
+        "caseId": "seismic-4",
+        "milliseconds": 545.052407,
+        "selectedItems": 12,
+        "packetBytes": 10671,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 124,
+        "caseId": "seismic-5",
+        "milliseconds": 611.796137,
+        "selectedItems": 12,
+        "packetBytes": 10835,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 125,
+        "caseId": "erosion-1",
+        "milliseconds": 374.867425,
+        "selectedItems": 12,
+        "packetBytes": 10708,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 126,
+        "caseId": "erosion-2",
+        "milliseconds": 631.415375,
+        "selectedItems": 12,
+        "packetBytes": 11425,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 127,
+        "caseId": "erosion-3",
+        "milliseconds": 895.381267,
+        "selectedItems": 12,
+        "packetBytes": 10717,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 128,
+        "caseId": "erosion-4",
+        "milliseconds": 630.171815,
+        "selectedItems": 12,
+        "packetBytes": 10697,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 129,
+        "caseId": "erosion-5",
+        "milliseconds": 1509.596296,
+        "selectedItems": 12,
+        "packetBytes": 10861,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 130,
+        "caseId": "alliteration-1",
+        "milliseconds": 638.506622,
+        "selectedItems": 12,
+        "packetBytes": 10704,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 131,
+        "caseId": "alliteration-2",
+        "milliseconds": 782.738505,
+        "selectedItems": 12,
+        "packetBytes": 11421,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 132,
+        "caseId": "alliteration-3",
+        "milliseconds": 562.783137,
+        "selectedItems": 12,
+        "packetBytes": 10713,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 133,
+        "caseId": "alliteration-4",
+        "milliseconds": 413.694768,
+        "selectedItems": 12,
+        "packetBytes": 10693,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 134,
+        "caseId": "alliteration-5",
+        "milliseconds": 454.538275,
+        "selectedItems": 12,
+        "packetBytes": 10857,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 135,
+        "caseId": "metaphor-1",
+        "milliseconds": 735.260551,
+        "selectedItems": 12,
+        "packetBytes": 10690,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 136,
+        "caseId": "metaphor-2",
+        "milliseconds": 511.350685,
+        "selectedItems": 12,
+        "packetBytes": 11407,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 137,
+        "caseId": "metaphor-3",
+        "milliseconds": 472.520958,
+        "selectedItems": 12,
+        "packetBytes": 10699,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 138,
+        "caseId": "metaphor-4",
+        "milliseconds": 401.12448,
+        "selectedItems": 12,
+        "packetBytes": 10679,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 139,
+        "caseId": "metaphor-5",
+        "milliseconds": 701.686663,
+        "selectedItems": 12,
+        "packetBytes": 10843,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 140,
+        "caseId": "counterpoint-1",
+        "milliseconds": 544.552355,
+        "selectedItems": 12,
+        "packetBytes": 10704,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 141,
+        "caseId": "counterpoint-2",
+        "milliseconds": 517.556646,
+        "selectedItems": 12,
+        "packetBytes": 11421,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 142,
+        "caseId": "counterpoint-3",
+        "milliseconds": 520.264212,
+        "selectedItems": 12,
+        "packetBytes": 10713,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 143,
+        "caseId": "counterpoint-4",
+        "milliseconds": 524.172292,
+        "selectedItems": 12,
+        "packetBytes": 10693,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 144,
+        "caseId": "counterpoint-5",
+        "milliseconds": 430.944758,
+        "selectedItems": 12,
+        "packetBytes": 10857,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 145,
+        "caseId": "harmony-1",
+        "milliseconds": 416.939593,
+        "selectedItems": 12,
+        "packetBytes": 10708,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 146,
+        "caseId": "harmony-2",
+        "milliseconds": 412.60859,
+        "selectedItems": 12,
+        "packetBytes": 11425,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 147,
+        "caseId": "harmony-3",
+        "milliseconds": 393.288797,
+        "selectedItems": 12,
+        "packetBytes": 10717,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 148,
+        "caseId": "harmony-4",
+        "milliseconds": 468.972582,
+        "selectedItems": 12,
+        "packetBytes": 10697,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 149,
+        "caseId": "harmony-5",
+        "milliseconds": 382.856305,
+        "selectedItems": 12,
+        "packetBytes": 10861,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 150,
+        "caseId": "fatigue-1",
+        "milliseconds": 437.153026,
+        "selectedItems": 12,
+        "packetBytes": 10702,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 151,
+        "caseId": "fatigue-2",
+        "milliseconds": 458.298735,
+        "selectedItems": 12,
+        "packetBytes": 11419,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 152,
+        "caseId": "fatigue-3",
+        "milliseconds": 393.600808,
+        "selectedItems": 12,
+        "packetBytes": 10711,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 153,
+        "caseId": "fatigue-4",
+        "milliseconds": 604.10592,
+        "selectedItems": 12,
+        "packetBytes": 10691,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 154,
+        "caseId": "fatigue-5",
+        "milliseconds": 800.353534,
+        "selectedItems": 12,
+        "packetBytes": 10855,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 155,
+        "caseId": "photosynthesis-1",
+        "milliseconds": 489.164433,
+        "selectedItems": 12,
+        "packetBytes": 10742,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 156,
+        "caseId": "photosynthesis-2",
+        "milliseconds": 660.207392,
+        "selectedItems": 12,
+        "packetBytes": 11459,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 157,
+        "caseId": "photosynthesis-3",
+        "milliseconds": 516.609026,
+        "selectedItems": 12,
+        "packetBytes": 10751,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 158,
+        "caseId": "photosynthesis-4",
+        "milliseconds": 446.845851,
+        "selectedItems": 12,
+        "packetBytes": 10731,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 159,
+        "caseId": "photosynthesis-5",
+        "milliseconds": 341.527177,
+        "selectedItems": 12,
+        "packetBytes": 10895,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 160,
+        "caseId": "osmosis-1",
+        "milliseconds": 649.674691,
+        "selectedItems": 12,
+        "packetBytes": 10712,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 161,
+        "caseId": "osmosis-2",
+        "milliseconds": 776.756673,
+        "selectedItems": 12,
+        "packetBytes": 11429,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 162,
+        "caseId": "osmosis-3",
+        "milliseconds": 599.764961,
+        "selectedItems": 12,
+        "packetBytes": 10721,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 163,
+        "caseId": "osmosis-4",
+        "milliseconds": 706.694575,
+        "selectedItems": 12,
+        "packetBytes": 10701,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 164,
+        "caseId": "osmosis-5",
+        "milliseconds": 659.313276,
+        "selectedItems": 12,
+        "packetBytes": 10865,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 165,
+        "caseId": "entropy-1",
+        "milliseconds": 589.343836,
+        "selectedItems": 12,
+        "packetBytes": 10708,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 166,
+        "caseId": "entropy-2",
+        "milliseconds": 707.963685,
+        "selectedItems": 12,
+        "packetBytes": 11425,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 167,
+        "caseId": "entropy-3",
+        "milliseconds": 564.287216,
+        "selectedItems": 12,
+        "packetBytes": 10717,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 168,
+        "caseId": "entropy-4",
+        "milliseconds": 574.051692,
+        "selectedItems": 12,
+        "packetBytes": 10697,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 169,
+        "caseId": "entropy-5",
+        "milliseconds": 636.841368,
+        "selectedItems": 12,
+        "packetBytes": 10861,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 170,
+        "caseId": "quicksort-1",
+        "milliseconds": 990.597852,
+        "selectedItems": 12,
+        "packetBytes": 10690,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 171,
+        "caseId": "quicksort-2",
+        "milliseconds": 3650.419218,
+        "selectedItems": 12,
+        "packetBytes": 11407,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 172,
+        "caseId": "quicksort-3",
+        "milliseconds": 605.040115,
+        "selectedItems": 12,
+        "packetBytes": 10699,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 173,
+        "caseId": "quicksort-4",
+        "milliseconds": 559.675901,
+        "selectedItems": 12,
+        "packetBytes": 10679,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 174,
+        "caseId": "quicksort-5",
+        "milliseconds": 1343.372949,
+        "selectedItems": 12,
+        "packetBytes": 10843,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 175,
+        "caseId": "recursion-1",
+        "milliseconds": 2790.363656,
+        "selectedItems": 12,
+        "packetBytes": 10706,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 176,
+        "caseId": "recursion-2",
+        "milliseconds": 1014.201022,
+        "selectedItems": 12,
+        "packetBytes": 11423,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 177,
+        "caseId": "recursion-3",
+        "milliseconds": 595.654062,
+        "selectedItems": 12,
+        "packetBytes": 10715,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 178,
+        "caseId": "recursion-4",
+        "milliseconds": 679.058335,
+        "selectedItems": 12,
+        "packetBytes": 10695,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 179,
+        "caseId": "recursion-5",
+        "milliseconds": 842.527892,
+        "selectedItems": 12,
+        "packetBytes": 10859,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 180,
+        "caseId": "mutex-1",
+        "milliseconds": 710.667333,
+        "selectedItems": 12,
+        "packetBytes": 10684,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 181,
+        "caseId": "mutex-2",
+        "milliseconds": 1161.453135,
+        "selectedItems": 12,
+        "packetBytes": 11401,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 182,
+        "caseId": "mutex-3",
+        "milliseconds": 586.773301,
+        "selectedItems": 12,
+        "packetBytes": 10693,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 183,
+        "caseId": "mutex-4",
+        "milliseconds": 701.742443,
+        "selectedItems": 12,
+        "packetBytes": 10673,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 184,
+        "caseId": "mutex-5",
+        "milliseconds": 681.273577,
+        "selectedItems": 12,
+        "packetBytes": 10837,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 185,
+        "caseId": "deadlock-1",
+        "milliseconds": 808.599214,
+        "selectedItems": 12,
+        "packetBytes": 10708,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 186,
+        "caseId": "deadlock-2",
+        "milliseconds": 1066.964096,
+        "selectedItems": 12,
+        "packetBytes": 11425,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 187,
+        "caseId": "deadlock-3",
+        "milliseconds": 802.486092,
+        "selectedItems": 12,
+        "packetBytes": 10717,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 188,
+        "caseId": "deadlock-4",
+        "milliseconds": 833.626163,
+        "selectedItems": 12,
+        "packetBytes": 10697,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 189,
+        "caseId": "deadlock-5",
+        "milliseconds": 828.314101,
+        "selectedItems": 12,
+        "packetBytes": 10861,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 190,
+        "caseId": "indexing-1",
+        "milliseconds": 1530.466488,
+        "selectedItems": 12,
+        "packetBytes": 10704,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 191,
+        "caseId": "indexing-2",
+        "milliseconds": 1575.910914,
+        "selectedItems": 12,
+        "packetBytes": 11421,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 192,
+        "caseId": "indexing-3",
+        "milliseconds": 838.860473,
+        "selectedItems": 12,
+        "packetBytes": 10713,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 193,
+        "caseId": "indexing-4",
+        "milliseconds": 1126.56361,
+        "selectedItems": 12,
+        "packetBytes": 10693,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 194,
+        "caseId": "indexing-5",
+        "milliseconds": 858.348409,
+        "selectedItems": 12,
+        "packetBytes": 10857,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 195,
+        "caseId": "transactions-1",
+        "milliseconds": 750.1171,
+        "selectedItems": 12,
+        "packetBytes": 10716,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 196,
+        "caseId": "transactions-2",
+        "milliseconds": 1234.126553,
+        "selectedItems": 12,
+        "packetBytes": 11433,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 197,
+        "caseId": "transactions-3",
+        "milliseconds": 805.016792,
+        "selectedItems": 12,
+        "packetBytes": 10725,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 198,
+        "caseId": "transactions-4",
+        "milliseconds": 1135.513185,
+        "selectedItems": 12,
+        "packetBytes": 10705,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 199,
+        "caseId": "transactions-5",
+        "milliseconds": 821.215007,
+        "selectedItems": 12,
+        "packetBytes": 10869,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 200,
+        "caseId": "volatility-1",
+        "milliseconds": 1214.242513,
+        "selectedItems": 12,
+        "packetBytes": 10714,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 201,
+        "caseId": "volatility-2",
+        "milliseconds": 1154.891054,
+        "selectedItems": 12,
+        "packetBytes": 11431,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 202,
+        "caseId": "volatility-3",
+        "milliseconds": 1288.626828,
+        "selectedItems": 12,
+        "packetBytes": 10723,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 203,
+        "caseId": "volatility-4",
+        "milliseconds": 1103.528202,
+        "selectedItems": 12,
+        "packetBytes": 10703,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 204,
+        "caseId": "volatility-5",
+        "milliseconds": 1418.300924,
+        "selectedItems": 12,
+        "packetBytes": 10867,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 205,
+        "caseId": "inflation-1",
+        "milliseconds": 937.579679,
+        "selectedItems": 12,
+        "packetBytes": 10696,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 206,
+        "caseId": "inflation-2",
+        "milliseconds": 1039.270401,
+        "selectedItems": 12,
+        "packetBytes": 11413,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 207,
+        "caseId": "inflation-3",
+        "milliseconds": 550.329419,
+        "selectedItems": 12,
+        "packetBytes": 10705,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 208,
+        "caseId": "inflation-4",
+        "milliseconds": 563.27655,
+        "selectedItems": 12,
+        "packetBytes": 10685,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 209,
+        "caseId": "inflation-5",
+        "milliseconds": 613.104585,
+        "selectedItems": 12,
+        "packetBytes": 10849,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 210,
+        "caseId": "bonds-1",
+        "milliseconds": 746.310639,
+        "selectedItems": 12,
+        "packetBytes": 10684,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 211,
+        "caseId": "bonds-2",
+        "milliseconds": 800.087034,
+        "selectedItems": 12,
+        "packetBytes": 11401,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 212,
+        "caseId": "bonds-3",
+        "milliseconds": 555.910288,
+        "selectedItems": 12,
+        "packetBytes": 10693,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 213,
+        "caseId": "bonds-4",
+        "milliseconds": 713.377579,
+        "selectedItems": 12,
+        "packetBytes": 10673,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 214,
+        "caseId": "bonds-5",
+        "milliseconds": 456.322098,
+        "selectedItems": 12,
+        "packetBytes": 10837,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 215,
+        "caseId": "diversification-1",
+        "milliseconds": 344.349784,
+        "selectedItems": 12,
+        "packetBytes": 10730,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 216,
+        "caseId": "diversification-2",
+        "milliseconds": 398.470921,
+        "selectedItems": 12,
+        "packetBytes": 11447,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 217,
+        "caseId": "diversification-3",
+        "milliseconds": 382.458952,
+        "selectedItems": 12,
+        "packetBytes": 10739,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 218,
+        "caseId": "diversification-4",
+        "milliseconds": 599.334593,
+        "selectedItems": 12,
+        "packetBytes": 10719,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 219,
+        "caseId": "diversification-5",
+        "milliseconds": 530.361972,
+        "selectedItems": 12,
+        "packetBytes": 10883,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 220,
+        "caseId": "bayesian-1",
+        "milliseconds": 501.918988,
+        "selectedItems": 12,
+        "packetBytes": 10716,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 221,
+        "caseId": "bayesian-2",
+        "milliseconds": 606.931163,
+        "selectedItems": 12,
+        "packetBytes": 10866,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 222,
+        "caseId": "bayesian-3",
+        "milliseconds": 770.065256,
+        "selectedItems": 12,
+        "packetBytes": 10725,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 223,
+        "caseId": "bayesian-4",
+        "milliseconds": 640.03546,
+        "selectedItems": 12,
+        "packetBytes": 10705,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 224,
+        "caseId": "bayesian-5",
+        "milliseconds": 1609.783283,
+        "selectedItems": 12,
+        "packetBytes": 10869,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 225,
+        "caseId": "bootstrap-1",
+        "milliseconds": 566.227689,
+        "selectedItems": 12,
+        "packetBytes": 10704,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 226,
+        "caseId": "bootstrap-2",
+        "milliseconds": 617.405426,
+        "selectedItems": 12,
+        "packetBytes": 11421,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 227,
+        "caseId": "bootstrap-3",
+        "milliseconds": 352.823276,
+        "selectedItems": 12,
+        "packetBytes": 10713,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 228,
+        "caseId": "bootstrap-4",
+        "milliseconds": 756.940947,
+        "selectedItems": 12,
+        "packetBytes": 10693,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 229,
+        "caseId": "bootstrap-5",
+        "milliseconds": 550.851218,
+        "selectedItems": 12,
+        "packetBytes": 10857,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 230,
+        "caseId": "regression-1",
+        "milliseconds": 541.051314,
+        "selectedItems": 12,
+        "packetBytes": 10718,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 231,
+        "caseId": "regression-2",
+        "milliseconds": 566.017396,
+        "selectedItems": 12,
+        "packetBytes": 11435,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 232,
+        "caseId": "regression-3",
+        "milliseconds": 612.738806,
+        "selectedItems": 12,
+        "packetBytes": 10727,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 233,
+        "caseId": "regression-4",
+        "milliseconds": 390.994059,
+        "selectedItems": 12,
+        "packetBytes": 10707,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 234,
+        "caseId": "regression-5",
+        "milliseconds": 432.709368,
+        "selectedItems": 12,
+        "packetBytes": 10871,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 235,
+        "caseId": "confounding-1",
+        "milliseconds": 464.195425,
+        "selectedItems": 12,
+        "packetBytes": 10712,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 236,
+        "caseId": "confounding-2",
+        "milliseconds": 1150.514444,
+        "selectedItems": 12,
+        "packetBytes": 11429,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 237,
+        "caseId": "confounding-3",
+        "milliseconds": 644.237496,
+        "selectedItems": 12,
+        "packetBytes": 10721,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 238,
+        "caseId": "confounding-4",
+        "milliseconds": 681.752127,
+        "selectedItems": 12,
+        "packetBytes": 10701,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 239,
+        "caseId": "confounding-5",
+        "milliseconds": 831.482952,
+        "selectedItems": 12,
+        "packetBytes": 10865,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 240,
+        "caseId": "diffusion-1",
+        "milliseconds": 666.114774,
+        "selectedItems": 12,
+        "packetBytes": 10714,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 241,
+        "caseId": "diffusion-2",
+        "milliseconds": 1145.091525,
+        "selectedItems": 12,
+        "packetBytes": 11431,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 242,
+        "caseId": "diffusion-3",
+        "milliseconds": 716.826147,
+        "selectedItems": 12,
+        "packetBytes": 10723,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 243,
+        "caseId": "diffusion-4",
+        "milliseconds": 585.029139,
+        "selectedItems": 12,
+        "packetBytes": 10703,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 244,
+        "caseId": "diffusion-5",
+        "milliseconds": 927.66249,
+        "selectedItems": 12,
+        "packetBytes": 10867,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 245,
+        "caseId": "catalysis-1",
+        "milliseconds": 706.233971,
+        "selectedItems": 12,
+        "packetBytes": 10736,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 246,
+        "caseId": "catalysis-2",
+        "milliseconds": 803.053377,
+        "selectedItems": 12,
+        "packetBytes": 11453,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 247,
+        "caseId": "catalysis-3",
+        "milliseconds": 667.382071,
+        "selectedItems": 12,
+        "packetBytes": 10745,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 248,
+        "caseId": "catalysis-4",
+        "milliseconds": 677.154657,
+        "selectedItems": 12,
+        "packetBytes": 10725,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 249,
+        "caseId": "catalysis-5",
+        "milliseconds": 900.84493,
+        "selectedItems": 12,
+        "packetBytes": 10889,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 250,
+        "caseId": "oxidation-1",
+        "milliseconds": 924.942452,
+        "selectedItems": 12,
+        "packetBytes": 10682,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 251,
+        "caseId": "oxidation-2",
+        "milliseconds": 764.003365,
+        "selectedItems": 12,
+        "packetBytes": 11399,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 252,
+        "caseId": "oxidation-3",
+        "milliseconds": 928.598365,
+        "selectedItems": 12,
+        "packetBytes": 10691,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 253,
+        "caseId": "oxidation-4",
+        "milliseconds": 817.750199,
+        "selectedItems": 12,
+        "packetBytes": 10671,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 254,
+        "caseId": "oxidation-5",
+        "milliseconds": 1100.887548,
+        "selectedItems": 12,
+        "packetBytes": 10835,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 255,
+        "caseId": "isotopes-1",
+        "milliseconds": 995.907605,
+        "selectedItems": 12,
+        "packetBytes": 10722,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 256,
+        "caseId": "isotopes-2",
+        "milliseconds": 904.479419,
+        "selectedItems": 12,
+        "packetBytes": 11439,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 257,
+        "caseId": "isotopes-3",
+        "milliseconds": 873.797173,
+        "selectedItems": 12,
+        "packetBytes": 10731,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 258,
+        "caseId": "isotopes-4",
+        "milliseconds": 964.122867,
+        "selectedItems": 12,
+        "packetBytes": 10711,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 259,
+        "caseId": "isotopes-5",
+        "milliseconds": 662.57385,
+        "selectedItems": 12,
+        "packetBytes": 10875,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 260,
+        "caseId": "orbit-1",
+        "milliseconds": 597.925576,
+        "selectedItems": 12,
+        "packetBytes": 10678,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 261,
+        "caseId": "orbit-2",
+        "milliseconds": 589.086307,
+        "selectedItems": 12,
+        "packetBytes": 11395,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 262,
+        "caseId": "orbit-3",
+        "milliseconds": 547.087767,
+        "selectedItems": 12,
+        "packetBytes": 10687,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 263,
+        "caseId": "orbit-4",
+        "milliseconds": 470.131453,
+        "selectedItems": 12,
+        "packetBytes": 10667,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 264,
+        "caseId": "orbit-5",
+        "milliseconds": 754.76814,
+        "selectedItems": 12,
+        "packetBytes": 10831,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 265,
+        "caseId": "telescope-1",
+        "milliseconds": 769.330324,
+        "selectedItems": 12,
+        "packetBytes": 10696,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 266,
+        "caseId": "telescope-2",
+        "milliseconds": 684.821421,
+        "selectedItems": 12,
+        "packetBytes": 11413,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 267,
+        "caseId": "telescope-3",
+        "milliseconds": 595.440749,
+        "selectedItems": 12,
+        "packetBytes": 10705,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 268,
+        "caseId": "telescope-4",
+        "milliseconds": 595.718732,
+        "selectedItems": 12,
+        "packetBytes": 10685,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 269,
+        "caseId": "telescope-5",
+        "milliseconds": 816.840215,
+        "selectedItems": 12,
+        "packetBytes": 10849,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 270,
+        "caseId": "seismic-1",
+        "milliseconds": 752.853547,
+        "selectedItems": 12,
+        "packetBytes": 10682,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 271,
+        "caseId": "seismic-2",
+        "milliseconds": 622.04743,
+        "selectedItems": 12,
+        "packetBytes": 11399,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 272,
+        "caseId": "seismic-3",
+        "milliseconds": 701.506776,
+        "selectedItems": 12,
+        "packetBytes": 10691,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 273,
+        "caseId": "seismic-4",
+        "milliseconds": 566.046391,
+        "selectedItems": 12,
+        "packetBytes": 10671,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 274,
+        "caseId": "seismic-5",
+        "milliseconds": 544.901003,
+        "selectedItems": 12,
+        "packetBytes": 10835,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 275,
+        "caseId": "erosion-1",
+        "milliseconds": 1391.241192,
+        "selectedItems": 12,
+        "packetBytes": 10708,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 276,
+        "caseId": "erosion-2",
+        "milliseconds": 1754.445186,
+        "selectedItems": 12,
+        "packetBytes": 11425,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 277,
+        "caseId": "erosion-3",
+        "milliseconds": 881.124342,
+        "selectedItems": 12,
+        "packetBytes": 10717,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 278,
+        "caseId": "erosion-4",
+        "milliseconds": 728.330341,
+        "selectedItems": 12,
+        "packetBytes": 10697,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 279,
+        "caseId": "erosion-5",
+        "milliseconds": 756.92495,
+        "selectedItems": 12,
+        "packetBytes": 10861,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 280,
+        "caseId": "alliteration-1",
+        "milliseconds": 850.376203,
+        "selectedItems": 12,
+        "packetBytes": 10704,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 281,
+        "caseId": "alliteration-2",
+        "milliseconds": 1200.05461,
+        "selectedItems": 12,
+        "packetBytes": 11421,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 282,
+        "caseId": "alliteration-3",
+        "milliseconds": 1139.830563,
+        "selectedItems": 12,
+        "packetBytes": 10713,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 283,
+        "caseId": "alliteration-4",
+        "milliseconds": 736.144968,
+        "selectedItems": 12,
+        "packetBytes": 10693,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 284,
+        "caseId": "alliteration-5",
+        "milliseconds": 768.355608,
+        "selectedItems": 12,
+        "packetBytes": 10857,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 285,
+        "caseId": "metaphor-1",
+        "milliseconds": 787.836654,
+        "selectedItems": 12,
+        "packetBytes": 10690,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 286,
+        "caseId": "metaphor-2",
+        "milliseconds": 782.059662,
+        "selectedItems": 12,
+        "packetBytes": 11407,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 287,
+        "caseId": "metaphor-3",
+        "milliseconds": 751.23629,
+        "selectedItems": 12,
+        "packetBytes": 10699,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 288,
+        "caseId": "metaphor-4",
+        "milliseconds": 508.008486,
+        "selectedItems": 12,
+        "packetBytes": 10679,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 289,
+        "caseId": "metaphor-5",
+        "milliseconds": 477.575985,
+        "selectedItems": 12,
+        "packetBytes": 10843,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 290,
+        "caseId": "counterpoint-1",
+        "milliseconds": 539.374449,
+        "selectedItems": 12,
+        "packetBytes": 10704,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 291,
+        "caseId": "counterpoint-2",
+        "milliseconds": 969.946462,
+        "selectedItems": 12,
+        "packetBytes": 11421,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 292,
+        "caseId": "counterpoint-3",
+        "milliseconds": 654.870957,
+        "selectedItems": 12,
+        "packetBytes": 10713,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 293,
+        "caseId": "counterpoint-4",
+        "milliseconds": 479.950914,
+        "selectedItems": 12,
+        "packetBytes": 10693,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 294,
+        "caseId": "counterpoint-5",
+        "milliseconds": 582.831123,
+        "selectedItems": 12,
+        "packetBytes": 10857,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 295,
+        "caseId": "harmony-1",
+        "milliseconds": 1134.506971,
+        "selectedItems": 12,
+        "packetBytes": 10708,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 296,
+        "caseId": "harmony-2",
+        "milliseconds": 818.87749,
+        "selectedItems": 12,
+        "packetBytes": 11425,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 3,
+          "source": 2,
+          "history": 6,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 297,
+        "caseId": "harmony-3",
+        "milliseconds": 1231.778344,
+        "selectedItems": 12,
+        "packetBytes": 10717,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 298,
+        "caseId": "harmony-4",
+        "milliseconds": 905.733532,
+        "selectedItems": 12,
+        "packetBytes": 10697,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      },
+      {
+        "index": 299,
+        "caseId": "harmony-5",
+        "milliseconds": 904.447486,
+        "selectedItems": 12,
+        "packetBytes": 10861,
+        "expectedSourceSelected": true,
+        "exactCitations": true,
+        "exactScope": true,
+        "selectedKinds": {
+          "memory": 2,
+          "source": 1,
+          "history": 8,
+          "checkpoint": 1
+        }
+      }
+    ],
+    "failures": [],
+    "expectedSourceSelected": 300,
+    "sourceCitationFailures": 0,
+    "scopeFailures": 0,
+    "timing": {
+      "unit": "milliseconds",
+      "method": "nearest_rank",
+      "successfulSamples": 300,
+      "failedSamples": 0,
+      "p50": 605.040115,
+      "p95": 1231.778344,
+      "min": 215.74052,
+      "max": 3650.419218,
+      "mean": 677.253611
+    }
+  },
+  "limitations": [
+    "Tiny synthetic 30-source corpus with direct lexical labels; not research quality or difficult personal-corpus retrieval.",
+    "No E5 weights provisioned or loaded, no neural retrieval/reranking quality measured.",
+    "No human or expert review and no model-generated answers.",
+    "Managed Linux workspace is not a reference VM or physical Mac; shared workload and storage are uncontrolled.",
+    "Warm in-process assembly latency is not UI feedback, first audio, end-to-end turn latency, or a release gate pass.",
+    "20×5 continuity checks validate durable scope/replay/pin behavior, not semantic episodic understanding."
+  ],
+  "liveGates": {
+    "e5Inference": "unrun",
+    "humanRetrievalReview": "unrun",
+    "fixed30Tasks": "unrun",
+    "physicalMacLatency": "unrun",
+    "referenceVMPerformance": "unrun"
+  },
+  "storage": {
+    "knowledge/knowledge.sqlite": 1142784,
+    "memory/memory.sqlite": 147456,
+    "continuity/continuity.sqlite": 815104
+  },
+  "completedAt": "2026-11-09T11:07:01.807Z",
+  "status": "completed"
+}

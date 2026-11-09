@@ -1,24 +1,32 @@
 import { createHash, randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { constants } from "node:fs";
 import { chmod, link, lstat, open, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { load as loadVectorExtension } from "sqlite-vec";
 import { z } from "zod";
 import { containsCredentialLikeData, listMemories } from "../../agent/lib/memory.ts";
 import { ensurePrivateDirectory, writeJsonAtomically } from "../../agent/lib/persistence.ts";
 import { BridgeError } from "../errors.ts";
 import {
   DeliverableInputSchema, EvidencePassageSchema, GrantInputSchema, ImportSourceSchema, KnowledgeId,
-  MAX_IMPORT_BYTES, PurposeSchema, ReadGrantSchema, RetrieveInputSchema, SearchInputSchema, SourceVersionSchema,
+  ContextSearchInputSchema, IndexEmbeddingsInputSchema, MAX_IMPORT_BYTES, PurposeSchema, ReadGrantSchema, RetrieveInputSchema, SearchInputSchema, SourceVersionSchema,
   type EvidencePassage, type GrantInput, type ImportSource, type ReadGrant, type ResearchDeliverable, type SourceVersion,
 } from "./contracts.ts";
-import { extractDocument, extractPdf, passageParts, type PdfExtractor } from "./extract.ts";
+import { documentFormat, extractDocument, extractPdf, passageParts, type PdfExtractor } from "./extract.ts";
 import { extractPublic, retrievePublic, type RetrievalResult } from "./retrieval.ts";
+import { LocalKnowledgeRetrieval } from "./context-retrieval.ts";
+import type { LocalEmbeddingProvider } from "./embeddings.ts";
 
 export * from "./contracts.ts";
+export type { LocalEmbeddingProvider, EmbeddingIdentity } from "./embeddings.ts";
 type Purpose = "local" | "cloud";
+type ReadAuditEvent = { at: string; projectId: string; operation: string; resourceId: string | null; purpose: Purpose | null };
+type ReadAuditBatch = { events: ReadAuditEvent[]; closed: boolean };
+const BATCHED_READ_OPERATIONS = new Set(["read", "source_read", "passage_read", "context_retrieval", "search"]);
 type GrantRequest = { grantId: string; projectId: string; resourceId: string; operation: ReadGrant["operations"][number]; purpose: Purpose };
-export interface KnowledgeOptions { dataDirectory: string; enabled?: boolean; fetch?: typeof fetch; extractPdf?: PdfExtractor; now?: () => Date }
+export interface KnowledgeOptions { dataDirectory: string; enabled?: boolean; fetch?: typeof fetch; extractPdf?: PdfExtractor; now?: () => Date; embeddingProvider?: LocalEmbeddingProvider; backgroundIndexing?: boolean }
 export interface KnowledgeRouteContext { nativeAuthenticated: boolean }
 export interface KnowledgeReply { status: number; body: unknown }
 const sha256 = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
@@ -33,15 +41,36 @@ export class KnowledgeService {
   private readonly now: () => Date;
   private connection: DatabaseSync | undefined;
   private readonly activeReads = new Map<string, Set<AbortController>>();
+  private readonly readAuditBatches = new AsyncLocalStorage<ReadAuditBatch>();
   private readonly options: KnowledgeOptions;
   private preferenceQueue: Promise<void> = Promise.resolve();
   private preferenceGeneration = 0;
+  private readonly localRetrieval: LocalKnowledgeRetrieval;
+  private retrievalCancellation = new AbortController();
+  private nativeVectors = false;
+  private backgroundTimer?: NodeJS.Timeout;
+  private backgroundBusy = false;
+  private backgroundClosed = false;
+  private backgroundPaused = false;
 
   private constructor(options: KnowledgeOptions) {
     this.options = options;
     this.enabled = options.enabled ?? process.env.JARVIS_ENABLE_KNOWLEDGE === "1";
     this.directory = path.join(options.dataDirectory, "knowledge");
     this.fetcher = options.fetch ?? fetch; this.pdf = options.extractPdf ?? extractPdf; this.now = options.now ?? (() => new Date());
+    this.localRetrieval = new LocalKnowledgeRetrieval({
+      db: () => this.db(), transaction: operation => this.transaction(operation),
+      sources: (projectId, purpose, archived) => this.retrievalSources(projectId, purpose, archived),
+      guard: (sources, purpose, operation, signal) => {
+        const privateSources = sources.filter(source => source.visibility === "private");
+        const run = (index: number, current: AbortSignal): Promise<unknown> => index >= privateSources.length ? operation(current) :
+          this.withGrant({ grantId: privateSources[index].grantId!, projectId: privateSources[index].projectId,
+            resourceId: privateSources[index].resourceId!, operation: "read_document", purpose }, next => run(index + 1, next), current);
+        return run(0, signal ?? new AbortController().signal) as ReturnType<typeof operation>;
+      },
+      audit: (projectId, operation, purpose) => this.audit(projectId, operation, null, purpose), now: this.now,
+      nativeVectors: () => this.nativeVectors,
+    }, options.embeddingProvider);
   }
 
   static async open(options: KnowledgeOptions): Promise<KnowledgeService> {
@@ -64,11 +93,24 @@ export class KnowledgeService {
       try { const info = await lstat(file + suffix); if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new Error("Unsafe knowledge database file"); await chmod(file + suffix, 0o600); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
-    const db = new DatabaseSync(file); this.connection = db;
+    const db = new DatabaseSync(file, { allowExtension: true }); this.connection = db;
+    try { loadVectorExtension(db); this.nativeVectors = true; } catch { this.nativeVectors = false; }
+    finally { db.enableLoadExtension(false); }
     try {
       db.exec("PRAGMA busy_timeout=0; PRAGMA locking_mode=EXCLUSIVE; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;");
       const version = db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version !== 0 && version !== 1) throw new Error("Unsupported knowledge database version; restore a compatible backup");
+      if (version !== 0 && version !== 1 && version !== 2 && version !== 3) throw new Error("Unsupported knowledge database version; restore a compatible backup");
+      if (version === 1) {
+        const backup = path.join(this.directory, "knowledge-v1.before-embeddings.sqlite");
+        try {
+          const info = await lstat(backup);
+          if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new Error("Unsafe knowledge migration backup");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          db.prepare("VACUUM INTO ?").run(backup);
+          await chmod(backup, 0o600);
+        }
+      }
       if (version === 0) {
         if (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").get()) throw new Error("Unversioned knowledge database is not empty");
         db.exec(`BEGIN EXCLUSIVE;
@@ -82,6 +124,21 @@ export class KnowledgeService {
           CREATE TABLE migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
           CREATE TABLE access_log (sequence INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, project_id TEXT NOT NULL, operation TEXT NOT NULL, resource_id TEXT, purpose TEXT);
           PRAGMA user_version=1; COMMIT;`);
+      }
+      if (version === 0 || version === 1) this.transaction(() => {
+        db.exec(`CREATE TABLE passage_embeddings (
+          passage_id TEXT PRIMARY KEY REFERENCES passages(id) ON DELETE CASCADE,
+          provider_key TEXT NOT NULL, dimensions INTEGER NOT NULL, text_hash TEXT NOT NULL,
+          vector BLOB NOT NULL, indexed_at TEXT NOT NULL);
+          CREATE INDEX embedding_model ON passage_embeddings(provider_key,dimensions);
+          PRAGMA user_version=2;`);
+      });
+      if (version === 0 || version === 1 || version === 2) {
+        if (version === 2) {
+          const backup = path.join(this.directory, `knowledge-v2-${randomUUID()}.backup.sqlite`);
+          db.prepare("VACUUM INTO ?").run(backup); await chmod(backup, 0o600);
+        }
+        this.transaction(() => db.exec(`CREATE TABLE index_jobs(project_id TEXT PRIMARY KEY,state TEXT NOT NULL,updated_at TEXT NOT NULL,error_code TEXT); PRAGMA user_version=3;`));
       }
       // Acquire lifetime exclusive ownership, like the room kernel.
       db.exec("BEGIN EXCLUSIVE; COMMIT;");
@@ -101,6 +158,11 @@ export class KnowledgeService {
         });
       }
       await this.reconcilePreferences();
+      if (this.options.backgroundIndexing && this.localRetrieval.identity) {
+        db.exec("UPDATE index_jobs SET state='pending' WHERE state='running'");
+        db.prepare("INSERT OR IGNORE INTO index_jobs SELECT DISTINCT project_id,'pending',?,NULL FROM sources").run(this.now().toISOString());
+        this.scheduleIndexing();
+      }
     } catch (error) { this.close(); throw error; }
   }
   /** Approved memory files remain authoritative while either feature is disabled.
@@ -125,21 +187,105 @@ export class KnowledgeService {
     return operation;
   }
   close(): void {
+    this.backgroundClosed = true; if (this.backgroundTimer) clearTimeout(this.backgroundTimer);
     this.cancelReads(); this.connection?.close(); this.connection = undefined;
   }
   cancelReads(): void {
+    this.backgroundPaused = true;
+    this.retrievalCancellation.abort(new Error("Knowledge retrieval stopped"));
+    this.retrievalCancellation = new AbortController();
     for (const controllers of this.activeReads.values()) for (const controller of controllers) controller.abort(new Error("Knowledge read stopped"));
     this.activeReads.clear();
+    // Cancellation must reach active helpers even if persistence is unavailable
+    // or initialization failed before the queue schema existed.
+    try { this.connection?.prepare("UPDATE index_jobs SET state='paused' WHERE state IN ('pending','running')").run(); } catch {}
+  }
+  private scheduleIndexing(): void {
+    if (!this.options.backgroundIndexing || !this.localRetrieval.identity || this.backgroundClosed || this.backgroundPaused || this.backgroundBusy || this.backgroundTimer) return;
+    this.backgroundTimer = setTimeout(() => { this.backgroundTimer = undefined; void this.runIndexJob(); }, 100);
+    this.backgroundTimer.unref();
+  }
+  private async runIndexJob(): Promise<void> {
+    if (this.backgroundClosed || !this.connection) return;
+    const job = this.db().prepare("SELECT project_id FROM index_jobs WHERE state='pending' ORDER BY updated_at,project_id LIMIT 1").get();
+    if (!job) return;
+    const projectId = String(job.project_id); this.backgroundBusy = true;
+    this.db().prepare("UPDATE index_jobs SET state='running',error_code=NULL WHERE project_id=?").run(projectId);
+    try {
+      const result = await this.indexEmbeddings({ projectId, limit: 16 });
+      if (!this.backgroundClosed && this.connection) this.db().prepare("UPDATE index_jobs SET state=?,updated_at=? WHERE project_id=? AND state='running'")
+        .run(result.remaining ? "pending" : "complete", this.now().toISOString(), projectId);
+    } catch {
+      if (!this.backgroundClosed && this.connection) this.db().prepare("UPDATE index_jobs SET state='paused',error_code='local_index_unavailable',updated_at=? WHERE project_id=? AND state='running'").run(this.now().toISOString(), projectId);
+    } finally { this.backgroundBusy = false; this.scheduleIndexing(); }
+  }
+  queueIndexing(projectId: string, action: "resume" | "pause" = "resume") {
+    KnowledgeId.parse(projectId);
+    this.db().prepare("INSERT INTO index_jobs VALUES (?,?,?,NULL) ON CONFLICT(project_id) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at,error_code=NULL")
+      .run(projectId, action === "resume" ? "pending" : "paused", this.now().toISOString());
+    if (action === "resume") { this.backgroundPaused = false; this.scheduleIndexing(); }
+    return this.indexingStatus(projectId);
+  }
+  indexingStatus(projectId: string) {
+    KnowledgeId.parse(projectId);
+    const row = this.db().prepare("SELECT state,updated_at,error_code FROM index_jobs WHERE project_id=?").get(projectId);
+    return { version: 1, projectId, available: this.localRetrieval.identity !== null, backgroundEnabled: this.options.backgroundIndexing === true,
+      state: row ? String(row.state) : "idle", updatedAt: row ? String(row.updated_at) : null, errorCode: row?.error_code ?? null };
   }
   private transaction<T>(operation: () => T): T {
     const db = this.db(); db.exec("BEGIN EXCLUSIVE");
     try { const result = operation(); db.exec("COMMIT"); return result; }
     catch (error) { try { db.exec("ROLLBACK"); } catch {} throw error; }
   }
-  private audit(projectId: string, operation: string, resourceId: string | null, purpose: Purpose | null = null): void {
-    this.db().prepare("INSERT INTO access_log(at,project_id,operation,resource_id,purpose) VALUES (?,?,?,?,?)")
-      .run(this.now().toISOString(), projectId, operation, resourceId, purpose);
+  /** Only audit writes are buffered. Every source/grant/revision check still
+   * reads current committed state. No database transaction spans an await. */
+  async withReadAuditBatch<T>(operation: () => Promise<T>, validate: (result: T) => void): Promise<T> {
+    const parent = this.readAuditBatches.getStore();
+    if (parent && !parent.closed) { const result = await operation(); validate(result); return result; }
+    const batch: ReadAuditBatch = { events: [], closed: false };
+    return this.readAuditBatches.run(batch, async () => {
+      try { const result = await operation(); validate(result); return result; }
+      finally {
+        // Failed assemblies still record their intermediate reads. Late work
+        // inheriting this async context must return to immediate durable audit.
+        batch.closed = true; this.flushReadAuditBatch(batch);
+      }
+    });
+  }
+  /** Final disclosure guards must remain synchronous: checks, durable audit
+   * commit, then the caller's response write, with no intervening await. */
+  withReadAuditBatchSync<T>(operation: () => T): T {
+    const run = () => {
+      const result = operation();
+      if (result && typeof (result as { then?: unknown }).then === "function") throw new Error("Final read authorization must be synchronous");
+      return result;
+    };
+    const parent = this.readAuditBatches.getStore();
+    if (parent && !parent.closed) return run();
+    const batch: ReadAuditBatch = { events: [], closed: false };
+    return this.readAuditBatches.run(batch, () => {
+      try { return run(); }
+      finally { batch.closed = true; this.flushReadAuditBatch(batch); }
+    });
+  }
+  private flushReadAuditBatch(batch: ReadAuditBatch): void {
+    if (!batch.events.length) return;
+    this.transaction(() => this.writeAuditEvents(batch.events));
+    batch.events.length = 0;
+  }
+  private writeAuditEvents(events: ReadAuditEvent[]): void {
+    const statement = this.db().prepare("INSERT INTO access_log(at,project_id,operation,resource_id,purpose) VALUES (?,?,?,?,?)");
+    for (const event of events) statement.run(event.at, event.projectId, event.operation, event.resourceId, event.purpose);
     this.db().exec("DELETE FROM access_log WHERE sequence < (SELECT COALESCE(MAX(sequence),0)-10000 FROM access_log)");
+  }
+  private audit(projectId: string, operation: string, resourceId: string | null, purpose: Purpose | null = null): void {
+    const event = { at: this.now().toISOString(), projectId, operation, resourceId, purpose };
+    const batch = this.readAuditBatches.getStore();
+    if (batch && !batch.closed && BATCHED_READ_OPERATIONS.has(operation)) {
+      if (batch.events.length >= 65_536) throw new BridgeError("Context read audit limit exceeded.", 413);
+      batch.events.push(event); return;
+    }
+    this.writeAuditEvents([event]);
   }
   listGrants(projectId: string): ReadGrant[] {
     KnowledgeId.parse(projectId);
@@ -224,7 +370,7 @@ export class KnowledgeService {
     return digest;
   }
   private storeSource(input: Omit<SourceVersion, "id" | "revision" | "sourceId"> & { sourceId?: string }, parts: ReturnType<typeof passageParts>): { source: SourceVersion; passages: EvidencePassage[] } {
-    return this.transaction(() => {
+    const stored = this.transaction(() => {
       let revision = 1;
       if (input.sourceId) {
         const previous = this.db().prepare("SELECT record,archived FROM sources WHERE project_id=? AND source_id=? ORDER BY revision DESC LIMIT 1").get(input.projectId, input.sourceId);
@@ -241,6 +387,8 @@ export class KnowledgeService {
       for (const item of passages) { passage.run(item.id, source.id, source.projectId, JSON.stringify(item)); search.run(item.id, source.projectId, item.text); }
       this.audit(source.projectId, "source_imported", source.id); return { source, passages };
     });
+    if (this.options.backgroundIndexing) this.queueIndexing(stored.source.projectId);
+    return stored;
   }
   async importSource(raw: ImportSource, signal?: AbortSignal): Promise<{ source: SourceVersion; passages: EvidencePassage[] }> {
     this.db(); const input = ImportSourceSchema.parse(raw);
@@ -252,10 +400,17 @@ export class KnowledgeService {
       const extraction = await extractDocument(bytes, input.filename, input.mediaType, pdf, combined);
       if (containsCredentialLikeData(extraction.pages.map(page => page.text).join("\n"))) throw new BridgeError("Document contains credential-like data. Import a redacted copy.", 400);
       const digest = await this.writeBlob(bytes); combined.throwIfAborted();
+      const format = input.mediaType === "application/pdf" ? "pdf" : documentFormat(input.filename);
+      const emptyPages = extraction.pages.filter(page => !page.text.trim()).length;
+      const warnings = format === "pdf" ? ["PDF text extraction does not verify reading order, equations, tables or image content.", ...(emptyPages ? ["Some PDF pages have no extracted text; scanned or image content may be missing."] : [])] :
+        format === "code" ? ["Code sections use declaration boundaries; they are not a complete syntax-tree analysis."] : format === "csv" ? ["CSV locators identify physical source rows; quoted multiline records can span rows."] : [];
       this.requireGrant({ grantId: input.grantId, projectId: input.projectId, resourceId: input.resourceId, operation: "read_document", purpose: "local" });
       return this.storeSource({ version: 1, projectId: input.projectId, title: input.title, filename: input.filename, mediaType: input.mediaType,
         sha256: digest, bytes: bytes.length, visibility: "private", grantId: input.grantId, resourceId: input.resourceId,
-        kind: "document", url: null, createdAt: this.now().toISOString(), extraction: extraction.extraction, archived: false, sourceId: input.sourceId }, passageParts(extraction.pages));
+        kind: "document", url: null, createdAt: this.now().toISOString(), extraction: extraction.extraction, archived: false, sourceId: input.sourceId,
+        extractionDetails: { format, extractor: format === "pdf" ? input.nativePDFPages ? "pdfkit" : "pdftotext" : "utf8",
+          quality: extraction.extraction === "empty" ? "empty" : emptyPages ? "mixed" : ["markdown", "csv", "code"].includes(format) ? "structured_text" : "text_only", warnings },
+      }, passageParts(extraction.pages, { filename: input.filename }));
     }, signal);
   }
   listSources(projectId: string, purpose: Purpose = "cloud", includeArchived = false): SourceVersion[] {
@@ -266,27 +421,52 @@ export class KnowledgeService {
       try { this.assertSource(source, purpose); return true; } catch (error) { if (error instanceof BridgeError && error.status === 403) return false; throw error; }
     });
   }
+  private retrievalSources(projectId: string, purpose: Purpose, includeArchived: boolean): SourceVersion[] {
+    KnowledgeId.parse(projectId);
+    // Coarse SQL authorization avoids inaccessible recent documents starving old
+    // permitted evidence before the limit. assertSource remains the authority.
+    const rows = this.db().prepare(`SELECT s.record,s.archived FROM sources s
+      WHERE s.project_id=? AND (? OR s.archived=0)
+      AND s.revision=(SELECT MAX(revision) FROM sources latest WHERE latest.project_id=s.project_id AND latest.source_id=s.source_id)
+      AND (json_extract(s.record,'$.visibility')='public' OR EXISTS (
+        SELECT 1 FROM grants g WHERE g.id=json_extract(s.record,'$.grantId') AND g.project_id=s.project_id
+        AND json_extract(g.record,'$.projectId')=s.project_id
+        AND json_extract(g.record,'$.resourceId')=json_extract(s.record,'$.resourceId')
+        AND json_extract(g.record,'$.revokedAt') IS NULL
+        AND (json_extract(g.record,'$.expiresAt') IS NULL OR json_extract(g.record,'$.expiresAt')>?)
+        AND (?='local' OR json_extract(g.record,'$.cloudAllowed')=1)
+        AND EXISTS (SELECT 1 FROM json_each(g.record,'$.operations') operation WHERE operation.value='read_document')
+      )) ORDER BY s.rowid DESC LIMIT 2000`).all(projectId, includeArchived ? 1 : 0, this.now().toISOString(), purpose);
+    return rows.map(row => this.rowSource(row)).filter(source => {
+      try { this.assertSource(source, purpose); return true; }
+      catch (error) { if (error instanceof BridgeError && error.status === 403) return false; throw error; }
+    });
+  }
   readSource(id: string, projectId: string, purpose: Purpose = "cloud") {
     const source = this.source(id, projectId, purpose), passages = this.passages(id);
     this.audit(projectId, "source_read", id, purpose); return { source, passages, contentTrust: "untrusted" as const };
   }
+  readPassage(id: string, projectId: string, purpose: Purpose = "cloud") {
+    KnowledgeId.parse(id); KnowledgeId.parse(projectId);
+    const row = this.db().prepare("SELECT record FROM passages WHERE id=? AND project_id=?").get(id, projectId);
+    if (!row) throw new BridgeError("Passage not found in this project.", 404);
+    const passage = EvidencePassageSchema.parse(asJson(row));
+    const source = this.source(passage.sourceVersionId, projectId, purpose);
+    const latest = this.db().prepare("SELECT MAX(revision) AS revision FROM sources WHERE project_id=? AND source_id=?").get(projectId, source.sourceId);
+    if (source.archived || latest?.revision !== source.revision) throw new BridgeError("Pinned passage belongs to archived or superseded evidence. Review the current source version.", 409);
+    this.audit(projectId, "passage_read", id, purpose);
+    return { source, passage, contentTrust: "untrusted" as const };
+  }
   search(raw: z.input<typeof SearchInputSchema>) {
-    const input = SearchInputSchema.parse(raw);
-    const terms = input.query.match(/[\p{L}\p{N}_]+/gu)?.slice(0, 32) ?? [];
-    if (!terms.length) return { matches: [], contentTrust: "untrusted" as const };
-    const query = terms.map(term => `"${term.replaceAll('"', '""')}"`).join(" AND ");
-    const rows = this.db().prepare(`SELECT p.record AS passage,s.record,s.archived FROM passage_search f JOIN passages p ON p.id=f.passage_id JOIN sources s ON s.id=p.source_id
-      WHERE passage_search MATCH ? AND p.project_id=? AND s.revision=(SELECT MAX(revision) FROM sources latest WHERE latest.project_id=s.project_id AND latest.source_id=s.source_id)
-      ORDER BY bm25(passage_search) LIMIT 1000`).all(query, input.projectId);
-    const matches: { source: SourceVersion; passage: EvidencePassage }[] = [];
-    for (const row of rows) {
-      const source = this.rowSource(row);
-      if (source.archived && !input.includeArchived) continue;
-      try { this.assertSource(source, input.purpose); } catch (error) { if (error instanceof BridgeError && error.status === 403) continue; throw error; }
-      matches.push({ source, passage: EvidencePassageSchema.parse(asJson(row, "passage")) });
-      if (matches.length >= input.limit) break;
-    }
-    this.audit(input.projectId, "search", null, input.purpose); return { matches, contentTrust: "untrusted" as const };
+    return this.localRetrieval.search(raw);
+  }
+  async indexEmbeddings(raw: z.input<typeof IndexEmbeddingsInputSchema>, signal?: AbortSignal) {
+    this.db();
+    return this.localRetrieval.index(raw, AbortSignal.any([this.retrievalCancellation.signal, ...(signal ? [signal] : [])]));
+  }
+  async retrieveContext(raw: z.input<typeof ContextSearchInputSchema>, signal?: AbortSignal) {
+    this.db();
+    return this.localRetrieval.retrieve(raw, AbortSignal.any([this.retrievalCancellation.signal, ...(signal ? [signal] : [])]));
   }
   archiveSource(id: string, projectId: string, archived: boolean): SourceVersion {
     const source = this.source(id, projectId, "local");
@@ -402,7 +582,9 @@ export class KnowledgeService {
     const project = () => KnowledgeId.parse(url.searchParams.get("projectId"));
     const purpose = () => { const value = PurposeSchema.parse(url.searchParams.get("purpose") ?? (context.nativeAuthenticated ? "local" : "cloud")); if (value === "local") native(); return value; };
     const reply = (body: unknown, status = 200): KnowledgeReply => ({ status, body });
-    if (method === "GET" && pathname === "/v1/knowledge/status") return reply({ version: 1, enabled: this.enabled, features: ["scoped_sources", "fts_search", "read_grants", "citations", "public_retrieval"] });
+    if (method === "GET" && pathname === "/v1/knowledge/status") return reply({ version: 1, enabled: this.enabled,
+      embeddings: { provider: this.localRetrieval.identity, local: true, available: this.enabled && this.localRetrieval.identity !== null },
+      features: ["scoped_sources", "fts_search", "read_grants", "citations", "public_retrieval", "local_hybrid_retrieval"] });
     this.db();
     if (pathname === "/v1/grants") {
       native(); if (method === "GET") return reply({ grants: this.listGrants(project()) });
@@ -417,6 +599,8 @@ export class KnowledgeService {
     }
     if (pathname === "/v1/knowledge/import" && method === "POST") { native(); return reply(await this.importSource(ImportSourceSchema.parse(body), signal), 201); }
     if (pathname === "/v1/knowledge/sources" && method === "GET") return reply({ sources: this.listSources(project(), purpose(), url.searchParams.get("includeArchived") === "true") });
+    const passage = /^\/v1\/knowledge\/passages\/([^/]+)$/.exec(pathname);
+    if (passage && method === "GET") return reply(this.readPassage(passage[1], project(), purpose()));
     const source = /^\/v1\/knowledge\/sources\/([^/]+)$/.exec(pathname);
     if (source) {
       if (method === "GET") return reply(this.readSource(source[1], project(), purpose()));
@@ -426,6 +610,17 @@ export class KnowledgeService {
     if (archive && method === "POST") { native(); const input = z.strictObject({ projectId: KnowledgeId, archived: z.boolean() }).parse(body); return reply(this.archiveSource(archive[1], input.projectId, input.archived)); }
     if (pathname === "/v1/knowledge/search" && method === "POST") {
       const input = SearchInputSchema.parse(body); if (input.purpose === "local") native(); return reply(this.search(input));
+    }
+    if (pathname === "/v1/knowledge/context" && method === "POST") {
+      const input = ContextSearchInputSchema.parse(body); if (input.purpose === "local") native();
+      return reply(await this.retrieveContext(input, signal));
+    }
+    if (pathname === "/v1/knowledge/index" && method === "POST") {
+      native(); return reply(await this.indexEmbeddings(IndexEmbeddingsInputSchema.parse(body), signal));
+    }
+    if (pathname === "/v1/knowledge/index-status" && method === "GET") { native(); return reply(this.indexingStatus(project())); }
+    if (pathname === "/v1/knowledge/index-queue" && method === "POST") {
+      native(); const input = z.strictObject({ projectId: KnowledgeId, action: z.enum(["resume", "pause"]) }).parse(body); return reply(this.queueIndexing(input.projectId, input.action));
     }
     if (pathname === "/v1/knowledge/retrieve" && method === "POST") return reply(await this.retrieve(RetrieveInputSchema.parse(body), signal), 201);
     if (pathname === "/v1/knowledge/extract" && method === "POST") {

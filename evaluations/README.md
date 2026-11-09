@@ -110,3 +110,10 @@ incomplete. Completion can contain failed tasks or missed latency targets; it
 is not a release approval. Feature gates also require the target Mac's startup,
 permissions, isolation, privacy, restart and cancellation acceptance described
 in [implementation status](../docs/implementation-status.md).
+
+## Offline context regression and timing
+
+For a repeatable, provider-free measurement of warm context assembly and the
+synthetic 150-query/20-project continuity fixtures, use
+[the offline context runner](offline-context.md). Its Linux timings and direct
+lexical labels do not replace the physical or human-reviewed evaluations above.

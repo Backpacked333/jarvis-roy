@@ -24,7 +24,7 @@ export function createKnowledgeAgentPort(context: KnowledgeToolContext, fetcher:
     return readBoundedJson(response, signal, 4 * 1_024 * 1_024);
   }
   return {
-    search: (input: z.infer<typeof KnowledgeSearchToolSchema>) => call("/v1/knowledge/search", { ...KnowledgeSearchToolSchema.parse(input), purpose: "cloud", includeArchived: false }),
+    search: (input: z.infer<typeof KnowledgeSearchToolSchema>) => call("/v1/knowledge/context", { ...KnowledgeSearchToolSchema.parse(input), purpose: "cloud", includeArchived: false, maxPerSource: 2, indexBudget: 0 }),
     retrieve: (input: unknown) => call("/v1/knowledge/retrieve", input),
     extract: (input: unknown) => call("/v1/knowledge/extract", input),
     publish: (input: unknown) => call("/v1/knowledge/deliverables", input),

@@ -3,6 +3,20 @@ import XCTest
 @testable import Jarvis
 
 final class RuntimeLifecycleTests: XCTestCase {
+    func testPersonalMemoryAndSemanticRetrievalRequireSeparateOptIns() throws {
+        let name = "JarvisMemorySettingsTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let preferences = RuntimePreferences(defaults: defaults)
+        XCTAssertEqual(preferences.environment(inherited: [:])["JARVIS_ENABLE_MEMORY"], "0")
+        XCTAssertEqual(preferences.environment(inherited: [:])["JARVIS_ENABLE_SEMANTIC_RETRIEVAL"], "0")
+        defaults.set(true, forKey: "Jarvis.memoryEnabled")
+        XCTAssertEqual(preferences.environment(inherited: [:])["JARVIS_ENABLE_MEMORY"], "1")
+        XCTAssertEqual(preferences.environment(inherited: [:])["JARVIS_ENABLE_SEMANTIC_RETRIEVAL"], "0")
+        defaults.set(true, forKey: "Jarvis.semanticRetrievalEnabled")
+        XCTAssertEqual(preferences.environment(inherited: [:])["JARVIS_ENABLE_SEMANTIC_RETRIEVAL"], "1")
+        XCTAssertEqual(preferences.environment(inherited: ["JARVIS_ENABLE_MEMORY": "0"])["JARVIS_ENABLE_MEMORY"], "0")
+    }
     func testNewCapabilitiesDefaultOffAndExplicitLauncherConfigurationWins() throws {
         let name = "JarvisRuntimeTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))

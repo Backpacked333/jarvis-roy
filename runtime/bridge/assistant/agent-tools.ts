@@ -15,6 +15,9 @@ export function assistantAgentPort(context: { sessionId: string; delegated: bool
   };
   return {
     context: () => call("/v1/assistant/tool-context"),
+    assembleContext: (input: unknown) => call("/v1/context/recall", input),
+    recallMemory: (query?: string) => call("/v1/memory/recall-current", query ? { query } : {}),
+    proposeMemory: (input: unknown) => call("/v1/memory/propose-current", input),
     present: (input: unknown) => call("/v1/assistant/present", input),
     readContext: (input: object) => call("/v1/context/read", { ...input, purpose: "cloud" }),
     readArtifact: (input: unknown) => call("/v1/assistant/artifact", input),

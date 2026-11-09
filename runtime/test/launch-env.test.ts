@@ -24,6 +24,12 @@ test("native launch allows only minimal OS context and ephemeral loopback creden
   assert.equal(environmentFor("runtime", voice).ELEVENLABS_API_KEY, undefined);
   assert.equal(environmentFor("ui", voice).ELEVENLABS_API_KEY, undefined);
   assert.equal(environmentFor("runtime", {}).JARVIS_ENABLE_DESKTOP, undefined);
+  for (const target of ["ui", "runtime", "bridge"]) {
+    const context = environmentFor(target, { JARVIS_ENABLE_MEMORY: "1", JARVIS_ENABLE_SEMANTIC_RETRIEVAL: "1" });
+    assert.equal(context.JARVIS_ENABLE_MEMORY, "1");
+    assert.equal(context.JARVIS_ENABLE_SEMANTIC_RETRIEVAL, "1");
+    assert.equal(environmentFor(target, {}).JARVIS_ENABLE_MEMORY, undefined);
+  }
   assert.throws(() => environmentFor("unknown", source));
 });
 

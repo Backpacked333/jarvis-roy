@@ -7,7 +7,7 @@ import test, { type TestContext } from "node:test";
 import { TaskStore } from "../bridge/store.ts";
 import { JarvisService } from "../bridge/service.ts";
 import type { ConversationRecord, EveClient, EveSession, TaskRecord } from "../bridge/types.ts";
-import { FakeDelivery } from "./helpers.ts";
+import { FakeDelivery, FakeEveClient } from "./helpers.ts";
 
 const at = new Date(1_700_000_000_000).toISOString();
 function conversation(): ConversationRecord {
@@ -23,6 +23,21 @@ async function directory(t: TestContext) {
   t.after(() => rm(value, { recursive: true, force: true }));
   return value;
 }
+
+test("owner-created conversations bind project before their first turn and scoped snapshots survive restart", async t => {
+  const root = await directory(t), client = new FakeEveClient();
+  const service = await JarvisService.create({ dataDirectory: root, client });
+  const a = await service.createConversation("Project A", "project-a"), b = await service.createConversation("Project B", "project-b");
+  const local = await service.createConversation();
+  assert.equal(service.conversationProject(a.id), "project-a"); assert.equal(service.conversationProject(local.id), null);
+  assert.deepEqual(service.conversationSnapshot("project-a").map(value => value.id), [a.id]);
+  assert.equal(service.conversationSnapshot().length, 3); assert.equal("projectId" in a, false);
+  await assert.rejects(service.createConversation("Bad project", "../bad"), /Invalid project/);
+  await assert.rejects(service.createTask("Different scope", a.id, "project-b"), /cannot change.*project scope/);
+  const restored = await JarvisService.create({ dataDirectory: root, client });
+  assert.equal(restored.conversationProject(a.id), "project-a"); assert.equal(restored.conversationProject(b.id), "project-b");
+  assert.deepEqual(restored.conversationSnapshot("project-b").map(value => value.id), [b.id]);
+});
 
 test("retention and restart preserve project binding after a conversation loses all tasks", async t => {
   const root = await directory(t), store = new TaskStore(root);

@@ -4,6 +4,7 @@ import { containsCredentialLikeData, deleteMemory, listMemories } from "../agent
 import { BridgeError, errorMessage } from "./errors.ts";
 import { redactText } from "./redaction.ts";
 import { reviewArguments } from "./approval.ts";
+import { googleEffectBinding, type GoogleEffectReceipt } from "./google-effect-contracts.ts";
 import { CONVERSATION_ID, TaskStore } from "./store.ts";
 import { HarnessApprovalSchema, type HarnessApproval } from "./harness-contracts/interactions.ts";
 import { inspectEveInteraction } from "./harness-interactions/eve-safety.ts";
@@ -62,7 +63,7 @@ function projectQuestion(card: Approval): Approval {
       title: BLOCKED_QUESTION_TITLE, detail: BLOCKED_QUESTION_DETAIL, blockedReason: BLOCKED_QUESTION_REASON,
       reviewable: false, allowText: false, options: [] };
   }
-  return { ...card, options: card.options.map((option) => ({ ...option })) };
+  return { ...card, ...(card.kind === "question" ? { reviewable: true } : {}), options: card.options.map((option) => ({ ...option })) };
 }
 
 function publicTask(record: TaskRecord): Task {
@@ -121,6 +122,7 @@ export class JarvisService {
   private readonly sessionCancelOperations = new Map<string, Promise<void>>();
   private readonly pendingOptions = new Map<string, Map<string, Set<string>>>();
   private readonly submittingInteractions = new Set<string>();
+  private readonly googleEffectControllers = new Map<string, AbortController>();
   private readonly callInputs = new Map<string, Map<string, { name: string; input?: unknown }>>();
   private readonly seenEvents = new Map<string, Set<string>>();
   private stopping = false;
@@ -186,17 +188,27 @@ export class JarvisService {
     };
   }
 
-  async createConversation(title?: string): Promise<Conversation> {
+  conversationSnapshot(projectId?: string): Conversation[] {
+    if (projectId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(projectId)) throw new BridgeError("Invalid project scope.", 400);
+    return this.store.conversations().filter(value => projectId === undefined || value.projectId === projectId)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).map(publicConversation);
+  }
+
+  conversationProject(id: string): string | null { return this.store.conversation(id)?.projectId ?? null; }
+
+  async createConversation(title?: string, projectId?: string): Promise<Conversation> {
     if (title !== undefined && (typeof title !== "string" || !title.trim() || title.length > 120)) {
       throw new BridgeError("Conversation title must contain 1–120 characters.", 400);
     }
     if (title && containsCredentialLikeData(title)) {
       throw new BridgeError("Conversation titles containing credential-like data cannot be persisted.", 400);
     }
+    if (projectId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(projectId)) throw new BridgeError("Invalid project scope.", 400);
     const now = new Date().toISOString();
     const conversation: ConversationRecord = {
       id: randomUUID(), title: title?.trim() ?? "New conversation",
       autoTitle: title === undefined,
+      ...(projectId !== undefined ? { projectId } : {}),
       createdAt: now, updatedAt: now, messages: [],
     };
     await this.store.addConversation(conversation);
@@ -339,11 +351,23 @@ export class JarvisService {
 
     this.submittingInteractions.add(submissionKey);
     try {
+      const effect = task.googleEffects?.find(item => item.interactionId === interactionId && item.revision === card.revision);
+      if (effect) await this.store.update(taskId, record => {
+        const receipt = record.googleEffects!.find(item => item.interactionId === interactionId)!;
+        if (receipt.status !== "pending" || record.cancelRequested) throw new BridgeError("Google approval is no longer pending.", 409);
+        receipt.status = optionId === "approve" ? "submitting" : "revoked";
+      });
       const delivery = await session.respond([{ interactionId, ...(text === undefined ? { optionId } : { text }) }]);
+      if (effect && optionId === "approve") await this.store.update(taskId, record => {
+        const receipt = record.googleEffects!.find(item => item.interactionId === interactionId)!;
+        if (receipt.status === "submitting") receipt.status = record.cancelRequested || record.cancelConfirmed ? "revoked" : "approved";
+      });
       this.trackBackground(this.observeDelivery(taskId, delivery));
       return publicTask(task);
     } catch (cause) {
       await this.store.update(taskId, (record) => {
+        const receipt = record.googleEffects?.find(item => item.interactionId === interactionId);
+        if (receipt?.status === "submitting") receipt.status = "unknown";
         if (record.cancelConfirmed) return;
         record.responseUnconfirmed = true;
         record.status = "interrupted";
@@ -381,6 +405,7 @@ export class JarvisService {
   async stop(): Promise<Task[]> {
     if (this.stopping) throw new BridgeError("Stop is already in progress.", 409);
     this.stopping = true;
+    for (const controller of this.googleEffectControllers.values()) controller.abort(new Error("Stop all"));
     this.admissionGeneration++;
     try {
     await this.admissions;
@@ -447,6 +472,37 @@ export class JarvisService {
     if (!task?.conversationId) return undefined;
     return { taskId: task.id, conversationId: task.conversationId, projectId: task.projectId ?? task.conversationId };
   }
+  /** Committed terminal observations for derived project continuity, never a job queue. */
+  committedTaskContexts() {
+    return this.store.values().filter(task => !!task.conversationId && ["completed", "failed", "cancelled", "interrupted"].includes(task.status)).map(task => {
+      const conversation = this.store.conversation(task.conversationId!);
+      const lastMessage = conversation?.messages.filter(message => message.taskId === task.id).at(-1);
+      return { projectId: task.projectId ?? task.conversationId!, conversationId: task.conversationId!, taskId: task.id,
+        status: task.status === "cancelled" && (!task.cancelConfirmed || task.cancellationPending) ? "interrupted" as const : task.status as "completed" | "failed" | "cancelled" | "interrupted",
+        goal: task.userMessage ?? "Earlier task; original user request is unavailable.", occurredAt: lastMessage?.createdAt ?? task.createdAt };
+    });
+  }
+
+  /** Explicit user messages are independently submitted context. Never recycle
+   * assistant prose here: it can contain excerpts whose grants were revoked. */
+  contextSnapshot(projectId: string, conversationId?: string, taskId?: string) {
+    const conversation = conversationId ? this.store.conversation(conversationId) : undefined;
+    if (conversationId && (!conversation || (conversation.projectId ?? conversation.id) !== projectId)) {
+      throw new BridgeError("Conversation context is outside this project.", 403);
+    }
+    const task = taskId ? this.store.get(taskId) : undefined;
+    if (taskId && (!task || task.conversationId !== conversationId || (task.projectId ?? task.conversationId) !== projectId)) {
+      throw new BridgeError("Task context is outside this conversation.", 403);
+    }
+    return {
+      currentTurn: task?.userMessage ?? "",
+      messages: structuredClone((conversation?.messages ?? []).filter(message => message.role === "user" && message.taskId !== taskId).slice(-60)),
+      actions: this.store.values().filter(record => (record.projectId ?? record.conversationId) === projectId &&
+        (ACTIVE_STATUSES.has(record.status) || record.approvals.length > 0 || record.cancellationPending))
+        .map(record => ({ id: record.id, conversationId: record.conversationId!, status: record.status,
+          title: record.title, pendingApprovals: record.approvals.length, createdAt: record.createdAt })),
+    };
+  }
 
   hasUnsettledProjectWork(projectId: string): boolean {
     return this.store.values().some(task => (task.projectId ?? task.conversationId) === projectId && (
@@ -467,6 +523,51 @@ export class JarvisService {
     }
   }
 
+  /** Immutable execution scope, used to verify exact remote approval bindings. */
+  projectForTask(taskId: string): string | null {
+    const task = this.store.get(taskId);
+    return task?.projectId ?? task?.conversationId ?? null;
+  }
+
+  exactApprovedEffectOutcome(ref: { taskId: string; interactionId: string; revision: number; optionId: string }): "completed" | "failed" | "unknown" {
+    if (ref.optionId !== "approve") return "unknown";
+    const receipt = this.store.get(ref.taskId)?.googleEffects?.find(item => item.interactionId === ref.interactionId && item.revision === ref.revision);
+    return receipt?.status === "succeeded" ? "completed" : "unknown";
+  }
+
+  /** Consume an existing exact Eve approval. The supplied callback is the sole
+   * trusted bridge-to-gateway dispatch; public callers cannot supply it. */
+  async executeGoogleEffect<T>(sessionId: string, callId: string, raw: unknown,
+    execute: (binding: ReturnType<typeof googleEffectBinding> & { approvalId: string; projectId: string }, signal: AbortSignal) => Promise<T>): Promise<T> {
+    const binding = googleEffectBinding(raw), scope = this.contextForEveSession(sessionId);
+    if (!scope || scope.projectId !== binding.input.projectId) throw new BridgeError("Google effect is outside this admitted session project.", 403);
+    let claimed: GoogleEffectReceipt | undefined;
+    await this.store.update(scope.taskId, task => {
+      const receipt = task.googleEffects?.find(item => item.sessionId === sessionId && item.callId === callId && item.argumentsSha256 === binding.digest);
+      if (!receipt || receipt.projectId !== scope.projectId || Date.parse(receipt.expiresAt) <= Date.now() || task.cancelRequested || task.cancelConfirmed || this.stopping) throw new BridgeError("Exact current Google approval is unavailable.", 403);
+      if (receipt.status === "submitting" || receipt.status === "approved" && !receipt.callStarted) throw new BridgeError("Approved call observation is not ready.", 425);
+      if (receipt.status !== "approved" || !["running", "waiting"].includes(task.status)) throw new BridgeError("Google effect was not approved, was consumed or is uncertain. Do not retry it.", 409);
+      receipt.status = "dispatching"; claimed = structuredClone(receipt);
+    });
+    const controller = new AbortController(), key = `${scope.taskId}:${callId}`;
+    this.googleEffectControllers.set(key, controller);
+    try {
+      const latest = this.store.get(scope.taskId)!;
+      if (this.stopping || latest.cancelRequested || latest.cancelConfirmed || this.cancelOperations.has(scope.taskId)) controller.abort(new Error("Google effect stopped before dispatch"));
+      controller.signal.throwIfAborted();
+      const result = await execute({ ...binding, approvalId: claimed!.interactionId, projectId: scope.projectId }, controller.signal);
+      await this.store.update(scope.taskId, task => {
+        const receipt = task.googleEffects!.find(item => item.interactionId === claimed!.interactionId)!;
+        if (receipt.status !== "dispatching") throw new BridgeError("Google effect receipt changed during execution.", 409);
+        receipt.status = "succeeded";
+      });
+      return result;
+    } catch (error) {
+      await this.store.update(scope.taskId, task => { const receipt = task.googleEffects!.find(item => item.interactionId === claimed!.interactionId)!; if (receipt.status === "dispatching") receipt.status = "unknown"; });
+      throw error;
+    } finally { this.googleEffectControllers.delete(key); }
+  }
+
   subscribeTasks(listener: (tasks: Task[]) => void): () => void {
     this.taskListeners.add(listener);
     return () => this.taskListeners.delete(listener);
@@ -478,8 +579,10 @@ export class JarvisService {
   }
 
   private async cancelActiveTask(taskId: string): Promise<void> {
+    for (const [key, controller] of this.googleEffectControllers) if (key.startsWith(`${taskId}:`)) controller.abort(new Error("Task cancelled"));
     await this.store.update(taskId, (task) => {
       task.cancelRequested = true;
+      for (const receipt of task.googleEffects ?? []) if (["pending", "submitting", "approved"].includes(receipt.status)) receipt.status = "revoked";
       task.cancellationPending = true;
       task.error = undefined;
     });
@@ -802,6 +905,7 @@ export class JarvisService {
         case "call.started": {
           const callId = stringValue(data.callId);
           const call = callId ? callInputs.get(callId) : undefined;
+          for (const receipt of task.googleEffects ?? []) if (receipt.callId === callId && receipt.toolName === call?.name) receipt.callStarted = true;
           append(call ? `${call.name} started.` : "An action started.");
           break;
         }
@@ -842,7 +946,14 @@ export class JarvisService {
           const callName = stringValue(originCall.name) ?? call?.name;
           const input = originCall.input ?? call?.input;
           const prompt = blocked ? BLOCKED_QUESTION_DETAIL : redactText(stringValue(request.prompt) ?? "A response is required.");
-          const review = request.kind === "approval" ? reviewArguments(callName, input) : undefined;
+          let review = request.kind === "approval" ? reviewArguments(callName, input) : undefined;
+          let effect: ReturnType<typeof googleEffectBinding> | undefined;
+          if (callName === "google_action" && review?.reviewable) {
+            try {
+              effect = googleEffectBinding(input);
+              if (!callId || !task.sessionId || effect.input.projectId !== (task.projectId ?? task.conversationId) || (task.googleEffects?.length ?? 0) >= 64) throw new Error("Google scope or receipt limit");
+            } catch { review = { reviewable: false, blockedReason: "Exact Google account/project arguments are unavailable or outside this task.", detail: "Deny this Google request and propose it again in the correct project." }; effect = undefined; }
+          }
           const visibleOptions = kind === "other" ? [] : review?.reviewable === false ? options.filter((option) => option.id === "deny") : options;
           const approval: Approval = {
             id: interactionId,
@@ -862,6 +973,15 @@ export class JarvisService {
             task.approvals = task.approvals.filter((item) => item.id !== interactionId);
           }
           task.approvals = [...task.approvals, approval];
+          if (effect && callId && task.sessionId) {
+            const previous = task.googleEffects?.find(item => item.interactionId === interactionId);
+            if (!previous || ["pending", "submitting", "approved", "revoked"].includes(previous.status)) {
+              task.googleEffects = [...(task.googleEffects ?? []).filter(item => item.interactionId !== interactionId), {
+                version: 1, interactionId, revision: approval.revision!, callId, sessionId: task.sessionId, projectId: effect.input.projectId,
+                toolName: "google_action", argumentsSha256: effect.digest, expiresAt: approval.expiresAt!, callStarted: false, status: "pending",
+              }];
+            }
+          }
           pending.set(interactionId, new Set(visibleOptions.map((option) => option.id)));
           releasedInteractions.push(`${taskId}:${interactionId}`);
           if (ACTIVE_STATUSES.has(task.status) && !task.cancelConfirmed) task.status = "waiting";

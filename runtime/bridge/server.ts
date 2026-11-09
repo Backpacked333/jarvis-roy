@@ -12,7 +12,7 @@ import { JarvisService } from "./service.ts";
 import { capabilitiesStatus } from "./capabilities.ts";
 import type { EveClient } from "./types.ts";
 import { createHarnessRuntime, harnessRoute, stopHarness, type HarnessRuntime } from "./harness-runtime.ts";
-import { assertPresentationProject, createAssistantRuntime } from "./assistant-runtime.ts";
+import { assertPresentationProject, createAssistantRuntime, createActionAuthority } from "./assistant-runtime.ts";
 import { archiveRoute } from "./archive-routes.ts";
 import { assistantRoute, PresentationContentSchema, type AssistantCoordinator } from "./assistant/index.ts";
 import { KnowledgeService } from "./knowledge/index.ts";
@@ -20,6 +20,22 @@ import { Diagnostics } from "./diagnostics.ts";
 import { discoverContextResources, readScopedContext, ScopedContextInputSchema } from "./knowledge-context.ts";
 import { DigestSchema, IdSchema, RelativePathSchema } from "./harness-contracts/domain.ts";
 import { ResearchService } from "./research/index.ts";
+import { MemoryService } from "./memory/index.ts";
+import { createMacEmbeddingProvider } from "./knowledge-embeddings.ts";
+import { createContextRuntime, ContextRecallSchema, type ContextRuntime } from "./context-runtime.ts";
+import { ProposeMemoryToolSchema } from "./memory-tool-contracts.ts";
+import { ExecuteGoogleEffectSchema } from "./google-effect-contracts.ts";
+import { readBoundedJson } from "./harness-interactions/gateway.ts";
+import { assertCloudPaidAdmission } from "./cloud-paid-admission.ts";
+
+import { ModelBudgetRuntime } from "./model-budget-runtime.ts";
+import { createObjectiveRuntime } from "./objective-runtime.ts";
+import { createLinuxEmbeddingProvider } from "./knowledge/linux-embeddings.ts";
+import { sharedEmbeddingProvider } from "./knowledge/embeddings.ts";
+import { createContinuityRuntime } from "./continuity-runtime.ts";
+import { createRetainedContextProviders } from "./retained-context.ts";
+import { NativeCloudRuntime } from "./native-cloud-runtime.ts";
+import { createCloudRuntimeBroker, type CloudRuntimeBroker } from "./cloud-runtime-broker.ts";
 
 const BRIDGE_HOST = "127.0.0.1";
 const BRIDGE_PORT = 39_202;
@@ -31,6 +47,13 @@ export interface BridgeExtensions {
   knowledge?: KnowledgeService;
   diagnostics?: Diagnostics;
   research?: ResearchService;
+  memory?: MemoryService;
+  context?: ContextRuntime;
+  objectives?: Awaited<ReturnType<typeof createObjectiveRuntime>>;
+  continuity?: Awaited<ReturnType<typeof createContinuityRuntime>>;
+  nativeCloud?: NativeCloudRuntime;
+  cloudBroker?: CloudRuntimeBroker;
+  modelBudget?: ModelBudgetRuntime;
   close?: () => void | Promise<void>;
 }
 
@@ -164,13 +187,129 @@ async function route(
   const native = nativeAuthenticated(request);
   const revocation = native && ((method === "POST" && /^\/v1\/grants\/[^/]+\/revoke$/.test(pathname)) ||
     (method === "PATCH" && /^\/v1\/grants\/[^/]+$/.test(pathname)));
-  const recovery = isCancellation(method, pathname) || revocation;
+  const memoryReduction = native && ((method === "PATCH" && /^\/v1\/memory\/entries\/[^/]+$/.test(pathname)) ||
+    (method === "POST" && /^\/v1\/memory\/entries\/[^/]+\/(archive|forget|supersede)$/.test(pathname)));
+  const nativeObservation = native && method === "POST" && pathname === "/v1/cloud/native-command-result";
+  const recovery = isCancellation(method, pathname) || revocation || memoryReduction || nativeObservation;
   const dispatch = <T>(operation: () => Promise<T>) => control.dispatch(generation, operation, recovery);
   try {
+    if (pathname.startsWith("/v1/model-budget/")) {
+      if (!extensions.modelBudget) throw new BridgeError("Cloud model accounting is unavailable.", 503);
+      const sessionId = request.headers["x-jarvis-eve-session"];
+      const input = method === "GET" ? undefined : await readJson(request);
+      const operation = () => extensions.modelBudget!.route(method, new URL(request.url!, "http://127.0.0.1"), input, { sessionId: typeof sessionId === "string" ? sessionId : undefined });
+      const result = pathname.endsWith("/settle") || method === "GET" ? await operation() : await dispatch(operation);
+      if (!result) throw new BridgeError("Model budget route not found.", 404);
+      json(response, result.status, result.body); return;
+    }
+    if (pathname === "/v1/cloud/runtime" && method === "POST") {
+      if (!bearerTokenMatches(`Bearer ${request.headers["x-jarvis-cloud-runtime-token"] ?? ""}`, process.env.JARVIS_CLOUD_RUNTIME_TOKEN) || process.env.JARVIS_RUNTIME_PROFILE !== "cloud") throw new BridgeError("Cloud runtime authority required.", 403);
+      if (!extensions.cloudBroker) throw new BridgeError("Cloud runtime is unavailable.", 503);
+      const input = z.strictObject({ version: z.literal(1), operation: z.string(), payload: z.unknown() }).parse(await readJson(request, 512 * 1024));
+      if (input.operation === "stop") { z.strictObject({}).parse(input.payload); await control.stopAll(); json(response, 200, { version: 1, stopped: true }); return; }
+      const payload = input.payload && typeof input.payload === "object" ? input.payload as Record<string, unknown> : {};
+      // Cancellation must not wait on its own settlement or free control poll.
+      // Authentication above is separate from every model/native credential.
+      const controlOnly = input.operation === "readiness" || input.operation === "settle" || input.operation === "action_result" ||
+        input.operation === "reserve" && payload.estimatedUsd === 0 || ["objectives", "conversations", "tasks"].includes(input.operation) && payload.method === "GET";
+      json(response, 200, await (controlOnly ? extensions.cloudBroker(input) : dispatch(() => extensions.cloudBroker!(input)))); return;
+    }
     if (control.isStopping() && method !== "GET" && pathname !== "/v1/stop" && !recovery) throw new BridgeError("Stop all is unconfirmed or in progress. Inspect status and explicitly retry Stop all before changing work.", 409);
+    if (["/v1/cloud/native-device", "/v1/cloud/native-command", "/v1/cloud/native-command-result"].includes(pathname) && method === "POST") {
+      if (!native) throw new BridgeError("Native pairing authority required.", 403);
+      if (!extensions.nativeCloud) throw new BridgeError("Cloud pairing is unavailable.", 503);
+      const body = await readJson(request, 512 * 1024);
+      if (pathname.endsWith("native-command-result")) { json(response, 200, await extensions.nativeCloud.result(body)); return; }
+      json(response, 200, await dispatch<unknown>(() => pathname.endsWith("native-device") ? extensions.nativeCloud!.pair(body) : extensions.nativeCloud!.execute(body))); return;
+    }
+    if (pathname === "/v1/objectives" || pathname.startsWith("/v1/objectives/")) {
+      if (!extensions.objectives) throw new BridgeError("Persistent objectives are unavailable.", 503);
+      const body = method === "GET" ? undefined : await readJson(request);
+      const projectId = native ? undefined : toolContext(request, service).projectId;
+      const operation = () => extensions.objectives!.route(method, new URL(request.url!, "http://127.0.0.1"), body, { nativeAuthenticated: native, projectId });
+      const reply = method === "GET" ? await operation() : await dispatch(operation);
+      if (!reply) throw new BridgeError("Objective route not found.", 404);
+      json(response, reply.status, reply.body); return;
+    }
+    if (pathname.startsWith("/v1/continuity/")) {
+      if (!extensions.continuity) throw new BridgeError("Project continuity is unavailable.", 503);
+      const body = method === "GET" ? undefined : await readJson(request);
+      const operation = () => extensions.continuity!.service.route(method, new URL(request.url!, "http://127.0.0.1"), body, { nativeAuthenticated: native });
+      const reply = method === "GET" ? await operation() : await dispatch(operation);
+      if (!reply) throw new BridgeError("Continuity route not found.", 404);
+      json(response, reply.status, reply.body); return;
+    }
     if (pathname === "/v1/diagnostics" && method === "GET") {
       if (!native) throw new BridgeError("Native diagnostics access required.", 403);
       json(response, 200, { version: 1, events: extensions.diagnostics?.snapshot() ?? [] }); return;
+    }
+    if (pathname === "/v1/integrations/google/execute" && method === "POST") {
+      const token = process.env.JARVIS_CLOUD_RUNTIME_TOKEN;
+      if (process.env.JARVIS_RUNTIME_PROFILE !== "cloud" || process.env.JARVIS_ENABLE_GOOGLE !== "1" || !isValidLocalToken(token)) throw new BridgeError("Approved cloud Google integration is unavailable.", 503);
+      const scope = toolContext(request, service), sessionId = request.headers["x-jarvis-eve-session"] as string;
+      const input = ExecuteGoogleEffectSchema.parse(await readJson(request, 128 * 1024));
+      if (input.input.projectId !== scope.projectId) throw new BridgeError("Google action project mismatch.", 403);
+      // Admit briefly, then release the global queue: the gateway must reserve
+      // and settle provider cost through its own authenticated broker requests.
+      await dispatch(async () => undefined);
+      const result = await service.executeGoogleEffect(sessionId, input.callId, input.input, async (binding, stopped) => {
+        if (control.isStopping() || generation !== control.generation()) throw new BridgeError("Google action was fenced by Stop all.", 409);
+        const signal = AbortSignal.any([stopped, AbortSignal.timeout(25_000)]);
+        const upstream = await fetch("http://127.0.0.1:39300/v1/cloud/runtime/google/execute", { method: "POST", redirect: "error", signal,
+          headers: { "x-jarvis-cloud-runtime-token": token, "content-type": "application/json" }, body: JSON.stringify(binding) });
+        if (!upstream.ok) { await upstream.body?.cancel(); throw new BridgeError("Google action was refused or its outcome is uncertain. Inspect the original request before retrying.", 502); }
+        return readBoundedJson(upstream, signal, 128_000);
+      });
+      json(response, 200, result); return;
+    }
+    if (["/v1/context/current", "/v1/context/recall", "/v1/context/assemble"].includes(pathname) && method === "POST") {
+      if (!extensions.context) throw new BridgeError("Scoped context is unavailable.", 503);
+      const body = await readJson(request);
+      if (pathname === "/v1/context/assemble") {
+        if (!native) throw new BridgeError("Use the native context inspector.", 403);
+        const packet = await dispatch(() => extensions.context!.preview(body));
+        extensions.context.assembler.revalidate(packet);
+        json(response, 200, packet); return;
+      }
+      const sessionId = request.headers["x-jarvis-eve-session"];
+      if (pathname === "/v1/context/current" && typeof sessionId === "string" && !service.contextForEveSession(sessionId)) {
+        // Eve may start automatic recall before its create receipt is committed.
+        throw new BridgeError("Session binding is not ready.", 425);
+      }
+      const scope = toolContext(request, service);
+      const input = pathname === "/v1/context/current" ? z.strictObject({}).parse(body) : ContextRecallSchema.parse(body);
+      if (!extensions.knowledge?.enabled && !extensions.memory?.enabled) {
+        json(response, 200, { version: 1, content: "No current recalled context. Knowledge and personal memory are disabled." }); return;
+      }
+      const packet = await dispatch(() => extensions.context!.current(scope, "query" in input ? input.query : undefined, "maxTokens" in input ? input.maxTokens : undefined));
+      extensions.context.assembler.revalidate(packet);
+      json(response, 200, pathname === "/v1/context/current" ? { version: 1, content: JSON.stringify(packet) } : packet); return;
+    }
+    if (pathname.startsWith("/v1/memory/")) {
+      if (!extensions.memory) throw new BridgeError("Personal memory service unavailable.", 503);
+      const body = method === "GET" ? undefined : await readJson(request);
+      if (method === "POST" && (pathname === "/v1/memory/recall-current" || pathname === "/v1/memory/propose-current")) {
+        const scope = toolContext(request, service);
+        if (pathname.endsWith("recall-current")) {
+          const input = z.strictObject({ query: z.string().trim().min(1).max(1000).optional() }).parse(body);
+          const query = input.query ?? service.contextSnapshot(scope.projectId, scope.conversationId, scope.taskId).currentTurn.slice(0, 1000);
+          json(response, 200, await dispatch(() => extensions.memory!.recall({ projectId: scope.projectId, purpose: "cloud", query: query || "saved preferences", limit: 12 },
+            { nativeAuthenticated: false, projectId: scope.projectId }))); return;
+        }
+        const input = ProposeMemoryToolSchema.parse(body);
+        const proposal = { kind: input.kind, scope: input.scope === "global" ? { kind: "global" } : { kind: "project", projectId: scope.projectId },
+          text: input.text, confidence: input.confidence, pinned: false, cloudAllowed: input.cloudAllowed, expiresAt: input.expiresAt,
+          provenance: { origin: "inferred", references: input.scope === "global" ? [] : [
+            { type: "conversation", projectId: scope.projectId, conversationId: scope.conversationId, turnId: scope.taskId },
+            ...input.sources.map(source => ({ type: "knowledge", projectId: scope.projectId, ...source })),
+          ] } };
+        json(response, 201, await dispatch(() => extensions.memory!.propose(proposal, { nativeAuthenticated: false, projectId: scope.projectId }))); return;
+      }
+      const projectId = native ? undefined : toolContext(request, service).projectId;
+      const operation = () => extensions.memory!.route(method, new URL(request.url!, "http://127.0.0.1"), body, { nativeAuthenticated: native, projectId });
+      const reply = await (method === "GET" || memoryReduction ? operation() : dispatch(operation));
+      if (!reply) throw new BridgeError("Memory route not found.", 404);
+      json(response, reply.status, reply.body); return;
     }
     if (pathname === "/v1/assistant/tool-context" && method === "GET") {
       const context = toolContext(request, service);
@@ -186,7 +325,7 @@ async function route(
           extensions.knowledge.readSource(id, context.projectId, "cloud");
         }
       }
-      json(response, 200, { version: 1, ...context, grants, capturedPresentation }); return;
+      json(response, 200, { version: 1, ...context, grants, capturedPresentation, selection: extensions.assistant?.enabled ? extensions.assistant.capturedSelectionForTask(context.taskId) : null }); return;
     }
     if (pathname === "/v1/assistant/artifact" && method === "POST") {
       const context = toolContext(request, service);
@@ -207,6 +346,7 @@ async function route(
       json(response, 200, await dispatch(() => discoverContextResources(input))); return;
     }
     if (pathname.startsWith("/v1/research/")) {
+      assertCloudPaidAdmission(method, pathname, undefined, extensions.objectives?.service);
       if (!extensions.research) throw new BridgeError("Research service unavailable.", 503);
       const url = new URL(request.url!, "http://127.0.0.1");
       const body = method === "GET" ? undefined : await readJson(request);
@@ -293,7 +433,10 @@ async function route(
         const context = toolContext(request, service);
         if ((body?.projectId ?? url.searchParams.get("projectId")) !== context.projectId) throw new BridgeError("Knowledge request is outside the active project.", 403);
       }
-      const operation = () => extensions.knowledge!.route(method, url, body, { nativeAuthenticated: native });
+      const operation = () => {
+        assertCloudPaidAdmission(method, pathname, body, extensions.objectives?.service);
+        return extensions.knowledge!.route(method, url, body, { nativeAuthenticated: native });
+      };
       // Revocation reduces authority and must interrupt, not queue behind, an active read.
       const reply = await (method === "GET" || revocation ? operation() : dispatch(operation));
       if (!reply) throw new BridgeError("Knowledge route not found.", 404);
@@ -308,7 +451,9 @@ async function route(
           nativeAuthenticated: native, enabled: extensions.assistant?.enabled ?? false,
           hasUnsettledProjectWork: roomId => service.hasUnsettledProjectWork(roomId),
         });
-        return archive ?? harnessRoute(method, url, async () => body, runtime, service);
+        if (archive) return archive;
+        assertCloudPaidAdmission(method, pathname, body, extensions.objectives?.service);
+        return harnessRoute(method, url, async () => body, runtime, service);
       };
       const result = await (method === "GET" ? operation() : dispatch(operation));
       if ("bytes" in result) {
@@ -389,6 +534,11 @@ async function route(
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
         throw new BridgeError("Memory not found.", 404);
       }
+      if (extensions.memory?.enabled) {
+        if (!native) throw new BridgeError("Remove personal memory through the native workspace.", 403);
+        await dispatch(() => extensions.memory!.forgetLegacy(id, { nativeAuthenticated: true }));
+        json(response, 200, { id, deleted: true }); return;
+      }
       const deleted = await dispatch(() => service.removeMemory(id));
       if (deleted && extensions.knowledge?.enabled) extensions.knowledge.deletePreference(id);
       if (!deleted) throw new BridgeError("Memory not found.", 404);
@@ -456,11 +606,24 @@ export function createBridgeServer(
       stopping = true;
       generation++;
       stopVoice();
+      extensions.modelBudget?.stop();
       extensions.knowledge?.cancelReads();
+      extensions.memory?.cancelReads();
       const operation = serialize(async () => {
-        if (extensions.assistant?.enabled) for (const session of extensions.assistant.state().sessions) await extensions.assistant.invalidateConfirmations(session.id);
-        const [tasks, rooms, research] = await Promise.allSettled([service.stop(), runtime ? stopHarness(runtime, stopTimeoutMs) : Promise.resolve(), extensions.research?.cancelAll()]);
-        if (tasks.status === "rejected" || rooms.status === "rejected" || research.status === "rejected" ||
+        // Every authority receives Stop even if another cannot yet confirm it.
+        // In particular, an unknown objective child must not leave independent
+        // Eve tasks, room workers or native confirmation windows running.
+        const objectiveStop = async () => {
+          if (!extensions.objectives?.service.enabled) return;
+          if (process.env.JARVIS_RUNTIME_PROFILE === "cloud") await extensions.objectives.service.pauseAll();
+          else await extensions.objectives.service.stop();
+        };
+        const confirmations = async () => {
+          if (!extensions.assistant?.enabled) return;
+          await Promise.all(extensions.assistant.state().sessions.map(session => extensions.assistant!.invalidateConfirmations(session.id)));
+        };
+        const [tasks, rooms, research, objectives, approvals] = await Promise.allSettled([service.stop(), runtime ? stopHarness(runtime, stopTimeoutMs) : Promise.resolve(), extensions.research?.cancelAll(), objectiveStop(), confirmations()]);
+        if (tasks.status === "rejected" || rooms.status === "rejected" || research.status === "rejected" || objectives.status === "rejected" || approvals.status === "rejected" ||
             tasks.value.some((task) => !["completed", "failed", "cancelled"].includes(task.status))) {
           throw new BridgeError("Some stops are unconfirmed. Admission remains closed; inspect task and room status and explicitly retry Stop all to reconcile.", 503);
         }
@@ -501,6 +664,7 @@ export function createBridgeServer(
     generation++;
     stopVoice();
     extensions.knowledge?.cancelReads();
+    extensions.memory?.cancelReads();
     const results = await serialize(() => Promise.allSettled([service.stop(), runtime?.voice.close(), runtime?.harness.shutdown()]));
     results.push(...await Promise.allSettled([boundedStop(service.drain(), stopTimeoutMs)]));
     unsubscribeDiagnostics();
@@ -534,7 +698,7 @@ function eveBaseUrl(value: string | undefined): string {
   return base.origin;
 }
 
-export async function startJarvisBridge(): Promise<Server> {
+export async function startJarvisBridge(options: { port?: number } = {}): Promise<Server> {
   const token = process.env.JARVIS_LOCAL_TOKEN;
   if (!isValidLocalToken(token)) {
     throw new Error("JARVIS_LOCAL_TOKEN must contain at least 32 characters.");
@@ -552,27 +716,69 @@ export async function startJarvisBridge(): Promise<Server> {
   let assistant: Awaited<ReturnType<typeof createAssistantRuntime>> | undefined;
   let knowledge: KnowledgeService | undefined;
   let research: ResearchService | undefined;
+  let memory: MemoryService | undefined;
+  let context: ContextRuntime | undefined;
+  let objectives: Awaited<ReturnType<typeof createObjectiveRuntime>> | undefined;
+  let continuity: Awaited<ReturnType<typeof createContinuityRuntime>> | undefined;
+  let nativeCloud: NativeCloudRuntime | undefined;
+  let modelBudget: ModelBudgetRuntime | undefined;
+  const diagnostics = new Diagnostics();
   try {
     runtime = await createHarnessRuntime(getDataDirectory(), service.model);
     assistant = await createAssistantRuntime(getDataDirectory(), service, runtime);
-    knowledge = await KnowledgeService.open({ dataDirectory: getDataDirectory() });
+    const embeddings = process.platform === "linux" ? await createLinuxEmbeddingProvider() : await createMacEmbeddingProvider();
+    const embeddingProvider = embeddings.status === "available" ? sharedEmbeddingProvider(embeddings.provider) : undefined;
+    knowledge = await KnowledgeService.open({ dataDirectory: getDataDirectory(), embeddingProvider, backgroundIndexing: true });
+    memory = await MemoryService.open({ dataDirectory: getDataDirectory(), embeddingProvider, backgroundIndexing: true,
+      resolveSource(reference, access) {
+        if (!knowledge?.enabled || reference.projectId !== access.projectId) return false;
+        try {
+          const { source, passages } = knowledge.readSource(reference.sourceVersionId, reference.projectId, access.purpose);
+          return !source.archived && knowledge.listSources(reference.projectId, access.purpose).some(item => item.id === source.id) &&
+            (!reference.passageId || passages.some(passage => passage.id === reference.passageId));
+        } catch { return false; }
+      },
+      onLegacyChanged(id) { if (knowledge?.enabled) knowledge.deletePreference(id); },
+    });
+    continuity = await createContinuityRuntime(service, knowledge, memory, { onError: () => diagnostics.record("provider.unavailable", { status: "continuity_persistence_failed" }) });
+    const retained = process.env.JARVIS_RUNTIME_PROFILE === "cloud" && isValidLocalToken(process.env.JARVIS_CLOUD_RUNTIME_TOKEN)
+      ? createRetainedContextProviders({ runtimeToken: process.env.JARVIS_CLOUD_RUNTIME_TOKEN! }) : undefined;
+    context = createContextRuntime(service, knowledge, memory, continuity.service, retained);
     research = await ResearchService.open({ dataDirectory: getDataDirectory(), knowledge, model: process.env.JARVIS_DEEP_MODEL || service.model });
+    objectives = await createObjectiveRuntime({ dataDirectory: getDataDirectory(), enabled: process.env.JARVIS_ENABLE_OBJECTIVES === "1", research, harness: runtime.harness });
+    modelBudget = await ModelBudgetRuntime.open({ dataDirectory: getDataDirectory(), service, objectives: objectives.service, model: service.model,
+      enabled: process.env.JARVIS_RUNTIME_PROFILE === "cloud",
+      canAdmit: id => service.taskSnapshot().some(task => task.id === id && ["starting", "running", "waiting"].includes(task.status)),
+    });
+    nativeCloud = await NativeCloudRuntime.open({ dataDirectory: getDataDirectory(), enabled: process.env.JARVIS_ENABLE_CLOUD === "1", authority: createActionAuthority(service, runtime),
+      async projectForAction(id, room) {
+        if (room) return (await runtime!.harness.state()).rooms.some(item => item.id === id) ? id : null;
+        return service.projectForTask(id);
+      },
+      async observeAction(_id, room, _optionId, reference) {
+        // Task completion/cancellation does not prove this exact approved effect's
+        // outcome. Only an action-specific durable receipt may refine uncertainty.
+        return room ? "unknown" : service.exactApprovedEffectOutcome(reference);
+      },
+    });
+    if (objectives.service.enabled) objectives.service.startLoop();
   } catch (error) {
     // Release stores/owned services when a later subsystem cannot initialize.
     // Recovery must never leave a half-started runtime holding database locks.
-    await Promise.allSettled([research?.close(), assistant?.close(), runtime?.voice.close(), runtime?.harness.shutdown(), service.stop()]);
-    knowledge?.close();
+    await Promise.allSettled([modelBudget?.close(), objectives?.service.close(), nativeCloud?.close(), research?.close(), memory?.close(), assistant?.close(), runtime?.voice.close(), runtime?.harness.shutdown(), service.stop()]);
+    continuity?.close(); knowledge?.close();
     throw error;
   }
-  const diagnostics = new Diagnostics();
-  const server = createBridgeServer(service, BRIDGE_HOST, BRIDGE_PORT, runtime, { extensions: {
-    assistant: assistant.coordinator, knowledge, diagnostics, research,
-    async close() { await research!.close(); await assistant!.close(); knowledge!.close(); },
+  const server = createBridgeServer(service, BRIDGE_HOST, options.port ?? BRIDGE_PORT, runtime, { extensions: {
+    assistant: assistant.coordinator, knowledge, diagnostics, research, memory, context, objectives, continuity, nativeCloud, modelBudget,
+    cloudBroker: createCloudRuntimeBroker({ objectives, continuity: continuity.service, nativeCloud, service, cloudConversationReady: () => Boolean(process.env.AI_GATEWAY_API_KEY?.trim()) && modelBudget?.readiness().ready === true, resumeWork: async () => { await objectives!.service.resumeScheduler(); modelBudget!.resume(); }, authority: createActionAuthority(service, runtime) }),
+    async close() { await modelBudget!.close(); await objectives!.service.close(); await nativeCloud!.close(); continuity!.close(); await research!.close(); await memory!.close(); await assistant!.close(); knowledge!.close(); },
   } });
   server.once("error", () => { void shutdownBridge(server); });
   server.on("listening", () => {
     diagnostics.record("bridge.started");
-    process.stdout.write(`Jarvis bridge listening on http://${BRIDGE_HOST}:${BRIDGE_PORT}\n`);
+    const address = server.address();
+    process.stdout.write(`Jarvis bridge listening on http://${BRIDGE_HOST}:${address && typeof address !== "string" ? address.port : options.port ?? BRIDGE_PORT}\n`);
   });
   return server;
 }

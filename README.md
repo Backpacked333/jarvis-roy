@@ -1,5 +1,7 @@
 # Jarvis for Roy
 
+Persistent objectives, project continuity and the private cloud deployment are described in [the persistent partner guide](docs/persistent-partner.md) and [deployment instructions](deploy/README.md). Cloud services remain opt-in until the operator supplies and verifies the host and accounts.
+
 A native macOS assistant for spoken collaboration, project research and explicitly approved actions. Jarvis combines SwiftUI, an authenticated TypeScript bridge, Eve cloud reasoning and isolated local workers. Inspired by the [Awesome Jarvis blueprint](https://github.com/csells/awesome-jarvis/blob/main/blueprint.md).
 
 **Source-build preview. There is no signed installer or notarized consumer download.** The new experience is implemented behind default-off flags; the five implementation stages have not all passed their release gates. The build ad-hoc signs local app/helper bundles. See [implementation status and open acceptance gates](docs/implementation-status.md) and [the 30-task evaluation set](evaluations/README.md).
@@ -83,6 +85,8 @@ read -r -s -p 'Tavily key: ' TAVILY_API_KEY; printf '\n'; export TAVILY_API_KEY
 | `JARVIS_DATA_DIR` | Default `~/Library/Application Support/JarvisRoy` |
 | `JARVIS_ENABLE_ASSISTANT` | Default off; session coordination, event stream and adaptive workspace |
 | `JARVIS_ENABLE_KNOWLEDGE` | Default off; local knowledge, scoped grants and history access |
+| `JARVIS_ENABLE_MEMORY` | Default off; reviewed personal/project memory and bounded automatic recall |
+| `JARVIS_ENABLE_SEMANTIC_RETRIEVAL` | Default off; local Apple sentence embeddings for hybrid document and memory retrieval; explicit keyword fallback |
 | `JARVIS_ENABLE_RESEARCH` | Default off; bounded synthesis and critique; also requires Knowledge |
 | `JARVIS_ENABLE_VOICE_APPROVAL` | Default off; action-specific spoken confirmation; also needs Assistant and cloud voice consent |
 | `JARVIS_ENABLE_DESKTOP` | Default off; enable helper-based screen/AX tools |
@@ -99,6 +103,8 @@ read -r -s -p 'Tavily key: ' TAVILY_API_KEY; printf '\n'; export TAVILY_API_KEY
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | Bridge-only key and one selected voice; no credentials in native frames, query strings or worker environments |
 
 To disable, change the relevant Settings switch or remove the shell override and relaunch. Model tools cannot enable features or create grants. Runtime tools refuse disabled/unconfigured services even if the model proposes them.
+
+**RAG and personal memory:** enable Knowledge and Personal Memory in Settings, import selected documents, and review their cloud-sharing grants. Enable Local Semantic Retrieval to add on-device similarity search. The Memory workspace supports personal and project facts, preferences, goals, people, routines and decisions; suggestions require review, and edits require another review. Context is selected automatically each turn with bounded size, exact citations and current permissions. Use the project's Context inspector to examine selections, omissions and pins. See [RAG, memory and context](docs/rag-memory-context.md) for setup and boundaries.
 
 Conversations, the analyst, Room plan authoring and worker reasoning use `JARVIS_MODEL`. Research synthesis/critique can use `JARVIS_DEEP_MODEL`, initially falling back to the same configured model. Choose models in Settings or the launch shell, then restart. No separate OpenAI key is needed; ElevenLabs voice models are unchanged. Budgeted calls require known prices and matching returned models from the [Gateway catalog](https://ai-gateway.vercel.sh/v1/models). Missing pricing, model mismatch or uncertain usage blocks further budgeted calls. Retrieval and critique count toward research admission; Tavily requires an explicit cost allowance because its actual charges are not observed.
 

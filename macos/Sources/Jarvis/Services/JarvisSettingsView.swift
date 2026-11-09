@@ -6,11 +6,18 @@ struct JarvisSettingsView: View {
     @ObservedObject var diagnostics = RuntimeDiagnostics.shared
     @AppStorage("Jarvis.assistantEnabled") private var assistantEnabled = false
     @AppStorage("Jarvis.knowledgeEnabled") private var knowledgeEnabled = false
+    @AppStorage("Jarvis.memoryEnabled") private var memoryEnabled = false
+    @AppStorage("Jarvis.semanticRetrievalEnabled") private var semanticRetrievalEnabled = false
     @AppStorage("Jarvis.researchEnabled") private var researchEnabled = false
     @AppStorage("Jarvis.voiceApprovalEnabled") private var voiceApprovalEnabled = false
     @AppStorage("Jarvis.desktopEnabled") private var desktopEnabled = false
     @AppStorage("Jarvis.appleServicesEnabled") private var appleServicesEnabled = false
     @AppStorage("Jarvis.terminalEnabled") private var terminalEnabled = false
+    @AppStorage("Jarvis.objectivesEnabled") private var objectivesEnabled = false
+    @AppStorage("Jarvis.cloudEnabled") private var cloudEnabled = false
+    @AppStorage("Jarvis.telegramEnabled") private var telegramEnabled = false
+    @AppStorage("Jarvis.googleEnabled") private var googleEnabled = false
+    @AppStorage("Jarvis.phoneEnabled") private var phoneEnabled = false
     @AppStorage("Jarvis.model") private var model = ""
     @AppStorage("Jarvis.deepModel") private var deepModel = ""
     @AppStorage("Jarvis.voiceID") private var voiceID = ""
@@ -38,6 +45,10 @@ struct JarvisSettingsView: View {
                 Section("New experience") {
                     Toggle("Voice-first assistant", isOn: $assistantEnabled)
                     Toggle("Project knowledge and read grants", isOn: $knowledgeEnabled)
+                    Toggle("Reviewed personal memory", isOn: $memoryEnabled)
+                    Toggle("On-device semantic retrieval", isOn: $semanticRetrievalEnabled)
+                    Text("Semantic retrieval uses an available Apple language model on this Mac. If unavailable, search uses keywords. Source access and cloud disclosure still require grants.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Toggle("Reviewed research workflows", isOn: $researchEnabled)
                     Text("Research also requires project knowledge. Each run has a separately reviewed estimate and time limit.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -73,6 +84,15 @@ struct JarvisSettingsView: View {
                     Text("Prepares once per local day when Jarvis is active, awake and unlocked. Only this project's permitted cloud sources may be used. It creates drafts and proposals; it does not send or execute actions.")
                         .font(.caption).foregroundStyle(.secondary)
                     Text(briefing.status).font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Companion capabilities") {
+                    Toggle("Long-running objectives", isOn: $objectivesEnabled)
+                    Toggle("Paired cloud companion", isOn: $cloudEnabled)
+                    Toggle("Telegram channel", isOn: $telegramEnabled)
+                    Toggle("Selected Google accounts", isOn: $googleEnabled)
+                    Toggle("Phone channel", isOn: $phoneEnabled)
+                    Text("Each channel needs its own setup and grants. Cloud pairing uses a separate device credential; switching profiles does not move local history or pending actions.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }.formStyle(.grouped).tabItem { Label("General", systemImage: "gearshape") }
             Form {

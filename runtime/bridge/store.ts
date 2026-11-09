@@ -3,6 +3,7 @@ import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { ensurePrivateDirectory, getDataDirectory, readPrivateJson, writeJsonAtomically } from "../agent/lib/persistence.ts";
 import type { ConversationRecord, TaskRecord, TaskStatus } from "./types.ts";
+import { GoogleEffectReceiptSchema } from "./google-effect-contracts.ts";
 
 const STATUSES = new Set<TaskStatus>([
   "starting", "running", "waiting", "completed", "failed", "cancelled", "interrupted",
@@ -31,6 +32,8 @@ function isTaskRecord(value: unknown): value is TaskRecord {
     (value.projectId === undefined || (typeof value.projectId === "string" && PROJECT_ID.test(value.projectId))) &&
     (value.lateReply === undefined || typeof value.lateReply === "string") &&
     (value.responseUnconfirmed === undefined || typeof value.responseUnconfirmed === "boolean") &&
+    (value.googleEffects === undefined || (Array.isArray(value.googleEffects) && value.googleEffects.length <= 64 &&
+      value.googleEffects.every(item => GoogleEffectReceiptSchema.safeParse(item).success))) &&
     (value.replyParts === undefined || (object(value.replyParts) &&
       Object.values(value.replyParts).every((part) => typeof part === "string"))) &&
     (value.observingDeliveries === undefined || (Number.isSafeInteger(value.observingDeliveries) &&
@@ -103,6 +106,10 @@ export class TaskStore {
       }
       this.attachConversation(task, false);
       this.records.set(task.id, task);
+      for (const receipt of task.googleEffects ?? []) {
+        if (["submitting", "dispatching"].includes(receipt.status)) receipt.status = "unknown";
+        else if (["pending", "approved"].includes(receipt.status)) receipt.status = "revoked";
+      }
       if (!TERMINAL_STATUSES.has(task.status) || task.observingDeliveries || task.cancellationPending || task.responseUnconfirmed) {
         task.status = "interrupted";
         task.approvals = [];

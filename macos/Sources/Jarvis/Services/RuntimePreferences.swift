@@ -7,11 +7,18 @@ struct RuntimePreferences {
     static let flags = [
         "JARVIS_ENABLE_ASSISTANT": "Jarvis.assistantEnabled",
         "JARVIS_ENABLE_KNOWLEDGE": "Jarvis.knowledgeEnabled",
+        "JARVIS_ENABLE_MEMORY": "Jarvis.memoryEnabled",
+        "JARVIS_ENABLE_SEMANTIC_RETRIEVAL": "Jarvis.semanticRetrievalEnabled",
         "JARVIS_ENABLE_RESEARCH": "Jarvis.researchEnabled",
         "JARVIS_ENABLE_VOICE_APPROVAL": "Jarvis.voiceApprovalEnabled",
         "JARVIS_ENABLE_DESKTOP": "Jarvis.desktopEnabled",
         "JARVIS_ENABLE_TERMINAL": "Jarvis.terminalEnabled",
         "JARVIS_ENABLE_APPLE_SERVICES": "Jarvis.appleServicesEnabled",
+        "JARVIS_ENABLE_OBJECTIVES": "Jarvis.objectivesEnabled",
+        "JARVIS_ENABLE_CLOUD": "Jarvis.cloudEnabled",
+        "JARVIS_ENABLE_TELEGRAM": "Jarvis.telegramEnabled",
+        "JARVIS_ENABLE_GOOGLE": "Jarvis.googleEnabled",
+        "JARVIS_ENABLE_PHONE": "Jarvis.phoneEnabled",
     ]
 
     func environment(inherited: [String: String]) -> [String: String] {

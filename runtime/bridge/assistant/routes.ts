@@ -24,6 +24,11 @@ export async function assistantRoute(method: string, url: URL | string, body: un
     const input = NativeInput.parse(body);
     return { status: 200, body: await coordinator.nativeEvent(input.event, input, context) };
   }
+  const draft = /^\/v1\/assistant\/presentations\/([^/]+)$/.exec(path);
+  if (draft && method === "PATCH") {
+    if (!context.nativeAuthenticated) throw new BridgeError("Native draft editing required.", 403);
+    return { status: 200, body: await coordinator.editDraft(AssistantIdSchema.parse(decodeURIComponent(draft[1])), body) };
+  }
   const match = /^\/v1\/assistant\/sessions\/([^/]+)\/(focus|turns|proposals|invalidate-confirmations)$/.exec(path);
   if (match && method === "POST") {
     const id = AssistantIdSchema.parse(decodeURIComponent(match[1]));

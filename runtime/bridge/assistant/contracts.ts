@@ -18,6 +18,14 @@ export const AssistantIntentSchema = z.enum(["continue", "side_question", "redir
 export type AssistantIntent = z.infer<typeof AssistantIntentSchema>;
 export const AssistantPresentationRefSchema = z.strictObject({ presentationId: AssistantIdSchema, revision });
 
+export const PresentationSelectionSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("document_passage"), passageId: AssistantIdSchema }),
+  z.strictObject({ kind: z.literal("table_cell"), row: z.number().int().nonnegative(), column: z.number().int().nonnegative() }),
+  z.strictObject({ kind: z.literal("text_range"), start: z.number().int().nonnegative(), end: z.number().int().positive() }),
+]);
+export type PresentationSelection = z.infer<typeof PresentationSelectionSchema>;
+export const EditDraftSchema = z.strictObject({ expectedRevision: revision, body: text });
+
 export const AssistantSessionSchema = z.strictObject({
   version: z.literal(1), id: AssistantIdSchema, title: z.string().trim().min(1).max(120), revision,
   focus: AssistantFocusSchema, createdAt: date, updatedAt: date,
@@ -28,6 +36,7 @@ export const AssistantTurnSchema = z.strictObject({
   text, intent: AssistantIntentSchema, capturedFocus: AssistantFocusSchema,
   presentationRef: AssistantPresentationRefSchema.nullable().default(null),
   capturedPresentation: z.lazy(() => AssistantPresentationSchema).nullable().default(null),
+  selection: PresentationSelectionSchema.nullable().default(null),
   sessionRevision: revision,
   status: z.enum(["dispatching", "running", "completed", "failed", "interrupted"]),
   taskId: AssistantIdSchema.nullable(), conversationId: AssistantIdSchema.nullable(),
@@ -108,7 +117,7 @@ export const AssistantStateSchema = z.strictObject({
   presentations: z.array(AssistantPresentationSchema).max(300), proposals: z.array(VoiceProposalSchema).max(100),
 });
 export type AssistantState = z.infer<typeof AssistantStateSchema>;
-export const AssistantSnapshotSchema = AssistantStateSchema.extend({ events: z.array(AssistantEventSchema).max(512) });
+export const AssistantSnapshotSchema = AssistantStateSchema.extend({ presentationHistory: z.array(AssistantPresentationSchema).max(300).default([]), events: z.array(AssistantEventSchema).max(512) });
 export type AssistantSnapshot = z.infer<typeof AssistantSnapshotSchema>;
 
 // These events must arrive through an independently authenticated native channel.
@@ -128,5 +137,5 @@ export type NativeConfirmationEvent = z.infer<typeof NativeConfirmationEventSche
 export const CreateAssistantSessionSchema = z.strictObject({ title: z.string().trim().min(1).max(120), focus: AssistantFocusSchema });
 export const UpdateAssistantFocusSchema = z.strictObject({ expectedRevision: revision, focus: AssistantFocusSchema });
 export const SubmitAssistantTurnSchema = z.strictObject({ expectedRevision: revision, text: z.string().trim().min(1).max(16_000), intent: AssistantIntentSchema,
-  presentationRef: AssistantPresentationRefSchema.nullable().optional() });
+  presentationRef: AssistantPresentationRefSchema.nullable().optional(), selection: PresentationSelectionSchema.nullable().optional() });
 export const AssistantEventsSchema = z.strictObject({ version: z.literal(1), sequence: z.number().int().min(0), events: z.array(AssistantEventSchema).max(512) });

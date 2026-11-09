@@ -11,9 +11,16 @@ export interface NativeHelperOptions {
 
 let nativeBusy = false;
 /** Executes only the operator-selected bundled helper; every caller validates its exact result DTO. */
-export async function runNativeHelper(request: object, signal?: AbortSignal, options: NativeHelperOptions = {}, capability: "desktop" | "calendar" = "desktop"): Promise<unknown> {
+export async function runNativeHelper(request: object, signal?: AbortSignal, options: NativeHelperOptions = {}, capability: "desktop" | "calendar" | "embedding" = "desktop"): Promise<unknown> {
   const environment = options.environment ?? process.env;
-  const enabled = capability === "desktop" ? environment.JARVIS_ENABLE_DESKTOP === "1" : environment.JARVIS_ENABLE_APPLE_SERVICES === "1";
+  if ((request as { operation?: unknown }).operation === "sentence_embeddings" && capability !== "embedding") {
+    throw new Error("Sentence embeddings require the narrow embedding capability and its separate opt-in.");
+  }
+  const enabled = capability === "embedding" ? environment.JARVIS_ENABLE_SEMANTIC_RETRIEVAL === "1"
+    : capability === "desktop" ? environment.JARVIS_ENABLE_DESKTOP === "1" : environment.JARVIS_ENABLE_APPLE_SERVICES === "1";
+  if (capability === "embedding" && (!enabled || (request as { operation?: unknown }).operation !== "sentence_embeddings")) {
+    throw new Error("On-device semantic retrieval is disabled or its narrow embedding operation was not selected.");
+  }
   if (!enabled) throw new Error(capability === "desktop"
     ? "Desktop access is disabled. The operator must set JARVIS_ENABLE_DESKTOP=1; every read/action still requires approval."
     : "Calendar access is disabled. The operator must set JARVIS_ENABLE_APPLE_SERVICES=1; a selected-calendar grant or exact approval is required.");

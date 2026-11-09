@@ -310,6 +310,8 @@ function result(operation: "search" | "extract", sources: ResearchSource[], erro
 }
 
 export async function searchWeb(input: { query: string; maxResults?: number }, signal?: AbortSignal, dependencies: ResearchDependencies = {}): Promise<ResearchResult> {
+  if (process.env.JARVIS_RUNTIME_PROFILE === "cloud") throw new ResearchError("cloud_budget_required",
+    "Direct Tavily search has no shared cloud cost reservation. Use an explicitly admitted, budgeted research objective with public arXiv or Crossref evidence.");
   return research(dependencies, signal, async (ctx) => {
     const maxResults = input.maxResults ?? RESEARCH_LIMITS.searchResults;
     if (typeof input.query !== "string" || !input.query.trim() || input.query.length > RESEARCH_LIMITS.query || /[\u0000-\u001f\u007f]/u.test(input.query) || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > RESEARCH_LIMITS.searchResults) {
@@ -344,6 +346,8 @@ export async function searchWeb(input: { query: string; maxResults?: number }, s
 }
 
 export async function readWebpages(input: { urls: string[] }, signal?: AbortSignal, dependencies: ResearchDependencies = {}): Promise<ResearchResult> {
+  if (process.env.JARVIS_RUNTIME_PROFILE === "cloud") throw new ResearchError("cloud_budget_required",
+    "Direct Tavily extraction has no shared cloud cost reservation. Use an explicitly admitted, budgeted research objective with public arXiv or Crossref evidence.");
   return research(dependencies, signal, async (ctx) => {
     if (!Array.isArray(input.urls) || input.urls.length < 1 || input.urls.length > RESEARCH_LIMITS.extractUrls) {
       throw new ResearchError("invalid_urls", "Provide 1–3 explicit public HTTPS URLs to read.");

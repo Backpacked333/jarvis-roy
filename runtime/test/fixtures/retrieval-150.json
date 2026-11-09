@@ -1,0 +1,1029 @@
+{
+  "version": 1,
+  "evaluationKind": "deterministic_retrieval_contract_fixture",
+  "liveEmbeddingQuality": "unrun",
+  "sources": [
+    {
+      "id": "fatigue",
+      "text": "Cyclic stress reduces fatigue endurance in metal beams."
+    },
+    {
+      "id": "photosynthesis",
+      "text": "Photosynthesis converts sunlight into stored chemical energy."
+    },
+    {
+      "id": "osmosis",
+      "text": "Osmosis moves water across a selectively permeable membrane."
+    },
+    {
+      "id": "entropy",
+      "text": "Entropy measures the number of microscopic configurations."
+    },
+    {
+      "id": "quicksort",
+      "text": "Quicksort partitions an array around a pivot."
+    },
+    {
+      "id": "recursion",
+      "text": "Recursion solves a problem through smaller instances."
+    },
+    {
+      "id": "mutex",
+      "text": "A mutex serializes access to shared mutable state."
+    },
+    {
+      "id": "deadlock",
+      "text": "Deadlock requires competing processes to hold resources."
+    },
+    {
+      "id": "indexing",
+      "text": "Database indexing accelerates selective row retrieval."
+    },
+    {
+      "id": "transactions",
+      "text": "Transactions commit changes atomically or roll back."
+    },
+    {
+      "id": "volatility",
+      "text": "Market volatility describes variation in asset returns."
+    },
+    {
+      "id": "inflation",
+      "text": "Inflation changes the purchasing power of money."
+    },
+    {
+      "id": "bonds",
+      "text": "Bonds expose holders to duration and credit risks."
+    },
+    {
+      "id": "diversification",
+      "text": "Diversification reduces concentration in a portfolio."
+    },
+    {
+      "id": "bayesian",
+      "text": "Bayesian inference updates prior beliefs using observations."
+    },
+    {
+      "id": "bootstrap",
+      "text": "Bootstrap resampling estimates sampling uncertainty."
+    },
+    {
+      "id": "regression",
+      "text": "Regression fits relationships between observed variables."
+    },
+    {
+      "id": "confounding",
+      "text": "Confounding can bias observational causal estimates."
+    },
+    {
+      "id": "diffusion",
+      "text": "Diffusion spreads particles down concentration gradients."
+    },
+    {
+      "id": "catalysis",
+      "text": "Catalysis alters reaction pathways without net catalyst consumption."
+    },
+    {
+      "id": "oxidation",
+      "text": "Oxidation involves the loss of electrons."
+    },
+    {
+      "id": "isotopes",
+      "text": "Isotopes have equal proton counts and different neutron counts."
+    },
+    {
+      "id": "orbit",
+      "text": "An orbit is shaped by gravitational attraction."
+    },
+    {
+      "id": "telescope",
+      "text": "A telescope collects light from distant sources."
+    },
+    {
+      "id": "seismic",
+      "text": "Seismic waves reveal properties inside Earth."
+    },
+    {
+      "id": "erosion",
+      "text": "Erosion transports surface material through wind or water."
+    },
+    {
+      "id": "alliteration",
+      "text": "Alliteration repeats initial consonant sounds."
+    },
+    {
+      "id": "metaphor",
+      "text": "A metaphor describes one thing through another."
+    },
+    {
+      "id": "counterpoint",
+      "text": "Counterpoint combines distinct melodic voices."
+    },
+    {
+      "id": "harmony",
+      "text": "Harmony concerns relationships among simultaneous pitches."
+    }
+  ],
+  "cases": [
+    {
+      "id": "fatigue-1",
+      "query": "What does the document say about fatigue?",
+      "expectedSource": "fatigue",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "fatigue-2",
+      "query": "Please explain fatigue using the supplied evidence.",
+      "expectedSource": "fatigue",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "fatigue-3",
+      "query": "Find the passage concerning fatigue.",
+      "expectedSource": "fatigue",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "fatigue-4",
+      "query": "How is fatigue described here?",
+      "expectedSource": "fatigue",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "fatigue-5",
+      "query": "Show me evidence for fatigue, even if terminology differs elsewhere.",
+      "expectedSource": "fatigue",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "photosynthesis-1",
+      "query": "What does the document say about photosynthesis?",
+      "expectedSource": "photosynthesis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "photosynthesis-2",
+      "query": "Please explain photosynthesis using the supplied evidence.",
+      "expectedSource": "photosynthesis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "photosynthesis-3",
+      "query": "Find the passage concerning photosynthesis.",
+      "expectedSource": "photosynthesis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "photosynthesis-4",
+      "query": "How is photosynthesis described here?",
+      "expectedSource": "photosynthesis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "photosynthesis-5",
+      "query": "Show me evidence for photosynthesis, even if terminology differs elsewhere.",
+      "expectedSource": "photosynthesis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "osmosis-1",
+      "query": "What does the document say about osmosis?",
+      "expectedSource": "osmosis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "osmosis-2",
+      "query": "Please explain osmosis using the supplied evidence.",
+      "expectedSource": "osmosis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "osmosis-3",
+      "query": "Find the passage concerning osmosis.",
+      "expectedSource": "osmosis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "osmosis-4",
+      "query": "How is osmosis described here?",
+      "expectedSource": "osmosis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "osmosis-5",
+      "query": "Show me evidence for osmosis, even if terminology differs elsewhere.",
+      "expectedSource": "osmosis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "entropy-1",
+      "query": "What does the document say about entropy?",
+      "expectedSource": "entropy",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "entropy-2",
+      "query": "Please explain entropy using the supplied evidence.",
+      "expectedSource": "entropy",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "entropy-3",
+      "query": "Find the passage concerning entropy.",
+      "expectedSource": "entropy",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "entropy-4",
+      "query": "How is entropy described here?",
+      "expectedSource": "entropy",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "entropy-5",
+      "query": "Show me evidence for entropy, even if terminology differs elsewhere.",
+      "expectedSource": "entropy",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "quicksort-1",
+      "query": "What does the document say about quicksort?",
+      "expectedSource": "quicksort",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "quicksort-2",
+      "query": "Please explain quicksort using the supplied evidence.",
+      "expectedSource": "quicksort",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "quicksort-3",
+      "query": "Find the passage concerning quicksort.",
+      "expectedSource": "quicksort",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "quicksort-4",
+      "query": "How is quicksort described here?",
+      "expectedSource": "quicksort",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "quicksort-5",
+      "query": "Show me evidence for quicksort, even if terminology differs elsewhere.",
+      "expectedSource": "quicksort",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "recursion-1",
+      "query": "What does the document say about recursion?",
+      "expectedSource": "recursion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "recursion-2",
+      "query": "Please explain recursion using the supplied evidence.",
+      "expectedSource": "recursion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "recursion-3",
+      "query": "Find the passage concerning recursion.",
+      "expectedSource": "recursion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "recursion-4",
+      "query": "How is recursion described here?",
+      "expectedSource": "recursion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "recursion-5",
+      "query": "Show me evidence for recursion, even if terminology differs elsewhere.",
+      "expectedSource": "recursion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "mutex-1",
+      "query": "What does the document say about mutex?",
+      "expectedSource": "mutex",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "mutex-2",
+      "query": "Please explain mutex using the supplied evidence.",
+      "expectedSource": "mutex",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "mutex-3",
+      "query": "Find the passage concerning mutex.",
+      "expectedSource": "mutex",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "mutex-4",
+      "query": "How is mutex described here?",
+      "expectedSource": "mutex",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "mutex-5",
+      "query": "Show me evidence for mutex, even if terminology differs elsewhere.",
+      "expectedSource": "mutex",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "deadlock-1",
+      "query": "What does the document say about deadlock?",
+      "expectedSource": "deadlock",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "deadlock-2",
+      "query": "Please explain deadlock using the supplied evidence.",
+      "expectedSource": "deadlock",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "deadlock-3",
+      "query": "Find the passage concerning deadlock.",
+      "expectedSource": "deadlock",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "deadlock-4",
+      "query": "How is deadlock described here?",
+      "expectedSource": "deadlock",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "deadlock-5",
+      "query": "Show me evidence for deadlock, even if terminology differs elsewhere.",
+      "expectedSource": "deadlock",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "indexing-1",
+      "query": "What does the document say about indexing?",
+      "expectedSource": "indexing",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "indexing-2",
+      "query": "Please explain indexing using the supplied evidence.",
+      "expectedSource": "indexing",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "indexing-3",
+      "query": "Find the passage concerning indexing.",
+      "expectedSource": "indexing",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "indexing-4",
+      "query": "How is indexing described here?",
+      "expectedSource": "indexing",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "indexing-5",
+      "query": "Show me evidence for indexing, even if terminology differs elsewhere.",
+      "expectedSource": "indexing",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "transactions-1",
+      "query": "What does the document say about transactions?",
+      "expectedSource": "transactions",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "transactions-2",
+      "query": "Please explain transactions using the supplied evidence.",
+      "expectedSource": "transactions",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "transactions-3",
+      "query": "Find the passage concerning transactions.",
+      "expectedSource": "transactions",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "transactions-4",
+      "query": "How is transactions described here?",
+      "expectedSource": "transactions",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "transactions-5",
+      "query": "Show me evidence for transactions, even if terminology differs elsewhere.",
+      "expectedSource": "transactions",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "volatility-1",
+      "query": "What does the document say about volatility?",
+      "expectedSource": "volatility",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "volatility-2",
+      "query": "Please explain volatility using the supplied evidence.",
+      "expectedSource": "volatility",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "volatility-3",
+      "query": "Find the passage concerning volatility.",
+      "expectedSource": "volatility",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "volatility-4",
+      "query": "How is volatility described here?",
+      "expectedSource": "volatility",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "volatility-5",
+      "query": "Show me evidence for volatility, even if terminology differs elsewhere.",
+      "expectedSource": "volatility",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "inflation-1",
+      "query": "What does the document say about inflation?",
+      "expectedSource": "inflation",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "inflation-2",
+      "query": "Please explain inflation using the supplied evidence.",
+      "expectedSource": "inflation",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "inflation-3",
+      "query": "Find the passage concerning inflation.",
+      "expectedSource": "inflation",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "inflation-4",
+      "query": "How is inflation described here?",
+      "expectedSource": "inflation",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "inflation-5",
+      "query": "Show me evidence for inflation, even if terminology differs elsewhere.",
+      "expectedSource": "inflation",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bonds-1",
+      "query": "What does the document say about bonds?",
+      "expectedSource": "bonds",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bonds-2",
+      "query": "Please explain bonds using the supplied evidence.",
+      "expectedSource": "bonds",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bonds-3",
+      "query": "Find the passage concerning bonds.",
+      "expectedSource": "bonds",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bonds-4",
+      "query": "How is bonds described here?",
+      "expectedSource": "bonds",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bonds-5",
+      "query": "Show me evidence for bonds, even if terminology differs elsewhere.",
+      "expectedSource": "bonds",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "diversification-1",
+      "query": "What does the document say about diversification?",
+      "expectedSource": "diversification",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "diversification-2",
+      "query": "Please explain diversification using the supplied evidence.",
+      "expectedSource": "diversification",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "diversification-3",
+      "query": "Find the passage concerning diversification.",
+      "expectedSource": "diversification",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "diversification-4",
+      "query": "How is diversification described here?",
+      "expectedSource": "diversification",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "diversification-5",
+      "query": "Show me evidence for diversification, even if terminology differs elsewhere.",
+      "expectedSource": "diversification",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bayesian-1",
+      "query": "What does the document say about bayesian?",
+      "expectedSource": "bayesian",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bayesian-2",
+      "query": "Please explain bayesian using the supplied evidence.",
+      "expectedSource": "bayesian",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bayesian-3",
+      "query": "Find the passage concerning bayesian.",
+      "expectedSource": "bayesian",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bayesian-4",
+      "query": "How is bayesian described here?",
+      "expectedSource": "bayesian",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bayesian-5",
+      "query": "Show me evidence for bayesian, even if terminology differs elsewhere.",
+      "expectedSource": "bayesian",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bootstrap-1",
+      "query": "What does the document say about bootstrap?",
+      "expectedSource": "bootstrap",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bootstrap-2",
+      "query": "Please explain bootstrap using the supplied evidence.",
+      "expectedSource": "bootstrap",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bootstrap-3",
+      "query": "Find the passage concerning bootstrap.",
+      "expectedSource": "bootstrap",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bootstrap-4",
+      "query": "How is bootstrap described here?",
+      "expectedSource": "bootstrap",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "bootstrap-5",
+      "query": "Show me evidence for bootstrap, even if terminology differs elsewhere.",
+      "expectedSource": "bootstrap",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "regression-1",
+      "query": "What does the document say about regression?",
+      "expectedSource": "regression",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "regression-2",
+      "query": "Please explain regression using the supplied evidence.",
+      "expectedSource": "regression",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "regression-3",
+      "query": "Find the passage concerning regression.",
+      "expectedSource": "regression",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "regression-4",
+      "query": "How is regression described here?",
+      "expectedSource": "regression",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "regression-5",
+      "query": "Show me evidence for regression, even if terminology differs elsewhere.",
+      "expectedSource": "regression",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "confounding-1",
+      "query": "What does the document say about confounding?",
+      "expectedSource": "confounding",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "confounding-2",
+      "query": "Please explain confounding using the supplied evidence.",
+      "expectedSource": "confounding",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "confounding-3",
+      "query": "Find the passage concerning confounding.",
+      "expectedSource": "confounding",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "confounding-4",
+      "query": "How is confounding described here?",
+      "expectedSource": "confounding",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "confounding-5",
+      "query": "Show me evidence for confounding, even if terminology differs elsewhere.",
+      "expectedSource": "confounding",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "diffusion-1",
+      "query": "What does the document say about diffusion?",
+      "expectedSource": "diffusion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "diffusion-2",
+      "query": "Please explain diffusion using the supplied evidence.",
+      "expectedSource": "diffusion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "diffusion-3",
+      "query": "Find the passage concerning diffusion.",
+      "expectedSource": "diffusion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "diffusion-4",
+      "query": "How is diffusion described here?",
+      "expectedSource": "diffusion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "diffusion-5",
+      "query": "Show me evidence for diffusion, even if terminology differs elsewhere.",
+      "expectedSource": "diffusion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "catalysis-1",
+      "query": "What does the document say about catalysis?",
+      "expectedSource": "catalysis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "catalysis-2",
+      "query": "Please explain catalysis using the supplied evidence.",
+      "expectedSource": "catalysis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "catalysis-3",
+      "query": "Find the passage concerning catalysis.",
+      "expectedSource": "catalysis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "catalysis-4",
+      "query": "How is catalysis described here?",
+      "expectedSource": "catalysis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "catalysis-5",
+      "query": "Show me evidence for catalysis, even if terminology differs elsewhere.",
+      "expectedSource": "catalysis",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "oxidation-1",
+      "query": "What does the document say about oxidation?",
+      "expectedSource": "oxidation",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "oxidation-2",
+      "query": "Please explain oxidation using the supplied evidence.",
+      "expectedSource": "oxidation",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "oxidation-3",
+      "query": "Find the passage concerning oxidation.",
+      "expectedSource": "oxidation",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "oxidation-4",
+      "query": "How is oxidation described here?",
+      "expectedSource": "oxidation",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "oxidation-5",
+      "query": "Show me evidence for oxidation, even if terminology differs elsewhere.",
+      "expectedSource": "oxidation",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "isotopes-1",
+      "query": "What does the document say about isotopes?",
+      "expectedSource": "isotopes",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "isotopes-2",
+      "query": "Please explain isotopes using the supplied evidence.",
+      "expectedSource": "isotopes",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "isotopes-3",
+      "query": "Find the passage concerning isotopes.",
+      "expectedSource": "isotopes",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "isotopes-4",
+      "query": "How is isotopes described here?",
+      "expectedSource": "isotopes",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "isotopes-5",
+      "query": "Show me evidence for isotopes, even if terminology differs elsewhere.",
+      "expectedSource": "isotopes",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "orbit-1",
+      "query": "What does the document say about orbit?",
+      "expectedSource": "orbit",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "orbit-2",
+      "query": "Please explain orbit using the supplied evidence.",
+      "expectedSource": "orbit",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "orbit-3",
+      "query": "Find the passage concerning orbit.",
+      "expectedSource": "orbit",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "orbit-4",
+      "query": "How is orbit described here?",
+      "expectedSource": "orbit",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "orbit-5",
+      "query": "Show me evidence for orbit, even if terminology differs elsewhere.",
+      "expectedSource": "orbit",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "telescope-1",
+      "query": "What does the document say about telescope?",
+      "expectedSource": "telescope",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "telescope-2",
+      "query": "Please explain telescope using the supplied evidence.",
+      "expectedSource": "telescope",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "telescope-3",
+      "query": "Find the passage concerning telescope.",
+      "expectedSource": "telescope",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "telescope-4",
+      "query": "How is telescope described here?",
+      "expectedSource": "telescope",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "telescope-5",
+      "query": "Show me evidence for telescope, even if terminology differs elsewhere.",
+      "expectedSource": "telescope",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "seismic-1",
+      "query": "What does the document say about seismic?",
+      "expectedSource": "seismic",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "seismic-2",
+      "query": "Please explain seismic using the supplied evidence.",
+      "expectedSource": "seismic",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "seismic-3",
+      "query": "Find the passage concerning seismic.",
+      "expectedSource": "seismic",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "seismic-4",
+      "query": "How is seismic described here?",
+      "expectedSource": "seismic",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "seismic-5",
+      "query": "Show me evidence for seismic, even if terminology differs elsewhere.",
+      "expectedSource": "seismic",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "erosion-1",
+      "query": "What does the document say about erosion?",
+      "expectedSource": "erosion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "erosion-2",
+      "query": "Please explain erosion using the supplied evidence.",
+      "expectedSource": "erosion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "erosion-3",
+      "query": "Find the passage concerning erosion.",
+      "expectedSource": "erosion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "erosion-4",
+      "query": "How is erosion described here?",
+      "expectedSource": "erosion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "erosion-5",
+      "query": "Show me evidence for erosion, even if terminology differs elsewhere.",
+      "expectedSource": "erosion",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "alliteration-1",
+      "query": "What does the document say about alliteration?",
+      "expectedSource": "alliteration",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "alliteration-2",
+      "query": "Please explain alliteration using the supplied evidence.",
+      "expectedSource": "alliteration",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "alliteration-3",
+      "query": "Find the passage concerning alliteration.",
+      "expectedSource": "alliteration",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "alliteration-4",
+      "query": "How is alliteration described here?",
+      "expectedSource": "alliteration",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "alliteration-5",
+      "query": "Show me evidence for alliteration, even if terminology differs elsewhere.",
+      "expectedSource": "alliteration",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "metaphor-1",
+      "query": "What does the document say about metaphor?",
+      "expectedSource": "metaphor",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "metaphor-2",
+      "query": "Please explain metaphor using the supplied evidence.",
+      "expectedSource": "metaphor",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "metaphor-3",
+      "query": "Find the passage concerning metaphor.",
+      "expectedSource": "metaphor",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "metaphor-4",
+      "query": "How is metaphor described here?",
+      "expectedSource": "metaphor",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "metaphor-5",
+      "query": "Show me evidence for metaphor, even if terminology differs elsewhere.",
+      "expectedSource": "metaphor",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "counterpoint-1",
+      "query": "What does the document say about counterpoint?",
+      "expectedSource": "counterpoint",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "counterpoint-2",
+      "query": "Please explain counterpoint using the supplied evidence.",
+      "expectedSource": "counterpoint",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "counterpoint-3",
+      "query": "Find the passage concerning counterpoint.",
+      "expectedSource": "counterpoint",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "counterpoint-4",
+      "query": "How is counterpoint described here?",
+      "expectedSource": "counterpoint",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "counterpoint-5",
+      "query": "Show me evidence for counterpoint, even if terminology differs elsewhere.",
+      "expectedSource": "counterpoint",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "harmony-1",
+      "query": "What does the document say about harmony?",
+      "expectedSource": "harmony",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "harmony-2",
+      "query": "Please explain harmony using the supplied evidence.",
+      "expectedSource": "harmony",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "harmony-3",
+      "query": "Find the passage concerning harmony.",
+      "expectedSource": "harmony",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "harmony-4",
+      "query": "How is harmony described here?",
+      "expectedSource": "harmony",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    },
+    {
+      "id": "harmony-5",
+      "query": "Show me evidence for harmony, even if terminology differs elsewhere.",
+      "expectedSource": "harmony",
+      "acceptance": "Expected immutable source appears in top three and its passage resolves exactly."
+    }
+  ]
+}

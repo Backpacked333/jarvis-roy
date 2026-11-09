@@ -45,7 +45,7 @@ final class AppModel: ObservableObject {
         self.voice = injectedVoice ?? VoiceController()
         self.rooms = RoomsModel(client: harnessClient ?? HarnessClient())
         self.assistant = AssistantModel(voice: self.voice)
-        if AssistantFeatures.assistant { self.tab = .assistant }
+        if AssistantFeatures.assistant { self.tab = .today }
         voice.contextProvider = { [weak self] in self?.captureContext ?? HarnessVoiceContext() }
         voice.onUtterance = { [weak self] utterance in Task { await self?.handleUtterance(utterance) } }
         voice.onAudioLevels = { [weak self] levels in self?.rooms.updateAudioLevels(levels) }
@@ -57,10 +57,11 @@ final class AppModel: ObservableObject {
             guard let self, self.tab == .assistant else { return }
             self.assistant.captureStarted(voiceSessionID: session, generation: generation)
         }
+        voice.onDictationRetained = { [weak self] utterance in self?.assistant.retainInterruptedDictation(utterance) }
         voice.onSpeechDrained = { [weak self] receipt in Task { await self?.assistant.speechDrained(receipt) } }
         rooms.onQuestionAttention = { [weak self] notice in
             guard let self, self.voice.cloudConsentGranted, self.rooms.canSpeak(notice),
-                  self.voice.state == .idle else { return false }
+                  self.voice.state == .idle, !self.voice.dictationActive else { return false }
             self.voice.speak(notice.question.question.prompt, context: notice.context)
             return self.voice.capturedContext == notice.context
         }
@@ -112,7 +113,7 @@ final class AppModel: ObservableObject {
     }
 
     func speakQuestion(_ question: HarnessQuestion) {
-        guard voice.cloudConsentGranted, [.idle, .interrupted].contains(voice.state) else { return }
+        guard voice.cloudConsentGranted, !voice.dictationActive, [.idle, .interrupted].contains(voice.state) else { return }
         voice.speak(question.question.prompt, context: HarnessVoiceContext(roomId: question.target.roomId, conversationId: nil, question: question.binding))
     }
 
@@ -247,7 +248,7 @@ final class AppModel: ObservableObject {
             }
             for task in tasks where task.status == "completed" && !spokenTasks.contains(task.id) {
                 spokenTasks.insert(task.id)
-                if speakReplies, tab == .workspace, voice.cloudConsentGranted,
+                if speakReplies, tab == .workspace, voice.cloudConsentGranted, !voice.dictationActive,
                    [.idle, .interrupted].contains(voice.state), task.conversationId == selectedConversationID {
                     voice.speak(task.reply, context: HarnessVoiceContext(roomId: nil, conversationId: task.conversationId, question: nil))
                 }
@@ -410,6 +411,21 @@ final class AppModel: ObservableObject {
         return true
     }
 
+    func startNewConversation() async {
+        if AssistantFeatures.assistant { await newAssistantConversation() }
+        else { await newConversation() }
+    }
+
+    func openProject(_ projectID: String) async {
+        if let session = assistant.sessions.last(where: { $0.focus.projectID == projectID }) {
+            assistant.selectSession(session.id); tab = .assistant
+        } else if let room = rooms.state?.rooms.first(where: { $0.id == projectID }) {
+            await assistant.open(focus: AssistantFocus(kind: .room, roomId: room.id), title: room.title); tab = .assistant
+        } else if let conversation = conversations.first(where: { $0.id == projectID }) {
+            await assistant.open(focus: AssistantFocus(kind: .conversation, conversationId: conversation.id, roomId: nil), title: conversation.title); tab = .assistant
+        } else { error = "That project's local conversation is not available. Refresh before opening it." }
+    }
+
     func newAssistantConversation() async {
         do {
             let data = try await client.request("v1/conversations", method: "POST", body: ["title": "Assistant conversation"])
@@ -446,5 +462,9 @@ final class AppModel: ObservableObject {
         selectionRevision += 1
         await act(key: "stop-all", path: "v1/stop")
         await rooms.refresh()
+        if AssistantFeatures.enabled("JARVIS_ENABLE_CLOUD", preference: "Jarvis.cloudEnabled"), RuntimeProfiles.shared.cloudProfile != nil {
+            do { try await PairedCloudConnection.shared.stopCloudWork() }
+            catch { self.error = "Local stop was requested. Cloud cancellation is unconfirmed: \(error.localizedDescription)" }
+        }
     }
 }

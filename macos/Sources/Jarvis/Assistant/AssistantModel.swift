@@ -11,8 +11,11 @@ final class AssistantModel: ObservableObject {
     @Published private(set) var presentations: [AssistantPresentation] = []
     @Published private(set) var proposals: [AssistantProposal] = []
     @Published private(set) var selectedSessionID: String?
-    @Published private(set) var selectedPresentationID: String?
-    @Published private(set) var pinned: Set<String> = []
+    @Published private var navigation = PresentationNavigation()
+    @Published private(set) var visualSelection: AssistantVisualSelection?
+    @Published private(set) var pinnedPresentations: [AssistantPresentation] = []
+    var pinned: Set<String> { Set(pinnedPresentations.map(\.id)) }
+    var visiblePinnedPresentations: [AssistantPresentation] { pinnedPresentations.filter { $0.sessionId == selectedSessionID } }
     @Published private(set) var connected = false
     @Published private(set) var submitting = false
     @Published var error: String?
@@ -25,7 +28,6 @@ final class AssistantModel: ObservableObject {
     private let voice: VoiceController
     private var eventTask: Task<Void, Never>?
     private var sequence = 0
-    private var history: [String] = []
     private var sentenceStreams: [String: AssistantSentenceStream] = [:]
     private var spokenTurns: Set<String> = []
     private var speechTurnID: String?
@@ -38,6 +40,7 @@ final class AssistantModel: ObservableObject {
     private struct CaptureBinding {
         let sessionID: String, revision: Int, focus: AssistantFocus
         let presentationID: String?, presentationRevision: Int?
+        let selection: AssistantVisualSelection?
         let proposalID: String?, startedAt: String
     }
     var enabled: Bool { AssistantFeatures.assistant }
@@ -47,10 +50,16 @@ final class AssistantModel: ObservableObject {
     }
     var selectedSession: AssistantSession? { sessions.first { $0.id == selectedSessionID } }
     var visiblePresentations: [AssistantPresentation] { presentations.filter { $0.sessionId == selectedSessionID } }
-    var selectedPresentation: AssistantPresentation? { visiblePresentations.first { $0.id == selectedPresentationID } }
+    var selectedPresentationID: String? { navigation.current?.id }
+    var selectedPresentation: AssistantPresentation? { navigation.current }
+    var followingPresentation: Bool { navigation.following }
+    var hasPresentationUpdate: Bool {
+        guard let selected = selectedPresentation else { return false }
+        return visiblePresentations.contains { $0.id == selected.id && $0.revision > selected.revision }
+    }
     var visibleTurns: [AssistantTurn] { turns.filter { $0.sessionId == selectedSessionID } }
     var visibleProposals: [AssistantProposal] { proposals.filter { $0.sessionId == selectedSessionID && !["completed", "invalidated"].contains($0.status) } }
-    var canGoBack: Bool { !history.isEmpty }
+    var canGoBack: Bool { navigation.canGoBack }
 
     init(voice: VoiceController, client: AssistantClient? = nil) {
         self.voice = voice; self.client = client ?? AssistantClient()
@@ -117,17 +126,50 @@ final class AssistantModel: ObservableObject {
         guard sessions.contains(where: { $0.id == id }) else { return }
         if selectedSessionID != id {
             voice.stopListening(); Task { await invalidateVoiceReview() }
-            selectedSessionID = id; selectedPresentationID = nil; history = []; speechTurnID = nil
+            selectedSessionID = id; navigation.reset(); visualSelection = nil; speechTurnID = nil
         }
     }
 
     func selectPresentation(_ id: String) {
-        guard visiblePresentations.contains(where: { $0.id == id }) else { return }
-        if let previous = selectedPresentationID, previous != id { history.append(previous); history = Array(history.suffix(50)) }
-        selectedPresentationID = id
+        guard let value = visiblePresentations.first(where: { $0.id == id }) else { return }
+        navigation.select(value); visualSelection = nil
     }
-    func goBack() { if let prior = history.popLast() { selectedPresentationID = prior } }
-    func togglePin(_ id: String) { if pinned.contains(id) { pinned.remove(id) } else { pinned.insert(id) } }
+    func goBack() { navigation.back(); visualSelection = nil }
+    func followPresentations() { navigation.follow(visiblePresentations.last); visualSelection = nil }
+    func showPresentationUpdate() { if let id = selectedPresentationID { selectPresentation(id) } }
+    func holdDisplayedPresentation() { if let displayed = selectedPresentation { navigation.select(displayed) } }
+    func selectVisual(_ selection: AssistantVisualSelection?) {
+        if selection != nil { holdDisplayedPresentation() }
+        visualSelection = selection
+    }
+
+    func saveDraft(_ presentation: AssistantPresentation, body: String) async -> Bool {
+        guard presentation.content.kind == .draft, body.utf16.count <= 32_000 else { return false }
+        do {
+            let updated = try await client.value(AssistantPresentation.self,
+                path: "/v1/assistant/presentations/\(presentation.id)", method: "PATCH",
+                body: ["expectedRevision": presentation.revision, "body": body])
+            guard updated.version == 1, updated.id == presentation.id, updated.sessionId == presentation.sessionId,
+                  updated.revision > presentation.revision, updated.content.kind == .draft else { throw AssistantClientError.invalidResponse }
+            upsert(updated, in: &presentations)
+            if selectedPresentationID == presentation.id, selectedPresentation?.revision == presentation.revision {
+                navigation.select(updated); visualSelection = nil
+            }
+            return true
+        } catch { self.error = error.localizedDescription; return false }
+    }
+    func togglePin(_ id: String) {
+        if pinned.contains(id) { pinnedPresentations.removeAll { $0.id == id } }
+        else if let displayed = selectedPresentation, displayed.id == id {
+            pinnedPresentations.append(displayed)
+            if pinnedPresentations.count > 50 { pinnedPresentations.removeFirst() }
+            navigation.select(displayed)
+        }
+    }
+    func selectPinnedPresentation(_ id: String) {
+        guard let value = visiblePinnedPresentations.first(where: { $0.id == id }) else { return }
+        navigation.select(value); visualSelection = nil
+    }
 
     func captureStarted(voiceSessionID: String, generation: Int) {
         guard let session = selectedSession else { return }
@@ -137,9 +179,15 @@ final class AssistantModel: ObservableObject {
         narrationMuted = false
         let proposal = proposals.first { $0.id == activeProposalID && $0.status == "awaiting_confirmation" }
         captureBindings["\(voiceSessionID):\(generation)"] = CaptureBinding(sessionID: session.id, revision: session.revision,
-            focus: session.focus, presentationID: selectedPresentation?.id, presentationRevision: selectedPresentation?.revision,
+            focus: session.focus, presentationID: selectedPresentation?.id, presentationRevision: selectedPresentation?.revision, selection: visualSelection,
             proposalID: proposal?.id, startedAt: Self.timestamp())
         if captureBindings.count > 128 { captureBindings = [:]; notice = "Voice capture history reset. Start a fresh turn." }
+    }
+
+    func retainInterruptedDictation(_ utterance: HarnessVoiceUtterance) {
+        guard let binding = captureBindings.removeValue(forKey: "\(utterance.sessionId):\(utterance.generation)"), binding.proposalID == nil else { return }
+        sessionDrafts.retain(utterance.text, for: binding.sessionID)
+        notice = "Completed dictation segments were retained in their original session's draft. The interrupted audio was not submitted."
     }
 
     func receiveUtterance(_ utterance: HarnessVoiceUtterance) async -> Bool {
@@ -166,7 +214,7 @@ final class AssistantModel: ObservableObject {
         else if command.hasPrefix("keep working") || turns.contains(where: { $0.sessionId == binding.sessionID && !$0.isSettled }) { route = "side_question" }
         else { route = "continue" }
         _ = await submit(text, sessionID: binding.sessionID, revision: binding.revision, intent: route,
-                     presentationID: binding.presentationID, presentationRevision: binding.presentationRevision)
+                     presentationID: binding.presentationID, presentationRevision: binding.presentationRevision, selection: binding.selection)
         return true
     }
 
@@ -174,7 +222,7 @@ final class AssistantModel: ObservableObject {
         guard let session = selectedSession else { return }
         let submitted = draft
         _ = await submit(submitted, sessionID: session.id, revision: session.revision, intent: intent,
-                     presentationID: selectedPresentation?.id, presentationRevision: selectedPresentation?.revision)
+                     presentationID: selectedPresentation?.id, presentationRevision: selectedPresentation?.revision, selection: visualSelection)
     }
 
     func prepareDailyBriefing(projectID: String) async -> Bool {
@@ -200,7 +248,7 @@ final class AssistantModel: ObservableObject {
     }
 
     private func submit(_ text: String, sessionID: String, revision: Int, intent: String,
-                        presentationID: String?, presentationRevision: Int?) async -> AssistantSubmissionOutcome {
+                        presentationID: String?, presentationRevision: Int?, selection: AssistantVisualSelection?) async -> AssistantSubmissionOutcome {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .ignored }
         guard !submitting else {
             let replaceable = activeSubmission.flatMap { $0.text == $0.checkpoint.text ? $0.checkpoint : nil }
@@ -220,6 +268,7 @@ final class AssistantModel: ObservableObject {
         do {
             var body: [String: Any] = ["text": text, "expectedRevision": revision, "intent": intent]
             if let id = presentationID, let revision = presentationRevision { body["presentationRef"] = ["presentationId": id, "revision": revision] }
+            if let selection { body["selection"] = try selection.assistantJSONObject() }
             let turn = try await client.value(AssistantTurn.self, path: "/v1/assistant/sessions/\(sessionID)/turns", method: "POST", body: body)
             guard turn.version == 1, turn.sessionId == sessionID else { throw AssistantClientError.invalidResponse }
             upsert(turn, in: &turns)
@@ -259,7 +308,8 @@ final class AssistantModel: ObservableObject {
             guard value.revision > oldRevision else { return }
             upsert(value, in: &presentations)
             if value.sessionId == selectedSessionID {
-                if selectedPresentationID == nil || !pinned.contains(selectedPresentationID!) { selectPresentation(value.id) }
+                navigation.select(value, automatic: true)
+                if navigation.following { visualSelection = nil }
                 updateSpeech(value, final: turns.first(where: { $0.id == value.turnId })?.status == "completed")
             }
         case .proposal(_, let value):
@@ -272,7 +322,7 @@ final class AssistantModel: ObservableObject {
 
     private func updateSpeech(_ value: AssistantPresentation, final: Bool) {
         guard foreground, !narrationMuted, value.sessionId == selectedSessionID, value.content.kind == .text,
-              voice.cloudConsentGranted, !voice.captureInProgress, activeProposalID == nil, !spokenTurns.contains(value.turnId),
+              voice.cloudConsentGranted, !voice.captureInProgress, !voice.dictationActive, activeProposalID == nil, !spokenTurns.contains(value.turnId),
               let text = value.content.markdown, !text.isEmpty else { return }
         var stream = sentenceStreams[value.turnId] ?? AssistantSentenceStream()
         let next = stream.append(text, final: final)
@@ -353,7 +403,7 @@ final class AssistantModel: ObservableObject {
             do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
             guard canContinueVoiceReview(proposal, status: "awaiting_confirmation"), activeReadback == proposal.readbackId,
                   let expiry = proposal.expiresAt.flatMap(RoomsStateRules.date), expiry > Date() else { return }
-            await voice.startListening()
+            await voice.startConfirmationListening()
             return
         }
         guard receiptID == activeReadback, let proposal = proposals.first(where: { $0.id == activeProposalID }),

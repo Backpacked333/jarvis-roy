@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # CPU inference uses the binaries bundled with onnxruntime-node.
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   runtime:
     runs-on: ubuntu-latest
@@ -24,6 +28,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - run: node ../scripts/smoke-runtime.mjs
+      - run: node ../scripts/smoke-runtime.mjs --assistant
   isolated-workers:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -57,8 +63,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - run: ./scripts/build-macos.sh
-      - run: swift test --package-path macos
-      - run: swift test --package-path macos -c release
-      - run: swift test --package-path macos-control
-      - run: swift test --package-path macos-control -c release
+      - run: ./scripts/ci-native.sh ./scripts/build-macos.sh
+      - run: ./scripts/ci-native.sh swift test --package-path macos
+      - run: ./scripts/ci-native.sh swift test --package-path macos -c release
+      - run: ./scripts/ci-native.sh swift test --package-path macos-control
+      - run: ./scripts/ci-native.sh swift test --package-path macos-control -c release
