@@ -4,7 +4,9 @@ import SwiftUI
 @MainActor
 final class AppModel: ObservableObject {
     @Published var tab: WorkspaceTab = .rooms {
-        didSet { if oldValue != tab { voiceStartGeneration += 1 } }
+        didSet {
+            if oldValue != tab { voiceStartGeneration += 1; assistant.setForeground(tab == .assistant) }
+        }
     }
     @Published var tasks: [AgentTask] = []
     @Published var conversations: [Conversation] = []
@@ -26,6 +28,7 @@ final class AppModel: ObservableObject {
     @AppStorage("speakReplies") var speakReplies = true
     let voice: VoiceController
     let rooms: RoomsModel
+    let assistant: AssistantModel
     private let client: any RuntimeServing
     private var spokenTasks: Set<String> = []
     private var didLoad = false
@@ -41,10 +44,20 @@ final class AppModel: ObservableObject {
         self.client = client ?? RuntimeClient()
         self.voice = injectedVoice ?? VoiceController()
         self.rooms = RoomsModel(client: harnessClient ?? HarnessClient())
+        self.assistant = AssistantModel(voice: self.voice)
+        if AssistantFeatures.assistant { self.tab = .assistant }
         voice.contextProvider = { [weak self] in self?.captureContext ?? HarnessVoiceContext() }
         voice.onUtterance = { [weak self] utterance in Task { await self?.handleUtterance(utterance) } }
         voice.onAudioLevels = { [weak self] levels in self?.rooms.updateAudioLevels(levels) }
-        voice.onStateChange = { [weak self] state in self?.rooms.updateVoiceState(state) }
+        voice.onStateChange = { [weak self] state in
+            self?.rooms.updateVoiceState(state)
+            if state == .interrupted || state == .unavailable { Task { await self?.assistant.invalidateVoiceReview() } }
+        }
+        voice.onCaptureStarted = { [weak self] session, generation in
+            guard let self, self.tab == .assistant else { return }
+            self.assistant.captureStarted(voiceSessionID: session, generation: generation)
+        }
+        voice.onSpeechDrained = { [weak self] receipt in Task { await self?.assistant.speechDrained(receipt) } }
         rooms.onQuestionAttention = { [weak self] notice in
             guard let self, self.voice.cloudConsentGranted, self.rooms.canSpeak(notice),
                   self.voice.state == .idle else { return false }
@@ -70,7 +83,8 @@ final class AppModel: ObservableObject {
     }
 
     var captureContext: HarnessVoiceContext {
-        tab == .rooms ? rooms.voiceContext : HarnessVoiceContext(roomId: nil, conversationId: selectedConversationID, question: nil)
+        if tab == .assistant { return assistant.selectedSession?.focus.voiceContext ?? HarnessVoiceContext() }
+        return tab == .rooms ? rooms.voiceContext : HarnessVoiceContext(roomId: nil, conversationId: selectedConversationID, question: nil)
     }
 
     func handleUtterance(_ utterance: HarnessVoiceUtterance) async {
@@ -80,6 +94,7 @@ final class AppModel: ObservableObject {
         if receivedUtterances.count > 256 { receivedUtterances.removeFirst() }
         let text = utterance.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.lowercased().trimmingCharacters(in: .punctuationCharacters) == "stop all" { await stopAll(); return }
+        if await assistant.receiveUtterance(utterance) { return }
         if utterance.context.roomId != nil || utterance.context.question != nil {
             await rooms.handleUtterance(utterance)
             return
@@ -166,6 +181,14 @@ final class AppModel: ObservableObject {
     }
 
     func startObserving() {
+        if AssistantFeatures.assistant {
+            assistant.setForeground(tab == .assistant)
+            assistant.start()
+        } else {
+            assistant.stop()
+            voice.continuousConnectionEnabled = false
+            if tab == .assistant { tab = .rooms }
+        }
         guard observationTask == nil else { return }
         rooms.startObserving()
         observationTask = Task { [weak self] in
@@ -177,18 +200,24 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func setApplicationActive(_ active: Bool) { rooms.setApplicationActive(active) }
+    func setApplicationActive(_ active: Bool) {
+        rooms.setApplicationActive(active)
+        if !active { Task { await assistant.invalidateVoiceReview() } }
+    }
 
     func shutdown() {
         voiceStartGeneration += 1
         observationTask?.cancel()
         observationTask = nil
         rooms.shutdown()
+        assistant.stop()
         voice.stopListening()
     }
 
     func muteVoice() {
         voiceStartGeneration += 1
+        assistant.muteNarration()
+        Task { await assistant.invalidateVoiceReview() }
         rooms.spokenAttentionEnabled = false
         voice.stopListening()
         voiceNotice = "Voice stopped. Read new questions aloud is off; re-enable it in Attention when ready. Notification preferences are unchanged."
@@ -288,6 +317,14 @@ final class AppModel: ObservableObject {
         defer { pendingActions.remove("voice-start") }
         voiceStartGeneration += 1
         let ticket = voiceStartGeneration
+        if tab == .assistant {
+            if assistant.selectedSession == nil { await newAssistantConversation() }
+            guard ticket == voiceStartGeneration, tab == .assistant, assistant.selectedSession != nil else { return }
+            voiceOwner = nil
+            voiceNotice = "Speech is bound to this assistant session and the displayed evidence. Say stop talking to mute replies, or cancel this task to stop work."
+            await voice.startListening()
+            return
+        }
         if tab == .rooms {
             if rooms.selectedRoomId == nil {
                 guard let policy = rooms.state?.defaultPolicy,
@@ -355,6 +392,11 @@ final class AppModel: ObservableObject {
     }
 
     func prepareVoiceCapture() -> Bool {
+        if tab == .assistant {
+            voiceOwner = nil
+            guard assistant.selectedSession != nil else { voiceNotice = "Create an assistant session before starting voice."; return false }
+            return true
+        }
         if tab == .rooms {
             voiceOwner = nil
             guard rooms.selectedRoomId != nil else { voiceNotice = "Select a room first."; return false }
@@ -366,6 +408,26 @@ final class AppModel: ObservableObject {
         }
         voiceOwner = id
         return true
+    }
+
+    func newAssistantConversation() async {
+        do {
+            let data = try await client.request("v1/conversations", method: "POST", body: ["title": "Assistant conversation"])
+            let conversation = try JSONDecoder().decode(Conversation.self, from: data)
+            if !conversations.contains(where: { $0.id == conversation.id }) { conversations.insert(conversation, at: 0) }
+            await assistant.open(focus: AssistantFocus(kind: .conversation, conversationId: conversation.id, roomId: nil), title: conversation.title)
+            tab = .assistant
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func discussSelectedRoom() async {
+        guard let room = rooms.selectedRoom else { return }
+        await assistant.open(focus: AssistantFocus(kind: .room, roomId: room.id), title: room.title)
+        tab = .assistant
+    }
+
+    func prepareDailyBriefing(projectID: String) async -> Bool {
+        await assistant.prepareDailyBriefing(projectID: projectID)
     }
 
     func act(key: String, path: String, method: String = "POST", body: [String: String]? = nil) async {

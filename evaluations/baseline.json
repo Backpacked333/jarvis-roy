@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "commit": "7dfb4b728668a0c5e06c4121d13ef292c3b188be",
+  "recordedBeforeImplementation": true,
+  "automated": {
+    "tests": 337,
+    "passed": 316,
+    "failed": 0,
+    "skipped": 21,
+    "typecheck": "passed",
+    "build": "passed_with_missing_model_catalog",
+    "apiSmoke": "passed"
+  },
+  "evaluations": [
+    {
+      "id": "paper-disagreement",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "conflicting-evidence",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "missing-fulltext",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "literature-map",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "citation-check",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "source-revision",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "symbolic-derivation",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "numerical-stability",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "statistical-claim",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "units",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "uncertainty",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "counterexample",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "bug-fix",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "artifact-explanation",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "offline-dependency",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "test-quality",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "cancel-code",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "reproduce",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "research-brief",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "technical-edit",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "spoken-revision",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "audience-switch",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "evidence-table",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "unsupported-certainty",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "briefing",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "voice-send",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "interrupt-side",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "visual-reference",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "revoke",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    },
+    {
+      "id": "restart",
+      "status": "unrun",
+      "reason": "No provider credentials or macOS hardware were available for baseline acceptance."
+    }
+  ]
+}

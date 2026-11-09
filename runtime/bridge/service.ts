@@ -124,11 +124,19 @@ export class JarvisService {
   private readonly callInputs = new Map<string, Map<string, { name: string; input?: unknown }>>();
   private readonly seenEvents = new Map<string, Set<string>>();
   private stopping = false;
+  private admissionGeneration = 0;
+  private admissions: Promise<unknown> = Promise.resolve();
+  private readonly taskListeners = new Set<(tasks: Task[]) => void>();
+  private readonly speechParts = new Map<string, Map<string, { kind: string; text: string }>>();
+  private previewTimer?: NodeJS.Timeout;
+  private readonly eventQueues = new Map<string, Promise<void>>();
+  private readonly backgroundOperations = new Set<Promise<void>>();
 
   private constructor(store: TaskStore, client: EveClient, model: string) {
     this.store = store;
     this.client = client;
     this.model = model;
+    store.subscribe(() => this.emitTaskUpdates());
   }
 
   static async create(options: {
@@ -196,7 +204,17 @@ export class JarvisService {
     return publicConversation(conversation);
   }
 
-  async createTask(message: string, conversationId?: string): Promise<Task> {
+  createTask(message: string, conversationId?: string, projectId?: string): Promise<Task> {
+    const generation = this.admissionGeneration;
+    const operation = this.admissions.then(() => {
+      if (generation !== this.admissionGeneration || this.stopping) throw new BridgeError("Task admission was cancelled by Stop all. Submit a fresh request.", 409);
+      return this.createTaskAdmitted(message, conversationId, projectId);
+    });
+    this.admissions = operation.then(() => {}, () => {});
+    return operation;
+  }
+
+  private async createTaskAdmitted(message: string, conversationId?: string, projectId?: string): Promise<Task> {
     if (this.stopping) throw new BridgeError("Tasks are stopping. Wait for cancellation confirmation.", 409);
     if (conversationId !== undefined &&
       (typeof conversationId !== "string" || !CONVERSATION_ID.test(conversationId) ||
@@ -209,8 +227,13 @@ export class JarvisService {
     if (containsCredentialLikeData(message)) {
       throw new BridgeError("Messages containing credential-like data cannot be persisted.", 400);
     }
+    if (projectId && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(projectId)) throw new BridgeError("Invalid project scope.", 400);
+    const priorScope = conversationId ? this.store.conversation(conversationId)?.projectId : undefined;
+    if (priorScope && projectId && priorScope !== projectId) throw new BridgeError("A conversation cannot change its private project scope.", 409);
+    projectId ??= priorScope;
     if (conversationId && this.store.values().some((task) =>
       task.conversationId === conversationId && (task.approvals.length > 0 || ACTIVE_STATUSES.has(task.status) ||
+        (task.observingDeliveries ?? 0) > 0 ||
         this.cancelOperations.has(task.id) || this.sessionCancelOperations.has(task.id) ||
         this.pendingSessions.has(task.id)))) {
       throw new BridgeError("This conversation has an active or unconfirmed turn. Wait for it to finish, or Stop its task and confirm cancellation before sending again.", 409);
@@ -224,6 +247,7 @@ export class JarvisService {
     const task: TaskRecord = {
       id: randomUUID(),
       conversationId: conversationId ?? randomUUID(),
+      ...(projectId ? { projectId } : {}),
       userMessage: message,
       title: titleFromMessage(message),
       status: "starting",
@@ -235,7 +259,7 @@ export class JarvisService {
       ...(conversationId && this.store.conversation(conversationId)?.sessionId
         ? { sessionId: this.store.conversation(conversationId)!.sessionId } : {}),
     };
-    // add() reserves the turn synchronously, before the first await yields to another submit.
+    // Admissions are serialized; failed persistence never publishes or dispatches a turn.
     await this.store.add(task);
     this.pruneCaches();
     this.pendingOptions.set(task.id, new Map());
@@ -250,7 +274,7 @@ export class JarvisService {
       return { session, delivery: await session.send(message) };
     });
     this.pendingSessions.set(task.id, ready);
-    void ready.then(async ({ session, delivery }) => {
+    const observation = ready.then(async ({ session, delivery }) => {
       this.pendingSessions.delete(task.id);
       await this.store.bindSession(task.id, session.id);
       this.sessions.set(task.id, session);
@@ -268,6 +292,7 @@ export class JarvisService {
           : `Message submission or observation is unconfirmed. Stop this task before sending again. ${redactText(errorMessage(cause))}`;
       });
     });
+    this.trackBackground(observation);
     return publicTask(task);
   }
 
@@ -315,7 +340,7 @@ export class JarvisService {
     this.submittingInteractions.add(submissionKey);
     try {
       const delivery = await session.respond([{ interactionId, ...(text === undefined ? { optionId } : { text }) }]);
-      void this.observeDelivery(taskId, delivery);
+      this.trackBackground(this.observeDelivery(taskId, delivery));
       return publicTask(task);
     } catch (cause) {
       this.submittingInteractions.delete(submissionKey);
@@ -356,7 +381,9 @@ export class JarvisService {
   async stop(): Promise<Task[]> {
     if (this.stopping) throw new BridgeError("Stop is already in progress.", 409);
     this.stopping = true;
+    this.admissionGeneration++;
     try {
+    await this.admissions;
     const active = this.store.values()
       .filter((task) => ACTIVE_STATUSES.has(task.status))
       .map((task) => task.id);
@@ -385,6 +412,69 @@ export class JarvisService {
 
   async waitForObservedDelivery(taskId: string): Promise<void> {
     while (this.deliveryObservers.has(taskId)) await this.deliveryObservers.get(taskId);
+  }
+
+  /** After admission closes, wait for trailing observations and durable writes, including
+   * completed tasks and deliveries superseded in the per-task cancellation lookup. */
+  async drain(): Promise<void> {
+    await this.admissions;
+    let failed = false;
+    while (true) {
+      const pending = [...this.backgroundOperations, ...this.eventQueues.values(),
+        ...this.cancelOperations.values(), ...this.sessionCancelOperations.values()];
+      if (!pending.length) break;
+      if ((await Promise.allSettled(pending)).some(result => result.status === "rejected")) failed = true;
+    }
+    if (this.previewTimer) clearTimeout(this.previewTimer);
+    this.previewTimer = undefined;
+    if (failed) throw new BridgeError("Some task observations did not finish durably. Restart reconciliation is required.", 503);
+  }
+
+  private trackBackground(operation: Promise<void>): void {
+    this.backgroundOperations.add(operation);
+    void operation.then(() => this.backgroundOperations.delete(operation), () => this.backgroundOperations.delete(operation));
+  }
+
+  taskSnapshot(): Task[] { return this.store.values().map(record => {
+    const task = publicTask(record);
+    const preview = [...(this.speechParts.get(record.id)?.values() ?? [])].filter(part => part.kind === "text").map(part => part.text).join("\n");
+    return preview && !record.cancelRequested && ["starting", "running"].includes(record.status) ? { ...task, speechPreview: preview.slice(0, 24_000) } : task;
+  }); }
+
+  contextForEveSession(sessionId: string): { taskId: string; conversationId: string; projectId: string } | undefined {
+    const task = this.store.values().filter(task => task.sessionId === sessionId)
+      .at(-1); // Persisted insertion order follows admission, even if the wall clock repeats or moves backward.
+    if (!task?.conversationId) return undefined;
+    return { taskId: task.id, conversationId: task.conversationId, projectId: task.projectId ?? task.conversationId };
+  }
+
+  hasUnsettledProjectWork(projectId: string): boolean {
+    return this.store.values().some(task => (task.projectId ?? task.conversationId) === projectId && (
+      ACTIVE_STATUSES.has(task.status) || task.approvals.length > 0 ||
+      task.status === "cancelled" && !task.cancelConfirmed || task.cancellationPending ||
+      (task.observingDeliveries ?? 0) > 0 || this.pendingSessions.has(task.id) ||
+      this.cancelOperations.has(task.id) || this.sessionCancelOperations.has(task.id) ||
+      [...this.submittingInteractions].some(key => key.startsWith(`${task.id}:`))
+    ));
+  }
+
+  async cancelProjectWork(projectId: string): Promise<void> {
+    const targets = this.store.values().filter(task => (task.projectId ?? task.conversationId) === projectId &&
+      ACTIVE_STATUSES.has(task.status)).map(task => task.id);
+    const outcomes = await Promise.allSettled(targets.map(id => this.cancel(id)));
+    if (outcomes.some(result => result.status === "rejected") || this.hasUnsettledProjectWork(projectId)) {
+      throw new BridgeError("Project task cancellation is unconfirmed. Inspect task status before continuing.", 503);
+    }
+  }
+
+  subscribeTasks(listener: (tasks: Task[]) => void): () => void {
+    this.taskListeners.add(listener);
+    return () => this.taskListeners.delete(listener);
+  }
+
+  private emitTaskUpdates(): void {
+    const tasks = this.taskSnapshot();
+    for (const listener of this.taskListeners) { try { listener(structuredClone(tasks)); } catch { /* UI observers cannot invalidate a commit. */ } }
   }
 
   private async cancelActiveTask(taskId: string): Promise<void> {
@@ -597,6 +687,7 @@ export class JarvisService {
         });
       }
     })();
+    this.trackBackground(observation);
     this.deliveryObservers.set(taskId, observation);
     try {
       await observation;
@@ -608,21 +699,40 @@ export class JarvisService {
     }
   }
 
-  private async handleEvent(taskId: string, event: EveEvent): Promise<void> {
+  private handleEvent(taskId: string, event: EveEvent): Promise<void> {
+    const operation = (this.eventQueues.get(taskId) ?? Promise.resolve()).then(() => this.handleAdmittedEvent(taskId, event));
+    const settled = operation.then(() => {}, () => {});
+    this.eventQueues.set(taskId, settled);
+    void settled.then(() => { if (this.eventQueues.get(taskId) === settled) this.eventQueues.delete(taskId); });
+    return operation;
+  }
+
+  private async handleAdmittedEvent(taskId: string, event: EveEvent): Promise<void> {
     if (!event || typeof event.type !== "string") return;
     if (!this.eventBelongsToTask(taskId, event)) return;
-    const seen = this.seenEvents.get(taskId) ?? new Set<string>();
+    if (event.type === "content.delta") {
+      const data = asRecord(event.data), partId = stringValue(data.partId);
+      if (!partId || typeof data.delta !== "string" || this.store.get(taskId)?.cancelRequested) return;
+      const parts = this.speechParts.get(taskId) ?? new Map<string, { kind: string; text: string }>();
+      const existing = parts.get(partId), kind = stringValue(data.kind) ?? existing?.kind;
+      // Reasoning/internal/tool parts are never presented or spoken.
+      if (kind !== "text" || (!existing && parts.size >= 20)) return;
+      parts.set(partId, { kind, text: redactText((existing?.text ?? "") + data.delta).slice(0, 24_000) });
+      this.speechParts.set(taskId, parts);
+      this.previewTimer ??= setTimeout(() => { this.previewTimer = undefined; this.emitTaskUpdates(); }, 100);
+      this.previewTimer.unref();
+      return;
+    }
+    const seen = new Set(this.seenEvents.get(taskId) ?? []);
     const signature = eventSignature(event);
     if (seen.has(signature)) return;
     seen.add(signature);
     if (seen.size > 10_000) seen.delete(seen.values().next().value!);
-    this.seenEvents.set(taskId, seen);
 
     const data = asRecord(event.data);
-    const callInputs = this.callInputs.get(taskId) ?? new Map();
-    this.callInputs.set(taskId, callInputs);
-    const pending = this.pendingOptions.get(taskId) ?? new Map();
-    this.pendingOptions.set(taskId, pending);
+    const callInputs = new Map(this.callInputs.get(taskId) ?? []);
+    const pending = new Map(this.pendingOptions.get(taskId) ?? []);
+    const releasedInteractions: string[] = [];
     let clearInteractions = false;
     const settledInteractions: string[] = [];
 
@@ -753,7 +863,7 @@ export class JarvisService {
           }
           task.approvals = [...task.approvals, approval];
           pending.set(interactionId, new Set(visibleOptions.map((option) => option.id)));
-          this.submittingInteractions.delete(`${taskId}:${interactionId}`);
+          releasedInteractions.push(`${taskId}:${interactionId}`);
           if (ACTIVE_STATUSES.has(task.status) && !task.cancelConfirmed) task.status = "waiting";
           append(`Waiting for input: ${title}.`);
           break;
@@ -765,7 +875,7 @@ export class JarvisService {
           if (interactionId) {
             task.approvals = task.approvals.filter((item) => item.id !== interactionId);
             pending.delete(interactionId);
-            this.submittingInteractions.delete(`${taskId}:${interactionId}`);
+            releasedInteractions.push(`${taskId}:${interactionId}`);
           }
           if (approval) append(`Response ${outcome}: ${approval.title}.`);
           break;
@@ -853,6 +963,10 @@ export class JarvisService {
       }
     });
 
+    this.seenEvents.set(taskId, seen);
+    this.callInputs.set(taskId, callInputs);
+    this.pendingOptions.set(taskId, pending);
+    for (const key of releasedInteractions) this.submittingInteractions.delete(key);
     if (clearInteractions) {
       pending.clear();
       for (const interactionId of settledInteractions) {
@@ -873,7 +987,7 @@ export class JarvisService {
 
   private pruneCaches(): void {
     const retained = new Set(this.store.values().map((task) => task.id));
-    for (const cache of [this.sessions, this.pendingOptions, this.callInputs, this.seenEvents]) {
+    for (const cache of [this.sessions, this.pendingOptions, this.callInputs, this.seenEvents, this.speechParts]) {
       for (const id of cache.keys()) if (!retained.has(id)) cache.delete(id);
     }
     for (const key of this.submittingInteractions) {

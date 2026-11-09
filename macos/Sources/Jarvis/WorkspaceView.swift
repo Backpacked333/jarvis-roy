@@ -17,6 +17,9 @@ struct WorkspaceView: View {
     @State private var questionAnswers: [String: String] = [:]
     @State private var cloudDisclosure = false
     @State private var handsFreeDisclosure = false
+    @AppStorage("Jarvis.assistantEnabled") private var assistantPreference = false
+
+    private var assistantAvailable: Bool { _ = assistantPreference; return AssistantFeatures.assistant }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -35,6 +38,7 @@ struct WorkspaceView: View {
                     notice(model.connectionError ?? "Connecting to the local agent service…", icon: "network", color: Palette.amber)
                 }
                 switch model.tab {
+                case .assistant: AssistantWorkspaceView(model: model, assistant: model.assistant, voice: voice)
                 case .rooms:
                     RoomsWorkspaceView(model: model.rooms, onVoiceContext: { _ in },
                         onSpeakQuestion: { model.speakQuestion($0) },
@@ -83,7 +87,7 @@ struct WorkspaceView: View {
             }.padding(.top, 45).padding(.bottom, 8)
             Text("A PERSONAL ASSISTANT").font(.system(size: 9, weight: .medium)).tracking(2).foregroundStyle(Palette.muted)
             Text("YOUR SPACE").font(.system(size: 10, weight: .medium)).tracking(1.8).foregroundStyle(Palette.muted).padding(.top, 50).padding(.bottom, 15)
-            ForEach(WorkspaceTab.allCases) { tab in
+            ForEach(WorkspaceTab.allCases.filter { $0 != .assistant || assistantAvailable }) { tab in
                 Button { model.tab = tab } label: {
                     HStack(spacing: 12) {
                         Image(systemName: tab.icon).frame(width: 18)
@@ -134,6 +138,9 @@ struct WorkspaceView: View {
                 Text(model.tab.rawValue).font(.system(size: 14, weight: .medium))
                 Text("ELEVEN v4 TURBO").font(.system(size: 9, weight: .semibold, design: .monospaced)).tracking(1.2).foregroundStyle(Palette.cyan)
                 Spacer()
+                if model.tab == .rooms, AssistantFeatures.assistant, model.rooms.selectedRoom != nil {
+                    Button("Discuss this room") { Task { await model.discussSelectedRoom() } }.font(.caption)
+                }
                 Circle().fill(model.isConnected ? Palette.cyan : Palette.amber).frame(width: 6, height: 6)
                 Text(model.isConnected ? "Agent connected" : "Agent offline").font(.system(size: 11)).foregroundStyle(Palette.muted)
                 Button { Task { await model.stopAll() } } label: { Label("Stop all", systemImage: "stop.circle") }

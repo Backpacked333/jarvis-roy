@@ -119,9 +119,9 @@ test("provider batch repair consumes a bounded model call but never admits any r
 test("estimated-dollar admission uses published rates conservatively and is not a billing cap", async () => {
   let modelCalls = 0;
   const gateway = new Gateway("fixture/model", (async url => {
-    if (String(url).endsWith("/models")) return Response.json({ data: [{ id: "fixture/model", pricing: { input: "0.000001", output: "0.000002" } }] });
+    if (String(url).endsWith("/models")) return Response.json({ data: [{ id: "fixture/model", type: "language", pricing: { input: "0.000001", output: "0.000002" } }] });
     modelCalls++;
-    return Response.json({ usage: { prompt_tokens: 10, completion_tokens: 10 }, choices: [{ finish_reason: "tool_calls", message: { role: "assistant",
+    return Response.json({ model: "fixture/model", usage: { prompt_tokens: 10, completion_tokens: 10 }, choices: [{ finish_reason: "tool_calls", message: { role: "assistant",
       tool_calls: [{ id: "finish", type: "function", function: { name: "final_answer", arguments: '{"answer":"done"}' } }],
     } }] });
   }) as typeof fetch, undefined);

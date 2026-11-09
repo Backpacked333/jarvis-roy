@@ -15,8 +15,8 @@ export const isoDate = z.string().max(40).datetime({ offset: true }).refine((val
 
 export const emailRequestSchema = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("list_accounts") }),
-  z.strictObject({ action: z.literal("list_inbox"), since: isoDate, limit: z.number().int().min(1).max(25) }),
-  z.strictObject({ action: z.literal("read_message"), messageId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
+  z.strictObject({ action: z.literal("list_inbox"), accountId: identifier.optional(), since: isoDate, limit: z.number().int().min(1).max(25) }),
+  z.strictObject({ action: z.literal("read_message"), accountId: identifier.optional(), messageId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
   z.strictObject({ action: z.literal("send"), accountId: identifier, from: email, to: z.array(email).min(1).max(5).refine((values) => new Set(values.map((v) => v.toLowerCase())).size === values.length), subject: text(500).regex(/^[^\r\n]*$/), body: text(16_000).min(1) }),
 ]);
 
@@ -76,10 +76,10 @@ export function parseInput<T>(schema: z.ZodType<T>, input: unknown): T {
 }
 
 export const submissionSchema = z.object({ status: z.literal("submitted"), delivery: z.literal("unconfirmed") });
-const header = z.object({ messageId: z.number().int().positive(), subject: text(500), sender: text(500), receivedAt: isoDate });
+const header = z.object({ accountId: identifier.optional(), messageId: z.number().int().positive(), subject: text(500), sender: text(500), receivedAt: isoDate });
 export const appleOutputSchemas = {
   list_accounts: z.object({ accounts: z.array(z.object({ accountId: identifier, name: text(256), enabled: z.boolean(), addresses: z.array(text(320)).max(10) })).max(20), truncated: z.boolean() }),
-  list_inbox: z.object({ messages: z.array(header).max(25), truncated: z.boolean(), ordering: text(200) }),
+  list_inbox: z.object({ accountId: identifier.optional(), messages: z.array(header).max(25), truncated: z.boolean(), ordering: text(200) }),
   read_message: header.extend({ body: text(16_000), truncated: z.boolean() }),
   send: submissionSchema,
   list_calendars: z.object({ calendars: z.array(z.object({ calendarId: identifier, name: text(256), writable: z.boolean() })).max(30), truncated: z.boolean() }),

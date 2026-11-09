@@ -5,10 +5,14 @@ export function environmentFor(target, source = process.env) {
   if (!['ui', 'runtime', 'bridge'].includes(target)) throw new Error('Unknown launch target.');
   const result = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'en_US.UTF-8' };
   const names = ['HOME', 'TMPDIR', 'USER', 'LOGNAME', 'JARVIS_LOCAL_TOKEN'];
+  if (target !== 'runtime') names.push('JARVIS_NATIVE_TOKEN');
+  names.push('JARVIS_ENABLE_ASSISTANT', 'JARVIS_ENABLE_KNOWLEDGE', 'JARVIS_ENABLE_RESEARCH', 'JARVIS_ENABLE_VOICE_APPROVAL');
   if (target !== 'ui') names.push('JARVIS_DATA_DIR', 'JARVIS_MODEL', 'JARVIS_NATIVE_HELPER',
     'JARVIS_ENABLE_DESKTOP', 'JARVIS_ENABLE_TERMINAL', 'JARVIS_ENABLE_APPLE_SERVICES',
     'TAVILY_API_KEY', 'HOME_ASSISTANT_URL', 'HOME_ASSISTANT_TOKEN', 'JARVIS_ALLOW_HOME_ASSISTANT_HTTP');
   if (target !== 'ui') names.push('AI_GATEWAY_API_KEY');
+  if (target !== 'ui') names.push('JARVIS_DEEP_MODEL', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+    'http_proxy', 'https_proxy', 'no_proxy', 'NODE_USE_ENV_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR');
   if (target === 'bridge') names.push('ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID',
     'JARVIS_WORKER_PYTHON', 'JARVIS_WORKER_IMAGE', 'JARVIS_DOCKER_BINARY');
   for (const name of names) if (typeof source[name] === 'string') result[name] = source[name];

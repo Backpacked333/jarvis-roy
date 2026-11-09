@@ -32,6 +32,8 @@ export interface Task {
   title: string;
   status: TaskStatus;
   reply: string;
+  /** Transient text-only model preview; never a durable transcript or action authority. */
+  speechPreview?: string;
   lateReply?: string;
   error?: string;
   createdAt: string;
@@ -41,6 +43,7 @@ export interface Task {
 }
 
 export interface TaskRecord extends Omit<Task, "conversationId" | "userMessage"> {
+  projectId?: string;
   conversationId?: string;
   userMessage?: string | null;
   sessionId?: string;
@@ -72,6 +75,8 @@ export interface Conversation {
 
 export interface ConversationRecord extends Conversation {
   sessionId?: string;
+  /** Immutable private-context scope, retained even when every task is pruned. */
+  projectId?: string;
   autoTitle?: boolean;
 }
 

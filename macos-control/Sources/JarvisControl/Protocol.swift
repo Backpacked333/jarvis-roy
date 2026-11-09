@@ -19,6 +19,11 @@ struct Request: Decodable {
     let text: String?
     let key: String?
     let modifiers: [String]?
+    let windowId: UInt32?
+    let calendarId: String?
+    let start: String?
+    let end: String?
+    let limit: Int?
 
     func validatedBundleId() throws -> String {
         guard let id = bundleId, id.utf8.count <= 255,
@@ -30,7 +35,8 @@ struct Request: Decodable {
 }
 
 final class Deadline {
-    private let end = ProcessInfo.processInfo.systemUptime + 10
+    private let end: TimeInterval
+    init(seconds: TimeInterval = 10) { end = ProcessInfo.processInfo.systemUptime + seconds }
     func check() throws {
         if ProcessInfo.processInfo.systemUptime >= end {
             throw ControlFailure("TIMEOUT", "Native action exceeded its deadline. Inspect again before retrying; effects already performed cannot be rolled back.")
@@ -39,6 +45,20 @@ final class Deadline {
 }
 
 func boundedString(_ value: String, limit: Int = 256) -> String { String(value.prefix(limit)) }
+
+// JSON consumers validate string length in UTF-16 code units. Preserve complete
+// characters while keeping non-ASCII titles inside the same wire bound.
+func boundedWireString(_ value: String, limit: Int) -> String {
+    var result = ""
+    var count = 0
+    for character in value {
+        let text = String(character)
+        guard count + text.utf16.count <= limit else { break }
+        result += text
+        count += text.utf16.count
+    }
+    return result
+}
 
 func emit(_ value: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), data.count <= 524_288 else {

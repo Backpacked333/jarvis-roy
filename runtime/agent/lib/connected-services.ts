@@ -77,6 +77,12 @@ export function createConnectedServices(options: ConnectedServicesOptions = {}) 
       }
       const execute = async () => {
         const result = await native("mail", [JSON.stringify(input)], input.action, context, input.action === "send");
+        if ((input.action === "list_inbox" || input.action === "read_message") && input.accountId !== undefined) {
+          const scoped = result as { accountId?: string; messages?: Array<{ accountId?: string }> };
+          if (scoped.accountId !== input.accountId || scoped.messages?.some((message) => message.accountId !== input.accountId)) {
+            throw new ConnectedServiceError("invalid_response", "Mail returned content outside the selected account. No message content was returned.");
+          }
+        }
         if (input.action === "read_message" && (result as { messageId: number }).messageId !== input.messageId) {
           throw new ConnectedServiceError("invalid_response", "Mail returned a different message than the explicitly selected ID. No message content was returned.");
         }

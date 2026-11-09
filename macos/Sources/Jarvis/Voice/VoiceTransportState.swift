@@ -23,9 +23,9 @@ struct VoiceTurnState {
     private var nextAudio = 0
 
     @discardableResult
-    mutating func begin(_ mode: Mode, context: HarnessVoiceContext) -> Int {
+    mutating func begin(_ mode: Mode, context: HarnessVoiceContext, reuseSession: Bool = false) -> Int {
         generation += 1
-        sessionId = UUID().uuidString
+        if !reuseSession { sessionId = UUID().uuidString }
         self.context = context
         self.mode = mode
         committed = false
@@ -33,6 +33,7 @@ struct VoiceTurnState {
         nextAudio = 0
         return generation
     }
+    mutating func renewTransportSession() { sessionId = UUID().uuidString }
     mutating func invalidate() { generation += 1; mode = .idle; committed = false; finalReceived = true }
     mutating func commit() throws {
         guard mode == .capture, !committed else { throw VoiceTransportError.invalidFrame }
@@ -115,6 +116,7 @@ final class VoiceOutputMeter: @unchecked Sendable {
     private let lock = NSLock()
     private var level = 0.0
     private var sampledAt: TimeInterval = 0
+    private var firstActiveAt: TimeInterval?
     func observe(_ samples: UnsafeBufferPointer<Float>, stride step: Int, at time: TimeInterval) {
         guard !samples.isEmpty, step > 0 else { return }
         var energy = 0.0
@@ -123,9 +125,12 @@ final class VoiceOutputMeter: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         level = min(1, sqrt(energy / Double(count)))
         sampledAt = time
+        // Render callback time, not physical speaker output or acoustic audibility.
+        if firstActiveAt == nil, level >= 0.001, time.isFinite { firstActiveAt = time }
     }
     func read(at time: TimeInterval) -> Double {
         lock.lock(); defer { lock.unlock() }
         return time - sampledAt < 0.2 ? level : 0
     }
+    var firstActiveRenderTime: TimeInterval? { lock.lock(); defer { lock.unlock() }; return firstActiveAt }
 }

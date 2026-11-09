@@ -11,5 +11,9 @@
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSScreenCaptureUsageDescription</key>
-    <string>After your explicit Jarvis approval, read text on the main screen using on-device OCR. Approved text can be sent to your cloud model; no screenshot is saved.</string>
+    <string>After your explicit Jarvis approval or scoped read grant, list windows for the selected app and read text from the selected window or approved main screen using on-device OCR. Approved text can be sent to your cloud model; no screenshot is saved.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>After your explicit Jarvis approval or scoped read grant, list your calendars and read occurrences in the selected calendar and date range. Jarvis Control does not create, change, or delete calendar events. Approved content can be sent to your cloud model.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Read only the calendar and date range you approve. Jarvis Control does not modify events.</string>
 </dict></plist>

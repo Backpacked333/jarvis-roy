@@ -16,8 +16,21 @@ function run(argv) {
 `;
 
 const mail = String.raw`
-function header(message) {
-  return {messageId: message.id(), subject: cut(message.subject(), 500), sender: cut(message.sender(), 500), receivedAt: iso(message.dateReceived())};
+function header(message, accountId) {
+  var result = {messageId: message.id(), subject: cut(message.subject(), 500), sender: cut(message.sender(), 500), receivedAt: iso(message.dateReceived())};
+  if (accountId !== undefined) result.accountId = accountId;
+  return result;
+}
+function requireAccount(app, accountId) {
+  if (accountId === undefined) return;
+  var matches = app.accounts.whose({id: accountId});
+  if (matches.length !== 1 || !matches[0].enabled()) fail("account_unavailable");
+}
+function inAccount(message, accountId) {
+  if (accountId === undefined) return true;
+  // Resolve only ownership metadata before reading any subject, sender or body.
+  try { return String(message.mailbox().account().id()) === accountId; }
+  catch (error) { fail("account_unavailable"); }
 }
 function perform(input) {
   var app = Application("com.apple.mail");
@@ -32,18 +45,30 @@ function perform(input) {
     return {accounts: accounts, truncated: count > 20};
   }
   if (input.action === "list_inbox") {
+    requireAccount(app, input.accountId);
     var candidates = app.inbox.messages.whose({dateReceived: {_greaterThanEquals: new Date(input.since)}});
     var count = candidates.length;
     var messages = [];
-    for (var i = 0; i < Math.min(count, input.limit); i++) messages.push(header(candidates[i]));
+    var scanned = 0;
+    var scanLimit = input.accountId === undefined ? input.limit : 1000;
+    for (; scanned < Math.min(count, scanLimit) && messages.length < input.limit; scanned++) {
+      var message = candidates[scanned];
+      if (inAccount(message, input.accountId)) messages.push(header(message, input.accountId));
+    }
     messages.sort(function(a, b) { return b.receivedAt.localeCompare(a.receivedAt); });
-    return {messages: messages, truncated: count > input.limit, ordering: "Bounded native inbox selection, sorted by date; not an exhaustive newest-first search."};
+    var result = {messages: messages, truncated: scanned < count, ordering: "Bounded native inbox selection, sorted by date; not an exhaustive newest-first search."};
+    if (input.accountId !== undefined) result.accountId = input.accountId;
+    return result;
   }
   if (input.action === "read_message") {
-    var matches = app.inbox.messages.whose({id: input.messageId});
+    requireAccount(app, input.accountId);
+    var candidates = app.inbox.messages.whose({id: input.messageId});
+    if (candidates.length > 1000) fail("message_not_found");
+    var matches = [];
+    for (var i = 0; i < candidates.length; i++) if (inAccount(candidates[i], input.accountId)) matches.push(candidates[i]);
     if (matches.length !== 1) fail("message_not_found");
     var message = matches[0];
-    var result = header(message);
+    var result = header(message, input.accountId);
     var content = String(message.content());
     result.body = cut(content, 16000);
     result.truncated = content.length > 16000;

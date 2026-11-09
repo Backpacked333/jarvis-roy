@@ -40,6 +40,20 @@ test("model selection reaches both trusted services but not the native UI", () =
   assert.equal(environmentFor("ui", source).JARVIS_MODEL, undefined);
 });
 
+test("native authority is unavailable to Eve while managed transport trust reaches backend services", () => {
+  const source = { JARVIS_NATIVE_TOKEN: "fixture-native-authority", JARVIS_ENABLE_ASSISTANT: "1",
+    HTTPS_PROXY: "http://fixture-proxy:8080", NODE_EXTRA_CA_CERTS: "/fixture/ca.pem", NODE_USE_ENV_PROXY: "1" };
+  assert.equal(environmentFor("runtime", source).JARVIS_NATIVE_TOKEN, undefined);
+  assert.equal(environmentFor("bridge", source).JARVIS_NATIVE_TOKEN, source.JARVIS_NATIVE_TOKEN);
+  assert.equal(environmentFor("ui", source).JARVIS_NATIVE_TOKEN, source.JARVIS_NATIVE_TOKEN);
+  for (const target of ["runtime", "bridge"]) {
+    assert.equal(environmentFor(target, source).HTTPS_PROXY, source.HTTPS_PROXY);
+    assert.equal(environmentFor(target, source).NODE_EXTRA_CA_CERTS, source.NODE_EXTRA_CA_CERTS);
+    assert.equal(environmentFor(target, source).NODE_USE_ENV_PROXY, "1");
+  }
+  assert.equal(environmentFor("ui", source).HTTPS_PROXY, undefined);
+});
+
 test("native permission disclosures distinguish local wake detection from cloud transcription", async () => {
   const plist = await readFile(new URL("../../macos/Info.plist", import.meta.url), "utf8");
   const usage = (key: string) => plist.match(new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`))?.[1] ?? "";
