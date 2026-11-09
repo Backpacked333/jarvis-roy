@@ -226,8 +226,10 @@ export class ResearchService {
       signal.throwIfAborted(); const value = this.options.knowledge.readSource(sourceId, input.projectId, "cloud");
       for (const passage of value.passages.slice(0, 4)) add(value.source, passage);
     }
-    const found = this.options.knowledge.search({ projectId: input.projectId, query: input.goal.slice(0, 1000), purpose: "cloud", limit: 12 });
+    const found = await this.options.knowledge.retrieveContext({ projectId: input.projectId, query: input.goal.slice(0, 1000),
+      purpose: "cloud", limit: 12, maxPerSource: 3, indexBudget: 32 }, signal);
     for (const item of found.matches) add(item.source, item.passage);
+    this.progress(record, "collecting", `Project retrieval: ${found.retrieval.mode}, ${found.matches.length} passages; ${found.retrieval.warnings.length} coverage notices.`);
     if (input.publicQuery) {
       let cursor = 0;
       const collectWorker = async () => {

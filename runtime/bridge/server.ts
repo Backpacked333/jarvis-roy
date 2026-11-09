@@ -20,6 +20,10 @@ import { Diagnostics } from "./diagnostics.ts";
 import { discoverContextResources, readScopedContext, ScopedContextInputSchema } from "./knowledge-context.ts";
 import { DigestSchema, IdSchema, RelativePathSchema } from "./harness-contracts/domain.ts";
 import { ResearchService } from "./research/index.ts";
+import { MemoryService } from "./memory/index.ts";
+import { createMacEmbeddingProvider } from "./knowledge-embeddings.ts";
+import { createContextRuntime, ContextRecallSchema, type ContextRuntime } from "./context-runtime.ts";
+import { ProposeMemoryToolSchema } from "./memory-tool-contracts.ts";
 
 const BRIDGE_HOST = "127.0.0.1";
 const BRIDGE_PORT = 39_202;
@@ -31,6 +35,8 @@ export interface BridgeExtensions {
   knowledge?: KnowledgeService;
   diagnostics?: Diagnostics;
   research?: ResearchService;
+  memory?: MemoryService;
+  context?: ContextRuntime;
   close?: () => void | Promise<void>;
 }
 
@@ -164,13 +170,64 @@ async function route(
   const native = nativeAuthenticated(request);
   const revocation = native && ((method === "POST" && /^\/v1\/grants\/[^/]+\/revoke$/.test(pathname)) ||
     (method === "PATCH" && /^\/v1\/grants\/[^/]+$/.test(pathname)));
-  const recovery = isCancellation(method, pathname) || revocation;
+  const memoryReduction = native && ((method === "PATCH" && /^\/v1\/memory\/entries\/[^/]+$/.test(pathname)) ||
+    (method === "POST" && /^\/v1\/memory\/entries\/[^/]+\/(archive|forget|supersede)$/.test(pathname)));
+  const recovery = isCancellation(method, pathname) || revocation || memoryReduction;
   const dispatch = <T>(operation: () => Promise<T>) => control.dispatch(generation, operation, recovery);
   try {
     if (control.isStopping() && method !== "GET" && pathname !== "/v1/stop" && !recovery) throw new BridgeError("Stop all is unconfirmed or in progress. Inspect status and explicitly retry Stop all before changing work.", 409);
     if (pathname === "/v1/diagnostics" && method === "GET") {
       if (!native) throw new BridgeError("Native diagnostics access required.", 403);
       json(response, 200, { version: 1, events: extensions.diagnostics?.snapshot() ?? [] }); return;
+    }
+    if (["/v1/context/current", "/v1/context/recall", "/v1/context/assemble"].includes(pathname) && method === "POST") {
+      if (!extensions.context) throw new BridgeError("Scoped context is unavailable.", 503);
+      const body = await readJson(request);
+      if (pathname === "/v1/context/assemble") {
+        if (!native) throw new BridgeError("Use the native context inspector.", 403);
+        const packet = await dispatch(() => extensions.context!.preview(body));
+        extensions.context.assembler.revalidate(packet);
+        json(response, 200, packet); return;
+      }
+      const sessionId = request.headers["x-jarvis-eve-session"];
+      if (pathname === "/v1/context/current" && typeof sessionId === "string" && !service.contextForEveSession(sessionId)) {
+        // Eve may start automatic recall before its create receipt is committed.
+        throw new BridgeError("Session binding is not ready.", 425);
+      }
+      const scope = toolContext(request, service);
+      const input = pathname === "/v1/context/current" ? z.strictObject({}).parse(body) : ContextRecallSchema.parse(body);
+      if (!extensions.knowledge?.enabled && !extensions.memory?.enabled) {
+        json(response, 200, { version: 1, content: "No current recalled context. Knowledge and personal memory are disabled." }); return;
+      }
+      const packet = await dispatch(() => extensions.context!.current(scope, "query" in input ? input.query : undefined, "maxTokens" in input ? input.maxTokens : undefined));
+      extensions.context.assembler.revalidate(packet);
+      json(response, 200, pathname === "/v1/context/current" ? { version: 1, content: JSON.stringify(packet) } : packet); return;
+    }
+    if (pathname.startsWith("/v1/memory/")) {
+      if (!extensions.memory) throw new BridgeError("Personal memory service unavailable.", 503);
+      const body = method === "GET" ? undefined : await readJson(request);
+      if (method === "POST" && (pathname === "/v1/memory/recall-current" || pathname === "/v1/memory/propose-current")) {
+        const scope = toolContext(request, service);
+        if (pathname.endsWith("recall-current")) {
+          const input = z.strictObject({ query: z.string().trim().min(1).max(1000).optional() }).parse(body);
+          const query = input.query ?? service.contextSnapshot(scope.projectId, scope.conversationId, scope.taskId).currentTurn.slice(0, 1000);
+          json(response, 200, await dispatch(() => extensions.memory!.recall({ projectId: scope.projectId, purpose: "cloud", query: query || "saved preferences", limit: 12 },
+            { nativeAuthenticated: false, projectId: scope.projectId }))); return;
+        }
+        const input = ProposeMemoryToolSchema.parse(body);
+        const proposal = { kind: input.kind, scope: input.scope === "global" ? { kind: "global" } : { kind: "project", projectId: scope.projectId },
+          text: input.text, confidence: input.confidence, pinned: false, cloudAllowed: input.cloudAllowed, expiresAt: input.expiresAt,
+          provenance: { origin: "inferred", references: input.scope === "global" ? [] : [
+            { type: "conversation", projectId: scope.projectId, conversationId: scope.conversationId, turnId: scope.taskId },
+            ...input.sources.map(source => ({ type: "knowledge", projectId: scope.projectId, ...source })),
+          ] } };
+        json(response, 201, await dispatch(() => extensions.memory!.propose(proposal, { nativeAuthenticated: false, projectId: scope.projectId }))); return;
+      }
+      const projectId = native ? undefined : toolContext(request, service).projectId;
+      const operation = () => extensions.memory!.route(method, new URL(request.url!, "http://127.0.0.1"), body, { nativeAuthenticated: native, projectId });
+      const reply = await (method === "GET" || memoryReduction ? operation() : dispatch(operation));
+      if (!reply) throw new BridgeError("Memory route not found.", 404);
+      json(response, reply.status, reply.body); return;
     }
     if (pathname === "/v1/assistant/tool-context" && method === "GET") {
       const context = toolContext(request, service);
@@ -389,6 +446,11 @@ async function route(
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
         throw new BridgeError("Memory not found.", 404);
       }
+      if (extensions.memory?.enabled) {
+        if (!native) throw new BridgeError("Remove personal memory through the native workspace.", 403);
+        await dispatch(() => extensions.memory!.forgetLegacy(id, { nativeAuthenticated: true }));
+        json(response, 200, { id, deleted: true }); return;
+      }
       const deleted = await dispatch(() => service.removeMemory(id));
       if (deleted && extensions.knowledge?.enabled) extensions.knowledge.deletePreference(id);
       if (!deleted) throw new BridgeError("Memory not found.", 404);
@@ -457,6 +519,7 @@ export function createBridgeServer(
       generation++;
       stopVoice();
       extensions.knowledge?.cancelReads();
+      extensions.memory?.cancelReads();
       const operation = serialize(async () => {
         if (extensions.assistant?.enabled) for (const session of extensions.assistant.state().sessions) await extensions.assistant.invalidateConfirmations(session.id);
         const [tasks, rooms, research] = await Promise.allSettled([service.stop(), runtime ? stopHarness(runtime, stopTimeoutMs) : Promise.resolve(), extensions.research?.cancelAll()]);
@@ -501,6 +564,7 @@ export function createBridgeServer(
     generation++;
     stopVoice();
     extensions.knowledge?.cancelReads();
+    extensions.memory?.cancelReads();
     const results = await serialize(() => Promise.allSettled([service.stop(), runtime?.voice.close(), runtime?.harness.shutdown()]));
     results.push(...await Promise.allSettled([boundedStop(service.drain(), stopTimeoutMs)]));
     unsubscribeDiagnostics();
@@ -552,22 +616,38 @@ export async function startJarvisBridge(): Promise<Server> {
   let assistant: Awaited<ReturnType<typeof createAssistantRuntime>> | undefined;
   let knowledge: KnowledgeService | undefined;
   let research: ResearchService | undefined;
+  let memory: MemoryService | undefined;
+  let context: ContextRuntime | undefined;
   try {
     runtime = await createHarnessRuntime(getDataDirectory(), service.model);
     assistant = await createAssistantRuntime(getDataDirectory(), service, runtime);
-    knowledge = await KnowledgeService.open({ dataDirectory: getDataDirectory() });
+    const embeddings = await createMacEmbeddingProvider();
+    const embeddingProvider = embeddings.status === "available" ? embeddings.provider : undefined;
+    knowledge = await KnowledgeService.open({ dataDirectory: getDataDirectory(), embeddingProvider });
+    memory = await MemoryService.open({ dataDirectory: getDataDirectory(), embeddingProvider,
+      resolveSource(reference, access) {
+        if (!knowledge?.enabled || reference.projectId !== access.projectId) return false;
+        try {
+          const { source, passages } = knowledge.readSource(reference.sourceVersionId, reference.projectId, access.purpose);
+          return !source.archived && knowledge.listSources(reference.projectId, access.purpose).some(item => item.id === source.id) &&
+            (!reference.passageId || passages.some(passage => passage.id === reference.passageId));
+        } catch { return false; }
+      },
+      onLegacyChanged(id) { if (knowledge?.enabled) knowledge.deletePreference(id); },
+    });
+    context = createContextRuntime(service, knowledge, memory);
     research = await ResearchService.open({ dataDirectory: getDataDirectory(), knowledge, model: process.env.JARVIS_DEEP_MODEL || service.model });
   } catch (error) {
     // Release stores/owned services when a later subsystem cannot initialize.
     // Recovery must never leave a half-started runtime holding database locks.
-    await Promise.allSettled([research?.close(), assistant?.close(), runtime?.voice.close(), runtime?.harness.shutdown(), service.stop()]);
+    await Promise.allSettled([research?.close(), memory?.close(), assistant?.close(), runtime?.voice.close(), runtime?.harness.shutdown(), service.stop()]);
     knowledge?.close();
     throw error;
   }
   const diagnostics = new Diagnostics();
   const server = createBridgeServer(service, BRIDGE_HOST, BRIDGE_PORT, runtime, { extensions: {
-    assistant: assistant.coordinator, knowledge, diagnostics, research,
-    async close() { await research!.close(); await assistant!.close(); knowledge!.close(); },
+    assistant: assistant.coordinator, knowledge, diagnostics, research, memory, context,
+    async close() { await research!.close(); await memory!.close(); await assistant!.close(); knowledge!.close(); },
   } });
   server.once("error", () => { void shutdownBridge(server); });
   server.on("listening", () => {

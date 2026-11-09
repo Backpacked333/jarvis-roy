@@ -2,7 +2,7 @@
 
 This document separates implemented source code from release acceptance for the
 voice-first research and action plan. The app remains a **source-build preview**.
-New Assistant, Knowledge, Research and Voice Approval flags default off. No stage is
+New Assistant, Knowledge, Personal Memory, Semantic Retrieval, Research and Voice Approval flags default off. No stage is
 declared released solely because its automated tests pass.
 
 ## What is implemented
@@ -34,6 +34,8 @@ values take precedence. See the [main setup instructions](../README.md#reproduci
 | --- | --- |
 | Voice-first assistant / `JARVIS_ENABLE_ASSISTANT` | Off. Enables coordinated sessions and the adaptive workspace. |
 | Project knowledge / `JARVIS_ENABLE_KNOWLEDGE` | Off. Enables imports and scoped grants. Room history also needs the Assistant workspace. |
+| Personal memory / `JARVIS_ENABLE_MEMORY` | Off. Enables reviewed structured memory, personal/project scopes and bounded per-turn recall. |
+| Local semantic retrieval / `JARVIS_ENABLE_SEMANTIC_RETRIEVAL` | Off. Adds on-device Apple embeddings to source and memory search, with explicit lexical fallback. |
 | Deep research / `JARVIS_ENABLE_RESEARCH` | Off. Enables bounded research runs; also requires Knowledge. |
 | Voice confirmation / `JARVIS_ENABLE_VOICE_APPROVAL` | Off. Also requires the Assistant and session cloud-voice consent. |
 | Desktop, Apple services, terminal | Separately off. These switches do not grant macOS permissions or approve actions. |
@@ -60,6 +62,14 @@ chosen account before returning content. EventKit reads use the chosen calendar
 and time range, including recurring occurrences. OS permission prompts remain
 required. Legacy personal memories migrate as preferences, with provenance and a
 backup; project evidence does not automatically become a global preference.
+
+The [RAG and memory upgrade](rag-memory-context.md) adds hybrid retrieval, local
+vector caches, ranked personal/project memory, exact memory review, and an
+inspectable context budget. One stable Eve recall slot is replaced each turn;
+ordinary conversation history retains Eve's separate compaction mechanism.
+Context pins apply to the inspector preview; standing memory preferences have
+their own persistent pin. Native embedding relevance and live personal-assistant
+quality still require evaluation on the target Mac.
 
 Room archival is explicit and native-only. A room must first be marked archived,
 have no unsettled external project work, and have terminal measured state with

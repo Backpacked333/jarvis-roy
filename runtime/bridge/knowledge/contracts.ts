@@ -46,6 +46,22 @@ export type EvidencePassage = z.infer<typeof EvidencePassageSchema>;
 export const SearchInputSchema = z.strictObject({
   projectId: KnowledgeId, query: text(1_000), purpose: PurposeSchema, limit: z.number().int().min(1).max(30).default(10), includeArchived: z.boolean().default(false),
 });
+export const ContextSearchInputSchema = SearchInputSchema.extend({
+  maxPerSource: z.number().int().min(1).max(5).default(2),
+  // Optional bounded catch-up work. Cloud callers can only index sources already
+  // allowed for their cloud query; no additional disclosure permission is implied.
+  indexBudget: z.number().int().min(0).max(64).default(0),
+});
+export const IndexEmbeddingsInputSchema = z.strictObject({
+  projectId: KnowledgeId, limit: z.number().int().min(1).max(256).default(64),
+});
+export type ContextSearchInput = z.infer<typeof ContextSearchInputSchema>;
+export interface RetrievalExplanation {
+  lanes: ("lexical" | "vector")[];
+  lexicalRank: number | null; vectorRank: number | null;
+  bm25: number | null; cosine: number | null; rrf: number;
+  matchedTerms: string[]; queryCoverage: number;
+}
 export const RetrieveInputSchema = z.strictObject({
   projectId: KnowledgeId, provider: z.enum(["tavily", "arxiv", "crossref"]), query: text(400), maxResults: z.number().int().min(1).max(5).default(5),
 });

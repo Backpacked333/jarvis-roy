@@ -24,6 +24,8 @@ struct Request: Decodable {
     let start: String?
     let end: String?
     let limit: Int?
+    let embeddingLanguage: String?
+    let texts: [String]?
 
     func validatedBundleId() throws -> String {
         guard let id = bundleId, id.utf8.count <= 255,

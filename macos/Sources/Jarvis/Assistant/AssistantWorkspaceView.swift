@@ -6,6 +6,8 @@ struct AssistantWorkspaceView: View {
     @ObservedObject var assistant: AssistantModel
     @ObservedObject var voice: VoiceController
     @State private var knowledgeVisible = false
+    @State private var memoryVisible = false
+    @State private var contextVisible = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +28,11 @@ struct AssistantWorkspaceView: View {
                 } label: { Label("Sessions", systemImage: "bubble.left.and.bubble.right") }
                 if AssistantFeatures.knowledge {
                     Button { knowledgeVisible.toggle() } label: { Label("Knowledge", systemImage: "books.vertical") }
+                        .disabled(assistant.selectedSession?.focus.projectID == nil)
+                }
+                Button { memoryVisible.toggle() } label: { Label("Memory", systemImage: "brain") }
+                if AssistantFeatures.knowledge || AssistantFeatures.memory {
+                    Button { contextVisible.toggle() } label: { Label("Context", systemImage: "list.bullet.rectangle") }
                         .disabled(assistant.selectedSession?.focus.projectID == nil)
                 }
             }.padding(22)
@@ -148,6 +155,22 @@ struct AssistantWorkspaceView: View {
         .sheet(isPresented: $knowledgeVisible) {
             if let project = assistant.selectedSession?.focus.projectID {
                 KnowledgeWorkspaceView(projectID: project, client: assistant.client).id(project)
+            }
+        }
+        .sheet(isPresented: $memoryVisible) {
+            VStack(spacing: 0) {
+                HStack { Spacer(); Button("Done") { memoryVisible = false } }.padding([.top, .horizontal], 20)
+                MemoryWorkspaceView(projectID: assistant.selectedSession?.focus.projectID, client: assistant.client)
+                    .id(assistant.selectedSession?.focus.projectID ?? "personal")
+            }.frame(minWidth: 860, minHeight: 620)
+        }
+        .sheet(isPresented: $contextVisible) {
+            if let focus = assistant.selectedSession?.focus, let projectID = focus.projectID {
+                VStack(spacing: 0) {
+                    HStack { Spacer(); Button("Done") { contextVisible = false } }.padding([.top, .horizontal], 20)
+                    ContextInspectorView(projectID: projectID, conversationID: focus.conversationId, client: assistant.client)
+                        .id(projectID + ":" + (focus.conversationId ?? ""))
+                }.frame(minWidth: 760, minHeight: 620)
             }
         }
     }

@@ -7,6 +7,8 @@ struct RuntimePreferences {
     static let flags = [
         "JARVIS_ENABLE_ASSISTANT": "Jarvis.assistantEnabled",
         "JARVIS_ENABLE_KNOWLEDGE": "Jarvis.knowledgeEnabled",
+        "JARVIS_ENABLE_MEMORY": "Jarvis.memoryEnabled",
+        "JARVIS_ENABLE_SEMANTIC_RETRIEVAL": "Jarvis.semanticRetrievalEnabled",
         "JARVIS_ENABLE_RESEARCH": "Jarvis.researchEnabled",
         "JARVIS_ENABLE_VOICE_APPROVAL": "Jarvis.voiceApprovalEnabled",
         "JARVIS_ENABLE_DESKTOP": "Jarvis.desktopEnabled",

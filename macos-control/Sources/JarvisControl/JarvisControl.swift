@@ -31,6 +31,7 @@ struct JarvisControl {
             case "list_calendars": result = try listCalendars(deadline: deadline)
             case "list_calendar_events": result = try listCalendarEvents(request, deadline: deadline)
             case "request_calendar_access": result = try await requestCalendarAccess(deadline: deadline)
+            case "sentence_embeddings": result = try sentenceEmbeddings(request, deadline: deadline)
             case "inspect_app":
                 try requireAccessibility()
                 let app = try runningApplication(bundleId: request.validatedBundleId())
@@ -38,7 +39,7 @@ struct JarvisControl {
             case "control_app":
                 try requireAccessibility()
                 result = try await controlApplication(request, deadline: deadline)
-            default: throw ControlFailure("UNSUPPORTED_OPERATION", "Supported operations: read_screen, list_windows, read_window, list_calendars, list_calendar_events, request_calendar_access, inspect_app, control_app. There is no script interpreter.")
+            default: throw ControlFailure("UNSUPPORTED_OPERATION", "Supported operations: read_screen, list_windows, read_window, list_calendars, list_calendar_events, request_calendar_access, sentence_embeddings, inspect_app, control_app. There is no script interpreter.")
             }
             emit(["ok": true, "result": result])
         } catch let failure as ControlFailure {

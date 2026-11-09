@@ -18,8 +18,10 @@ struct WorkspaceView: View {
     @State private var cloudDisclosure = false
     @State private var handsFreeDisclosure = false
     @AppStorage("Jarvis.assistantEnabled") private var assistantPreference = false
+    @AppStorage("Jarvis.memoryEnabled") private var memoryPreference = false
 
     private var assistantAvailable: Bool { _ = assistantPreference; return AssistantFeatures.assistant }
+    private var memoryAvailable: Bool { _ = memoryPreference; return AssistantFeatures.memory }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -46,7 +48,11 @@ struct WorkspaceView: View {
                         observationOwnership: .application)
                 case .workspace: workspace
                 case .capabilities: capabilities
-                case .memory: memory
+                case .memory:
+                    if memoryAvailable {
+                        MemoryWorkspaceView(projectID: model.assistant.selectedSession?.focus.projectID, client: model.assistant.client)
+                            .id(model.assistant.selectedSession?.focus.projectID ?? "personal")
+                    } else { memory }
                 case .privacy: privacy
                 }
             }

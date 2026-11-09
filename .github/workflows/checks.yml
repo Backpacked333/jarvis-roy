@@ -24,6 +24,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - run: node ../scripts/smoke-runtime.mjs
+      - run: node ../scripts/smoke-runtime.mjs --assistant
   isolated-workers:
     runs-on: ubuntu-latest
     timeout-minutes: 15

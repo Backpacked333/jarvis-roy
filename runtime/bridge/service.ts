@@ -439,6 +439,27 @@ export class JarvisService {
     return { taskId: task.id, conversationId: task.conversationId, projectId: task.projectId ?? task.conversationId };
   }
 
+  /** Explicit user messages are independently submitted context. Never recycle
+   * assistant prose here: it can contain excerpts whose grants were revoked. */
+  contextSnapshot(projectId: string, conversationId?: string, taskId?: string) {
+    const conversation = conversationId ? this.store.conversation(conversationId) : undefined;
+    if (conversationId && (!conversation || (conversation.projectId ?? conversation.id) !== projectId)) {
+      throw new BridgeError("Conversation context is outside this project.", 403);
+    }
+    const task = taskId ? this.store.get(taskId) : undefined;
+    if (taskId && (!task || task.conversationId !== conversationId || (task.projectId ?? task.conversationId) !== projectId)) {
+      throw new BridgeError("Task context is outside this conversation.", 403);
+    }
+    return {
+      currentTurn: task?.userMessage ?? "",
+      messages: structuredClone((conversation?.messages ?? []).filter(message => message.role === "user" && message.taskId !== taskId).slice(-60)),
+      actions: this.store.values().filter(record => (record.projectId ?? record.conversationId) === projectId &&
+        (ACTIVE_STATUSES.has(record.status) || record.approvals.length > 0 || record.cancellationPending))
+        .map(record => ({ id: record.id, conversationId: record.conversationId!, status: record.status,
+          title: record.title, pendingApprovals: record.approvals.length, createdAt: record.createdAt })),
+    };
+  }
+
   hasUnsettledProjectWork(projectId: string): boolean {
     return this.store.values().some(task => (task.projectId ?? task.conversationId) === projectId && (
       ACTIVE_STATUSES.has(task.status) || task.approvals.length > 0 ||

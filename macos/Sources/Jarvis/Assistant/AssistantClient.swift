@@ -20,6 +20,8 @@ enum AssistantFeatures {
     static var assistant: Bool { enabled("JARVIS_ENABLE_ASSISTANT", preference: "Jarvis.assistantEnabled") }
     static var knowledge: Bool { enabled("JARVIS_ENABLE_KNOWLEDGE", preference: "Jarvis.knowledgeEnabled") }
     static var research: Bool { enabled("JARVIS_ENABLE_RESEARCH", preference: "Jarvis.researchEnabled") }
+    static var memory: Bool { enabled("JARVIS_ENABLE_MEMORY", preference: "Jarvis.memoryEnabled") }
+    static var semanticRetrieval: Bool { enabled("JARVIS_ENABLE_SEMANTIC_RETRIEVAL", preference: "Jarvis.semanticRetrievalEnabled") }
     static var voiceApproval: Bool { enabled("JARVIS_ENABLE_VOICE_APPROVAL", preference: "Jarvis.voiceApprovalEnabled") }
 }
 

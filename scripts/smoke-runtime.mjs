@@ -48,7 +48,7 @@ async function smoke(assistantEnabled) {
         ['HOME_ASSISTANT_URL', 'HOME_ASSISTANT_TOKEN', 'ELEVENLABS_VOICE_ID', 'JARVIS_WORKER_IMAGE'].includes(name)) delete source[name];
   }
   if (assistantEnabled) Object.assign(source, { JARVIS_NATIVE_TOKEN: nativeToken,
-    JARVIS_ENABLE_ASSISTANT: '1', JARVIS_ENABLE_KNOWLEDGE: '1', JARVIS_ENABLE_VOICE_APPROVAL: '1' });
+    JARVIS_ENABLE_ASSISTANT: '1', JARVIS_ENABLE_KNOWLEDGE: '1', JARVIS_ENABLE_MEMORY: '1', JARVIS_ENABLE_VOICE_APPROVAL: '1' });
   const interrupted = new AbortController();
   const interrupt = () => interrupted.abort(new Error('Smoke check interrupted.'));
   process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
@@ -119,7 +119,7 @@ async function smoke(assistantEnabled) {
     const room = await request('/v1/harness/rooms', { method: 'POST', body: { requestId: 'runtime-smoke-room',
       title: 'Runtime smoke room', description: '', policy: defaultRoomPolicy(null) }, expected: 201 });
     await request('/v1/harness/archives', { native: false, expected: 403 });
-    let assistantSession, grant, imported;
+    let assistantSession, grant, imported, memory;
     if (assistantEnabled) {
       await request('/v1/assistant/state', { native: false, expected: 403 });
       assistantSession = await request('/v1/assistant/sessions', { method: 'POST', expected: 201,
@@ -134,6 +134,21 @@ async function smoke(assistantEnabled) {
       const path = `/v1/knowledge/sources/${imported.source.id}?projectId=${conversation.id}`;
       assert.equal((await request(path + '&purpose=local')).passages[0].text, 'Local smoke evidence.');
       await request(path + '&purpose=cloud', { expected: 403 });
+      memory = await request('/v1/memory/entries', { method: 'POST', expected: 201, body: {
+        kind: 'preference', scope: { kind: 'global' }, text: 'Prefer concise smoke check reports.',
+        provenance: { origin: 'explicit_user', references: [] }, confidence: 1, pinned: true,
+        expiresAt: null, cloudAllowed: false,
+      } });
+      const packet = await request('/v1/context/assemble', { method: 'POST', body: {
+        version: 1, projectId: conversation.id, query: 'smoke', purpose: 'local', maxTokens: 12000,
+      } });
+      assert.ok(packet.selections.some(item => item.kind === 'source'));
+      assert.ok(packet.selections.some(item => item.kind === 'memory' && item.id === memory.id));
+      assert.ok(packet.usage.estimatedTokens <= packet.usage.maxTokens);
+      const cloud = await request('/v1/context/assemble', { method: 'POST', body: {
+        version: 1, projectId: conversation.id, query: 'smoke', purpose: 'cloud', maxTokens: 12000,
+      } });
+      assert.equal(cloud.selections.length, 0);
       assert.deepEqual((await request('/v1/harness/archives')).archives, []);
     }
     await request('/v1/stop', { method: 'POST' });
@@ -145,6 +160,9 @@ async function smoke(assistantEnabled) {
       assert.ok((await request('/v1/assistant/state')).sessions.some(value => value.id === assistantSession.id));
       const path = `/v1/knowledge/sources/${imported.source.id}?projectId=${conversation.id}&purpose=local`;
       assert.equal((await request(path)).source.id, imported.source.id);
+      assert.equal((await request(`/v1/memory/entries/${memory.id}`)).text, memory.text);
+      await request(`/v1/memory/entries/${memory.id}/forget`, { method: 'POST', body: { expectedRevision: memory.revision } });
+      assert.deepEqual((await request('/v1/memory/entries')).entries, []);
       await request(`/v1/grants/${grant.id}/revoke`, { method: 'POST', body: { expectedRevision: grant.revision } });
       await request(path, { expected: 403 });
       await request('/v1/harness/archives', { native: false, expected: 403 });
@@ -159,5 +177,5 @@ async function smoke(assistantEnabled) {
   }
   if (primaryError) throw primaryError;
   console.log(`PASS: built Eve + bridge readiness, auth/Origin, conversation/room restart persistence and Stop${assistantEnabled
-    ? '; native assistant session, local document import, cloud refusal, revocation and archive access' : ''}. No provider inference or native actions.`);
+    ? '; native assistant session, RAG/context budgets, memory restart/forget, cloud refusal, revocation and archive access' : ''}. No provider inference or native actions.`);
 }
