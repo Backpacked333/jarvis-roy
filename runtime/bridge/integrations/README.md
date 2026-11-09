@@ -115,7 +115,11 @@ audio output. Ordinary speech or a generic "yes" cannot approve actions.
 
 `ExistingVoiceSpeechAdapter` connects only to the existing authenticated loopback
 `/v1/voice/stream` bridge. It reuses the ElevenLabs recognition/dialogue adapter,
-generation checks, and no-replay behavior. G.711 µ-law 8 kHz media is converted to
+generation checks, and no-replay behavior. Stop and call-authorization revocation
+advance a durable authorization generation: prior calls cannot regain private
+access after resume, even if a passkey assertion or provider cancellation finishes
+late. Every stop action is attempted; cancellation failures remain an explicit
+`uncertain` stop status and are reported to the caller. G.711 µ-law 8 kHz media is converted to
 PCM16 16 kHz; existing 24 kHz dialogue output is downsampled to µ-law. No cloud AI
 credential is needed in this gateway. The private bridge token must never be
 exposed to Twilio, Telegram, the browser, or workers.

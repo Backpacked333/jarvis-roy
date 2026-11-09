@@ -15,8 +15,11 @@ export function cloudEnvironment(role, source = process.env) {
     'JARVIS_TWILIO_FROM_NUMBER', 'JARVIS_OWNER_PHONE_NUMBER', 'JARVIS_PUBLIC_BASE_URL', 'JARVIS_TIME_ZONE', 'JARVIS_INTEGRATION_PROJECT_ID',
     'JARVIS_PRICE_TELEGRAM_REQUEST_USD', 'JARVIS_PRICE_GOOGLE_REQUEST_USD', 'JARVIS_PRICE_TWILIO_REQUEST_USD', 'JARVIS_PRICE_TWILIO_MINUTE_USD',
     'JARVIS_PRICE_ELEVENLABS_STT_MINUTE_USD', 'JARVIS_PRICE_ELEVENLABS_TTS_CHARACTER_USD');
+  privateGateway.push('HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+    'NODE_USE_ENV_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR');
   for (const name of [...common, ...(role === 'gateway' ? privateGateway : [])]) if (source[name] !== undefined) environment[name] = source[name];
   if (role === 'bridge' && source.JARVIS_CLOUD_RUNTIME_TOKEN !== undefined) environment.JARVIS_CLOUD_RUNTIME_TOKEN = source.JARVIS_CLOUD_RUNTIME_TOKEN;
+  if (role === 'bridge' && source.JARVIS_E5_MODEL_DIR !== undefined) environment.JARVIS_E5_MODEL_DIR = source.JARVIS_E5_MODEL_DIR;
   if (role === 'runtime') {
     environment.WORKFLOW_LOCAL_DATA_DIR = path.join(source.JARVIS_DATA_DIR ?? '/var/lib/jarvis', 'eve-workflows');
     environment.WORKFLOW_LOCAL_BASE_URL = 'http://127.0.0.1:39201';

@@ -1,4 +1,5 @@
 import Combine
+import Darwin
 import Foundation
 
 enum RuntimeProfileKind: String, Codable, CaseIterable, Identifiable {
@@ -81,15 +82,48 @@ final class RuntimeProfiles: ObservableObject {
         // Keep receipt journals: forgotten/repaired profiles must not replay old effects.
     }
     static func writePrivate(_ data: Data, to file: URL) throws {
-        let parent = file.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let temporary = parent.appendingPathComponent(".write-\(UUID().uuidString)")
-        guard FileManager.default.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else { throw CloudConnectionFailure.storage }
-        defer { try? FileManager.default.removeItem(at: temporary) }
-        let handle = try FileHandle(forWritingTo: temporary); try handle.synchronize(); try handle.close()
-        if FileManager.default.fileExists(atPath: file.path) { _ = try FileManager.default.replaceItemAt(file, withItemAt: temporary) }
-        else { try FileManager.default.moveItem(at: temporary, to: file) }
-        let directoryHandle = try FileHandle(forReadingFrom: parent); try directoryHandle.synchronize(); try directoryHandle.close()
+        guard file.isFileURL else { throw CloudConnectionFailure.storage }
+        let parent = file.deletingLastPathComponent().path
+        try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let directoryFD = parent.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW) }
+        guard directoryFD >= 0 else { throw CloudConnectionFailure.storage }
+        defer { _ = Darwin.close(directoryFD) }
+        guard Darwin.fchmod(directoryFD, mode_t(0o700)) == 0 else { throw CloudConnectionFailure.storage }
+        let temporaryName = ".write-\(UUID().uuidString)"
+        let temporary = (parent as NSString).appendingPathComponent(temporaryName)
+        let descriptor = temporary.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600)) }
+        guard descriptor >= 0 else { throw CloudConnectionFailure.storage }
+        defer {
+            _ = Darwin.close(descriptor)
+            temporaryName.withCString { _ = Darwin.unlinkat(directoryFD, $0, 0) }
+        }
+        guard Darwin.fchmod(descriptor, mode_t(0o600)) == 0 else { throw CloudConnectionFailure.storage }
+        try data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            guard let base = bytes.baseAddress else { return }
+            var offset = 0
+            while offset < bytes.count {
+                let written = Darwin.write(descriptor, base.advanced(by: offset), bytes.count - offset)
+                if written < 0 && errno == EINTR { continue }
+                guard written > 0 else { throw CloudConnectionFailure.storage }
+                offset += written
+            }
+        }
+        func synchronize(_ descriptor: Int32) throws {
+            while Darwin.fsync(descriptor) != 0 {
+                guard errno == EINTR else { throw CloudConnectionFailure.storage }
+            }
+        }
+        try synchronize(descriptor)
+        // POSIX rename commits both first writes and replacements atomically.
+        // Foundation's move/replace and directory FileHandle paths failed on the
+        // actual Mac fixture. Keep the directory descriptor open through commit.
+        let renamed = temporaryName.withCString { source in
+            file.lastPathComponent.withCString { destination in
+                Darwin.renameat(directoryFD, source, directoryFD, destination)
+            }
+        }
+        guard renamed == 0 else { throw CloudConnectionFailure.storage }
+        try synchronize(directoryFD)
     }
 }
 

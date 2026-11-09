@@ -56,7 +56,7 @@ test("cloud Stop attempts every authority and a partial Resume rolls back to pau
   const port = (server.address() as { port: number }).port;
   const pairing = await app.control.startPairing({ deviceId: "mac", label: "Mac" }, bootstrap);
   const paired = await app.control.completePairing({ pairingId: pairing.pairingId, deviceId: "mac" }, pairing.pairingToken);
-  const request = (action: "stop" | "resume") => new Promise<number>((resolve, reject) => {
+  const request = (action: string) => new Promise<number>((resolve, reject) => {
     const req = httpRequest({ hostname: "127.0.0.1", port, path: `/v1/cloud/${action}`, method: "POST", headers: { host: "jarvis.example", authorization: `Bearer ${paired.deviceToken}` } }, response => { response.resume(); response.on("end", () => resolve(response.statusCode!)); });
     req.on("error", reject); req.end();
   });
@@ -67,6 +67,10 @@ test("cloud Stop attempts every authority and a partial Resume rolls back to pau
   try {
     assert.equal(await request("stop"), 503);
     assert.equal(integrationStops, 1); assert.equal(controlStops, 1); assert.deepEqual(operations, ["stop"]);
+    assert.equal(await request("tasks"), 409, "The gateway fences work even when cancellation failed");
+    assert.equal(await request("conversations"), 409);
+    assert.equal(await request("objectives"), 409);
+    assert.deepEqual(operations, ["stop"]);
     app.control.resume = async () => { throw new BridgeError("Fixture durable commit failed", 503); };
     assert.equal(await request("resume"), 503);
     assert.equal(integrationStops, 2); assert.equal(controlStops, 2); assert.deepEqual(operations, ["stop", "resume", "stop"]);
@@ -78,4 +82,12 @@ test("cloud Stop attempts every authority and a partial Resume rolls back to pau
     assert.equal(await pendingResume, 503, "Stop must supersede a concurrently awaited resume");
     assert.equal(controlStops, 4); assert.equal(integrationStops, 4);
   } finally { releaseResume?.(); await app.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("cloud pairing credentials cannot reuse model or runtime authority", async () => {
+  const local = randomBytes(32).toString("base64url"), runtime = randomBytes(32).toString("base64url");
+  for (const bootstrap of [local, runtime]) await assert.rejects(createCloudApplication({ env: {
+    JARVIS_ENABLE_CLOUD: "1", JARVIS_RUNTIME_PROFILE: "cloud", JARVIS_CLOUD_ORIGIN: "https://jarvis.example",
+    JARVIS_LOCAL_TOKEN: local, JARVIS_CLOUD_RUNTIME_TOKEN: runtime, JARVIS_CLOUD_BOOTSTRAP_TOKEN: bootstrap,
+  } }), /pairing credential must be distinct/);
 });

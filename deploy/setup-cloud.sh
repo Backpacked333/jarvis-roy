@@ -21,8 +21,12 @@ install -d -m 0700 -o jarvis -g jarvis /var/lib/jarvis
 install -d -m 0700 -o root -g root /etc/jarvis
 # Dependency and build commands run without deployment secrets. The reviewed
 # checkout remains operator-owned; npm install does not execute as the service user.
-(cd "$CHECKOUT/runtime" && ONNXRUNTIME_NODE_INSTALL=skip npm ci && npm run typecheck && npm run build)
-"$CHECKOUT/scripts/setup-workers.sh"
+BUILD_ENV=("PATH=/usr/bin:/bin:/usr/sbin:/sbin" "HOME=${HOME:-/root}" "LANG=C.UTF-8" "ONNXRUNTIME_NODE_INSTALL=skip")
+for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy NODE_USE_ENV_PROXY NODE_EXTRA_CA_CERTS SSL_CERT_FILE SSL_CERT_DIR JARVIS_MODEL; do
+  if [[ -v "$name" ]]; then BUILD_ENV+=("$name=${!name}"); fi
+done
+(cd "$CHECKOUT/runtime" && env -i "${BUILD_ENV[@]}" npm ci && env -i "${BUILD_ENV[@]}" npm run typecheck && env -i "${BUILD_ENV[@]}" npm run build)
+env -i "${BUILD_ENV[@]}" "$CHECKOUT/scripts/setup-workers.sh"
 # Build output was created under a private root umask. Grant only read/traverse
 # access to the service group; runtime state stays in /var/lib/jarvis.
 chgrp jarvis /opt/jarvis "$CHECKOUT"

@@ -210,7 +210,7 @@ async function route(
       const payload = input.payload && typeof input.payload === "object" ? input.payload as Record<string, unknown> : {};
       // Cancellation must not wait on its own settlement or free control poll.
       // Authentication above is separate from every model/native credential.
-      const controlOnly = input.operation === "readiness" || input.operation === "settle" ||
+      const controlOnly = input.operation === "readiness" || input.operation === "settle" || input.operation === "action_result" ||
         input.operation === "reserve" && payload.estimatedUsd === 0 || ["objectives", "conversations", "tasks"].includes(input.operation) && payload.method === "GET";
       json(response, 200, await (controlOnly ? extensions.cloudBroker(input) : dispatch(() => extensions.cloudBroker!(input)))); return;
     }

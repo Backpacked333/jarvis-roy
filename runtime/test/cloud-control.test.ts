@@ -9,11 +9,16 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { WebSocket } from "ws";
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
-import { CloudControlPlane, CloudStore, createCloudGateway, verifyRemoteApprovalReceipt, cloudCommandDigest,
+import { CloudControlPlane, CloudStore, createCloudGateway, verifyRemoteApprovalReceipt, cloudCommandDigest, remoteActionCommand,
   type CloudOptions, type CloudActor, type CloudCommand, type DeviceReceipt } from "../bridge/cloud/index.ts";
 import type { ReviewableAction } from "../bridge/assistant/index.ts";
 import { cloudReviewJs } from "../bridge/cloud/web.ts";
 import { ObjectiveService, type ChildObservation, type ObjectiveAdapter } from "../bridge/objectives/index.ts";
+import { NativeCloudRuntime } from "../bridge/native-cloud-runtime.ts";
+import { createCloudRuntimeBroker } from "../bridge/cloud-runtime-broker.ts";
+import type { ObjectiveRuntime } from "../bridge/objective-runtime.ts";
+import type { JarvisService } from "../bridge/service.ts";
+import type { ContinuityService } from "../bridge/continuity/index.ts";
 
 const sha = (text: string | Uint8Array) => createHash("sha256").update(text).digest();
 const bootstrap = randomBytes(32).toString("base64url");
@@ -154,6 +159,56 @@ test("failed or interrupted effects never automatically execute again after rest
   } finally { await f.cleanup(); }
 });
 
+test("cloud remote reviews reconcile only exact durable action receipts after expiry and restart, without replay", async () => {
+  for (const terminal of ["completed", "failed"] as const) {
+    let f!: Awaited<ReturnType<typeof fixture>>, native!: NativeCloudRuntime;
+    let executions = 0, ordinaryTaskCompleted = false, exactOutcome: "completed" | "failed" | "unknown" = "unknown";
+    let broker!: ReturnType<typeof createCloudRuntimeBroker>;
+    f = await fixture({ localExecutorId: "cloud-runtime",
+      async executeAction(action, receipt) {
+        await native.pair({ version: 1, profileId: "cloud-runtime", origin: f.origin, ...f.control.runtimeExecutorBinding() });
+        const command = remoteActionCommand(action, receipt);
+        const result = await native.execute({ version: 1, profileId: "cloud-runtime", command });
+        return { outcome: result.status, commandId: command.id };
+      },
+      readActionResult: command => broker({ version: 1, operation: "action_result", payload: { version: 1, profileId: "cloud-runtime",
+        commandId: command.id, commandDigest: command.digest, originalGeneration: command.generation, originalServerEpoch: command.serverEpoch } }) as ReturnType<NonNullable<CloudOptions["readActionResult"]>>,
+    });
+    const nativeOptions = { dataDirectory: f.directory, enabled: true, now: () => f.config.now!().getTime(),
+      authority: { async readAction() { return f.action; }, async executeAction() { executions++; } },
+      async projectForAction() { return "project-1"; },
+      async observeAction(_task: string, _room: boolean, _option: string, reference: { interactionId: string; revision: number }) {
+        assert.equal(reference.interactionId, "approval-1"); assert.equal(reference.revision, 1);
+        void ordinaryTaskCompleted; // Generic task completion supplies no effect receipt.
+        return exactOutcome;
+      },
+    };
+    native = await NativeCloudRuntime.open(nativeOptions);
+    const bindBroker = () => { broker = createCloudRuntimeBroker({ nativeCloud: native, service: {} as JarvisService,
+      objectives: {} as ObjectiveRuntime, continuity: {} as ContinuityService,
+      authority: { async readAction() { throw new Error("Result observation cannot re-read a replacement action"); }, async executeAction() { throw new Error("Reconciliation cannot execute"); } } }); };
+    bindBroker();
+    try {
+      const proposal = await f.control.createActionProposal({ projectId: "project-1", deviceId: "cloud-runtime",
+        ref: { taskId: f.action.taskId, interactionId: f.action.interactionId, revision: f.action.revision, optionId: f.action.optionId } });
+      const challenge = await f.control.approvalOptions(proposal.id, f.owner);
+      const submitted = await f.control.finishApproval(proposal.id, challenge.challengeId, f.authenticator.assertion(challenge.options.challenge, f.origin), f.owner);
+      assert.equal(submitted.status, "unknown"); assert.equal(submitted.commandId, submitted.receiptId); assert.equal(executions, 1);
+      ordinaryTaskCompleted = true;
+      assert.deepEqual(await f.control.reconcileLocalExecutions(f.owner), { checked: 1, updated: 0 });
+      assert.equal(f.control.proposal(proposal.id, f.owner).status, "unknown");
+      f.advance(300_000); await f.restart(); await native.close(); native = await NativeCloudRuntime.open(nativeOptions); bindBroker();
+      f.action = { ...f.action, revision: 2, exactArguments: "{}" };
+      await f.control.stopAll(); assert.deepEqual(f.control.admission(), { version: 1, ready: false, stopped: true, reason: "stopped" });
+      exactOutcome = terminal;
+      assert.deepEqual(await f.control.reconcileLocalExecutions(f.owner, proposal.id), { checked: 1, updated: 1 });
+      assert.equal(f.control.proposal(proposal.id, f.owner).status, terminal); assert.equal(executions, 1);
+      assert.deepEqual(await f.control.reconcileLocalExecutions(f.owner), { checked: 0, updated: 0 });
+      assert.equal(executions, 1);
+    } finally { await native.close(); await f.cleanup(); }
+  }
+});
+
 test("durability failure before authorization prevents execution and fences further work", async () => {
   const f = await fixture(), save = CloudStore.prototype.save;
   try {
@@ -225,7 +280,12 @@ test("cloud gateway exposes only narrow authenticated routes and actual outbound
   const server = createServer(); server.listen(0, "127.0.0.1"); await once(server, "listening");
   const address = server.address(); if (!address || typeof address === "string") throw new Error("No listener");
   const origin = `http://127.0.0.1:${address.port}`;
-  const f = await fixture({ publicOrigin: origin, allowLoopbackForTests: true });
+  let observed = false, handoffs = 0;
+  const f = await fixture({ publicOrigin: origin, allowLoopbackForTests: true,
+    async executeAction() { handoffs++; return { outcome: "unknown" }; },
+    async readActionResult(command) { assert.equal(command.payload.kind, "action.execute");
+      return observed ? { version: 1, status: "completed", code: "ok" } : { version: 1, status: "unknown", code: "unknown" }; },
+  });
   const gateway = createCloudGateway(f.control); server.on("request", gateway.handler); server.on("upgrade", gateway.upgrade);
   const request = (path: string, options: RequestInit = {}) => fetch(origin + path, options);
   let ws: WebSocket | undefined;
@@ -260,7 +320,12 @@ test("cloud gateway exposes only narrow authenticated routes and actual outbound
     assert.equal((await request(`/v1/cloud/actions/${proposal.id}`, { headers: { cookie } })).status, 200);
     const step = await (await request(`/v1/cloud/actions/${proposal.id}/options`, { method: "POST", headers: { ...browserHeaders, cookie }, body: "{}" })).json() as { challengeId: string; options: { challenge: string } };
     const approved = await request(`/v1/cloud/actions/${proposal.id}/verify`, { method: "POST", headers: { ...browserHeaders, cookie }, body: JSON.stringify({ challengeId: step.challengeId, response: mobile.assertion(step.options.challenge, origin) }) });
-    assert.equal(approved.status, 200); assert.equal((await approved.json() as { status: string }).status, "completed"); assert.equal(f.executions(), 1);
+    assert.equal(approved.status, 200); assert.equal((await approved.json() as { status: string }).status, "unknown"); assert.equal(handoffs, 1);
+    assert.equal((await (await request(`/v1/cloud/actions/${proposal.id}`, { headers: { cookie } })).json() as { status: string }).status, "unknown");
+    observed = true;
+    const reconciled = await (await request("/v1/cloud/overview", { headers: { cookie } })).json() as { proposals: { id: string; status: string }[] };
+    assert.equal(reconciled.proposals.find(item => item.id === proposal.id)?.status, "completed");
+    assert.equal((await (await request(`/v1/cloud/actions/${proposal.id}`, { headers: { cookie } })).json() as { status: string }).status, "completed"); assert.equal(handoffs, 1);
     const rejection = new WebSocket(`ws://127.0.0.1:${address.port}/v1/cloud/device/connect?deviceId=mac-1`, { headers: { authorization: "Bearer bad-token" } });
     await new Promise<void>(resolve => { rejection.on("error", () => resolve()); });
   } finally { ws?.terminate(); await gateway.close(); await new Promise<void>(resolve => server.close(() => resolve())); await f.cleanup(); }

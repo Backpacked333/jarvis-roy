@@ -61,7 +61,7 @@ export function createCloudGateway(control: CloudControlPlane, options: CloudGat
       response.writeHead(200, { ...headers, "content-type": js ? "application/javascript; charset=utf-8" : css ? "text/css; charset=utf-8" : "text/html; charset=utf-8" }); response.end(js ? cloudReviewJs : css ? cloudReviewCss : cloudReviewHtml); return;
     }
     if (path === "/v1/cloud/session" && method === "GET") { owner(request); json(response, 200, { version: 1, authenticated: true }); return; }
-    if (path === "/v1/cloud/overview" && method === "GET") { json(response, 200, control.overview(owner(request))); return; }
+    if (path === "/v1/cloud/overview" && method === "GET") { const identity = owner(request); await control.reconcileLocalExecutions(identity); json(response, 200, control.overview(identity)); return; }
     if (path === "/v1/cloud/logout" && method === "POST") { await control.logout(owner(request)); response.setHeader("set-cookie", `${cookieName}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure ? "; Secure" : ""}`); json(response, 200, { version: 1, signedOut: true }); return; }
     if (path === "/v1/cloud/pairing/start" && method === "POST") { limited(request); json(response, 201, await control.startPairing(await body(request), token(request))); return; }
     if (path === "/v1/cloud/pairing/complete" && method === "POST") { limited(request); json(response, 201, await control.completePairing(await body(request), token(request))); return; }
@@ -86,7 +86,7 @@ export function createCloudGateway(control: CloudControlPlane, options: CloudGat
     const action = /^\/v1\/cloud\/actions\/([A-Za-z0-9_-]+)(?:\/(options|verify))?$/.exec(path);
     if (action) {
       const identity = owner(request);
-      if (method === "GET" && !action[2]) { json(response, 200, control.proposal(action[1], identity)); return; }
+      if (method === "GET" && !action[2]) { await control.reconcileLocalExecutions(identity, action[1]); json(response, 200, control.proposal(action[1], identity)); return; }
       if (method === "POST" && action[2] === "options") { json(response, 200, await control.approvalOptions(action[1], identity)); return; }
       if (method === "POST" && action[2] === "verify") { const data = VerificationSchema.parse(await body(request)); json(response, 200, await control.finishApproval(action[1], data.challengeId, data.response as unknown as AuthenticationResponseJSON, identity)); return; }
     }

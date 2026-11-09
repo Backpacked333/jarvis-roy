@@ -45,6 +45,7 @@ export interface CallRecord extends IntegrationContext {
   verification: CallProof | null; mediaTokenHash: string; streamSid: string | null;
   reservationId: string | null; estimatedUsd: number; chargedUsd: number | null;
   speechInputBytes: number; speechOutputChars: number;
+  authorizationGeneration?: number;
 }
 export interface InboundTelegram {
   updateId: number; messageId: number; text: string; chatId: string;

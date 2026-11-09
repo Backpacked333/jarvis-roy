@@ -7,7 +7,7 @@ import type { AssistantAdapters } from "./assistant/coordinator.ts";
 import { ActionRefSchema } from "./assistant/contracts.ts";
 import type { NativeCloudRuntime } from "./native-cloud-runtime.ts";
 
-const Input = z.strictObject({ version: z.literal(1), operation: z.enum(["objectives", "reserve", "settle", "stop", "read_action", "bind_executor", "execute_action", "checkpoint", "readiness", "conversations", "tasks", "respond_question", "resume"]), payload: z.unknown() });
+const Input = z.strictObject({ version: z.literal(1), operation: z.enum(["objectives", "reserve", "settle", "stop", "read_action", "bind_executor", "execute_action", "action_result", "checkpoint", "readiness", "conversations", "tasks", "respond_question", "resume"]), payload: z.unknown() });
 export type CloudRuntimeBroker = (input: unknown) => Promise<unknown>;
 export function createCloudRuntimeBroker(options: {
   objectives: ObjectiveRuntime; continuity: ContinuityService; service: JarvisService;
@@ -64,15 +64,17 @@ export function createCloudRuntimeBroker(options: {
       const input = z.strictObject({ id: z.string(), accounting: z.enum(["measured", "unknown"]), estimatedUsd: z.number().finite().nonnegative().nullable() }).parse(payload);
       return options.objectives.service.settle(input.id, { accounting: input.accounting, estimatedUsd: input.estimatedUsd });
     }
-    if (operation === "stop") { await options.objectives.service.stop(); await options.service.stop(); return { version: 1, stopped: true }; }
+    if (operation === "stop") throw new BridgeError("Stop must enter the coordinated bridge cancellation authority.", 409);
     if (operation === "read_action") {
       const input = z.strictObject({ ref: ActionRefSchema, projectId: z.string() }).parse(payload);
-      if (options.service.projectForTask(input.ref.taskId) !== input.projectId && input.ref.taskId !== input.projectId) return null;
-      return options.authority.readAction(input.ref);
+      const action = await options.authority.readAction(input.ref);
+      if (!action) return null;
+      const project = action.scope === "room" ? action.taskId : options.service.projectForTask(action.taskId);
+      return project === input.projectId ? action : null;
     }
-    if (operation === "bind_executor" || operation === "execute_action") {
+    if (operation === "bind_executor" || operation === "execute_action" || operation === "action_result") {
       if (!options.nativeCloud) throw new BridgeError("Remote approval verifier is unavailable.", 503);
-      return operation === "bind_executor" ? options.nativeCloud.pair(payload) : options.nativeCloud.execute(payload);
+      return operation === "bind_executor" ? options.nativeCloud.pair(payload) : operation === "action_result" ? options.nativeCloud.result(payload) : options.nativeCloud.execute(payload);
     }
     const input = z.strictObject({ projectId: z.string(), query: z.string().max(1000).default("") }).parse(payload);
     return options.continuity.checkpoint(input.projectId, "cloud", input.query);

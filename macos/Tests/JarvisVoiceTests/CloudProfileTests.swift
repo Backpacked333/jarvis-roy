@@ -89,4 +89,31 @@ final class CloudProfileTests: XCTestCase {
         try profiles.remove()
         XCTAssertEqual(profiles.selected, .local); XCTAssertNil(profiles.cloudProfile)
     }
+    @MainActor
+    func testPrivateAtomicWritesReplaceContentsAndKeepPrivateModesWithoutTemporaryFiles() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("state.json")
+        for data in [Data("first".utf8), Data(repeating: 0x61, count: 128 * 1024), Data()] {
+            try RuntimeProfiles.writePrivate(data, to: file)
+            XCTAssertEqual(try Data(contentsOf: file), data)
+            let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+            XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["state.json"])
+        }
+        let attributes = try FileManager.default.attributesOfItem(atPath: directory.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+    }
+    @MainActor
+    func testFailedAtomicReplacementLeavesExistingDirectoryAndCleansTemporaryFile() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let blocked = directory.appendingPathComponent("state.json")
+        try FileManager.default.createDirectory(at: blocked, withIntermediateDirectories: true)
+        let sentinel = blocked.appendingPathComponent("preserved")
+        try Data("existing".utf8).write(to: sentinel)
+        XCTAssertThrowsError(try RuntimeProfiles.writePrivate(Data("new".utf8), to: blocked))
+        XCTAssertEqual(try String(contentsOf: sentinel, encoding: .utf8), "existing")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["state.json"])
+    }
 }

@@ -26,6 +26,14 @@ export class TwilioIntegration {
     new Intl.DateTimeFormat("en-CA", { timeZone: options.timeZone }).format(new Date());
   }
   private get store() { return this.transport.store; }
+  private control(): { stopped: boolean; generation: number } {
+    this.store.assertWritable();
+    return z.strictObject({ stopped: z.boolean(), generation: z.number().int().nonnegative().safe().default(0) }).parse(this.store.get("twilio", "control") ?? { stopped: false, generation: 0 });
+  }
+  private currentAuthorization(call: CallRecord): boolean {
+    const control = this.control();
+    return !control.stopped && (call.authorizationGeneration ?? 0) === control.generation;
+  }
   private auth(): string { return `Basic ${Buffer.from(`${this.options.accountSid}:${this.options.authToken}`).toString("base64")}`; }
   private endpoint(path: string): URL { return new URL(`https://api.twilio.com/2010-04-01/Accounts/${this.options.accountSid}/${path}`); }
   private day(at: string): string { return new Intl.DateTimeFormat("en-CA", { timeZone: this.options.timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(at)); }
@@ -45,7 +53,8 @@ export class TwilioIntegration {
     return this.startCall({ id: `ready-${request.id}`, issueId: `ready-${hash(`${request.projectId}:${request.objectiveId}:${request.definitionDigest}`)}`, projectId: request.projectId, objectiveId: request.objectiveId, deadlineAt: request.expiresAt }, "call_when_ready", signal);
   }
   private async startCall(input: { id: string; issueId: string; projectId: string; objectiveId: string | null; deadlineAt: string; unansweredSince?: string }, category: "blocking_deadline" | "call_when_ready", signal?: AbortSignal): Promise<CallRecord> {
-    if (this.store.get<{ stopped: boolean }>("twilio", "control")?.stopped) throw new Error("Calling is stopped");
+    const authorization = this.control();
+    if (authorization.stopped) throw new Error("Calling is stopped");
     const previous = this.store.get<CallRecord>("call", input.id);
     if (previous) { if (previous.issueId !== input.issueId || previous.projectId !== input.projectId) throw new Error("Call request identity changed"); return previous; }
     if (this.initiating) throw new Error("A call is already being initiated");
@@ -64,7 +73,8 @@ export class TwilioIntegration {
       const mediaToken = randomBytes(32).toString("base64url");
       const record: CallRecord = { version: 1, id: input.id, issueId: input.issueId, projectId: input.projectId, objectiveId: input.objectiveId,
         callSid: null, status: "initiating", createdAt: now.toISOString(), deadlineAt: input.deadlineAt, verifiedUntil: null, verification: null,
-        mediaTokenHash: hash(mediaToken), streamSid: null, reservationId: reservation.id, estimatedUsd, chargedUsd: null, speechInputBytes: 0, speechOutputChars: 0 };
+        mediaTokenHash: hash(mediaToken), streamSid: null, reservationId: reservation.id, estimatedUsd, chargedUsd: null, speechInputBytes: 0, speechOutputChars: 0,
+        authorizationGeneration: authorization.generation };
       this.store.put("call", input.id, record); this.store.put("call_token", input.id, { encrypted: this.store.seal("call_token", input.id, mediaToken) });
       let dispatched = false;
       try {
@@ -74,7 +84,7 @@ export class TwilioIntegration {
           method: "POST", headers: { authorization: this.auth(), "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ To: this.options.ownerNumber, From: this.options.fromNumber,
             Url: callback.href, Method: "POST", StatusCallback: status.href, StatusCallbackMethod: "POST", "StatusCallbackEvent": "completed", TimeLimit: "300", Timeout: "30", Record: "false" }).toString(),
         }, input, "twilioRequestUsd", signal, () => {
-          if (this.store.get<{ stopped: boolean }>("twilio", "control")?.stopped || this.hooks.authorizeCallOutreach?.({ projectId: input.projectId, destinationId: this.options.ownerNumber, category }) !== true) throw new Error("Calling stopped or owner phone outreach permission changed"); dispatched = true;
+          if (!this.currentAuthorization(record) || this.hooks.authorizeCallOutreach?.({ projectId: input.projectId, destinationId: this.options.ownerNumber, category }) !== true) throw new Error("Calling stopped or owner phone outreach permission changed"); dispatched = true;
         }));
         if (receipt.to !== this.options.ownerNumber || receipt.from !== this.options.fromNumber) throw new Error("Twilio returned an unexpected phone identity");
         const current = this.store.get<CallRecord>("call", input.id)!;
@@ -101,7 +111,7 @@ export class TwilioIntegration {
     if (!this.verifyWebhook(url, parameters, signature)) throw new Error("Unauthenticated Twilio webhook");
     const id = IntegrationId.parse(new URL(url).searchParams.get("id")), record = this.store.get<CallRecord>("call", id);
     const sid = CallSid.parse(parameters.CallSid);
-    if (!record || !["initiating", "ringing", "in_progress"].includes(record.status) || record.callSid && record.callSid !== sid || parameters.AccountSid !== this.options.accountSid || parameters.To !== this.options.ownerNumber || parameters.From !== this.options.fromNumber) throw new Error("Unexpected owner call");
+    if (!record || !this.currentAuthorization(record) || !["initiating", "ringing", "in_progress"].includes(record.status) || record.callSid && record.callSid !== sid || parameters.AccountSid !== this.options.accountSid || parameters.To !== this.options.ownerNumber || parameters.From !== this.options.fromNumber) throw new Error("Unexpected owner call");
     this.store.put("call", id, { ...record, callSid: sid, status: "in_progress" });
     const token = this.store.get<{ encrypted: string }>("call_token", id); if (!token) throw new Error("Call media token unavailable");
     const media = new URL("/v1/cloud/integrations/twilio/media", this.options.publicBaseUrl); media.protocol = "wss:";
@@ -125,12 +135,12 @@ export class TwilioIntegration {
   }
   readCall(callSid: string): { callSid: string; projectId: string; status: "ringing" | "in_progress" } | null {
     const call = this.call(callSid);
-    return call && (call.status === "ringing" || call.status === "in_progress") && this.transport.now().getTime() - Date.parse(call.createdAt) < 330_000 ? { callSid, projectId: call.projectId, status: call.status } : null;
+    return call && this.currentAuthorization(call) && (call.status === "ringing" || call.status === "in_progress") && this.transport.now().getTime() - Date.parse(call.createdAt) < 330_000 ? { callSid, projectId: call.projectId, status: call.status } : null;
   }
   async authorizeCall(callSid: string, proof: CallProof): Promise<void> {
     proof = z.strictObject({ credentialId: z.string().min(1).max(500), ownerSessionId: z.string().min(1).max(500), verifiedAt: z.iso.datetime(), expiresAt: z.iso.datetime() }).parse(proof);
     const live = this.readCall(callSid), call = this.call(callSid), now = this.transport.now().getTime();
-    if (!live || !call || !proof.credentialId || !proof.ownerSessionId || Math.abs(now - Date.parse(proof.verifiedAt)) > 5000 || Date.parse(proof.expiresAt) <= now || Date.parse(proof.expiresAt) - now > 300_000) throw new Error("Fresh call-bound owner passkey verification required");
+    if (!live || !call || !this.currentAuthorization(call) || !proof.credentialId || !proof.ownerSessionId || Math.abs(now - Date.parse(proof.verifiedAt)) > 5000 || Date.parse(proof.expiresAt) <= now || Date.parse(proof.expiresAt) - now > 300_000) throw new Error("Fresh call-bound owner passkey verification required");
     this.store.put("call", call.id, { ...call, verification: proof, verifiedUntil: proof.expiresAt });
   }
   private verified(callSid: string): CallRecord | null {
@@ -201,11 +211,17 @@ export class TwilioIntegration {
     for (const session of this.sessions) if (!callSid || (session as { callSid?: () => string | null }).callSid?.() === callSid) session.stop();
   }
   stop(): void {
-    this.stopSessions();
-    this.store.put("twilio", "control", { stopped: true });
-    for (const call of this.store.list<CallRecord>("call")) if (["ringing", "in_progress"].includes(call.status)) this.store.put("call", call.id, { ...call, verifiedUntil: null, verification: null });
+    this.revokeAuthorizations(true);
   }
-  resume(): void { this.store.put("twilio", "control", { stopped: false }); }
+  revokeAuthorizations(stopCalling = false): void {
+    this.stopSessions();
+    const control = this.control();
+    this.store.transaction(() => {
+      this.store.put("twilio", "control", { stopped: stopCalling || control.stopped, generation: control.generation + 1 });
+      for (const call of this.store.list<CallRecord>("call")) if (["initiating", "ringing", "in_progress", "unknown"].includes(call.status)) this.store.put("call", call.id, { ...call, verifiedUntil: null, verification: null });
+    });
+  }
+  resume(): void { this.store.put("twilio", "control", { ...this.control(), stopped: false }); }
   async cancelCalls(signal?: AbortSignal): Promise<void> {
     this.stop();
     const results = await Promise.allSettled(this.store.list<CallRecord>("call").filter(call => call.callSid && ["ringing", "in_progress", "unknown"].includes(call.status)).map(async call => {

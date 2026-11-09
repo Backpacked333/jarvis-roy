@@ -20,7 +20,7 @@ export type RemoteApprovalReceipt = z.infer<typeof RemoteApprovalReceiptSchema>;
 export const RemoteActionProposalSchema = z.strictObject({
   version: z.literal(1), id: CloudId, projectId: CloudId, deviceId: CloudId, deviceGeneration: revision,
   serverEpoch: revision, revision, action: ReviewableActionSchema, digest,
-  status: z.enum(["pending", "executing", "completed", "invalidated", "unknown"]),
+  status: z.enum(["pending", "executing", "completed", "failed", "invalidated", "unknown"]),
   createdAt: timestamp, expiresAt: timestamp, receiptId: CloudId.nullable(), commandId: CloudId.nullable(),
 });
 export type RemoteActionProposal = z.infer<typeof RemoteActionProposalSchema>;

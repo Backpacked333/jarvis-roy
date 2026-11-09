@@ -17,10 +17,13 @@ export interface CloudOptions {
   dataDirectory: string; publicOrigin: string; bootstrapToken?: string; allowLoopbackForTests?: boolean; now?: () => Date;
   localExecutorId?: string;
   readAction?: (ref: ActionRef, scope: { projectId: string; deviceId: string }) => Promise<ReviewableAction | null>;
-  executeAction?: (action: ReviewableAction, receipt: RemoteApprovalReceipt) => Promise<{ outcome: "completed" | "queued" | "unknown"; commandId?: string }>;
+  executeAction?: (action: ReviewableAction, receipt: RemoteApprovalReceipt) => Promise<{ outcome: "completed" | "failed" | "queued" | "unknown"; commandId?: string }>;
+  /** Exact durable command observation only; must never invoke an action. */
+  readActionResult?: (command: CloudCommand) => Promise<{ version: 1; status: "completed" | "failed" | "unknown";
+    code: "ok" | "rejected" | "stale" | "unavailable" | "interrupted" | "unknown" }>;
   readCall?: (callSid: string) => Promise<{ callSid: string; projectId: string; status: "ringing" | "in_progress" } | null>;
   authorizeCall?: (callSid: string, proof: { credentialId: string; verifiedAt: string; expiresAt: string; ownerSessionId: string }) => Promise<void>;
-  revokeCallAuthorizations?: () => Promise<void>;
+  revokeCallAuthorizations?: () => void | Promise<void>;
 }
 export type CloudActor = { kind: "device"; deviceId: string } | { kind: "owner"; sessionHash: string; credentialId: string };
 const hash = (value: string | Uint8Array): string => createHash("sha256").update(value).digest("hex");
@@ -30,6 +33,13 @@ const keyOf = (value: { kind: string; id: string; revision: number; sha256: stri
 export const cloudCommandDigest = (command: Pick<CloudCommand, "deviceId" | "generation" | "serverEpoch" | "payload" | "expiresAt">): string => hash(canonicalJson({
   deviceId: command.deviceId, generation: command.generation, serverEpoch: command.serverEpoch, payload: command.payload, expiresAt: command.expiresAt,
 }));
+export function remoteActionCommand(action: ReviewableAction, receipt: RemoteApprovalReceipt, sequence = 1): CloudCommand {
+  const command = { version: 1 as const, type: "command" as const, id: receipt.id, deviceId: receipt.deviceId,
+    generation: receipt.deviceGeneration, serverEpoch: receipt.serverEpoch, sequence,
+    payload: { kind: "action.execute" as const, proposalId: receipt.proposalId, action, receipt },
+    createdAt: receipt.issuedAt, expiresAt: receipt.expiresAt, status: "sent" as const };
+  return { ...command, digest: cloudCommandDigest(command) };
+}
 export function verifyRemoteApprovalReceipt(raw: unknown, publicKey: string, expected: {
   deviceId: string; deviceGeneration: number; serverEpoch: number; action: ReviewableAction; now?: Date;
 }): RemoteApprovalReceipt {
@@ -110,6 +120,10 @@ export class CloudControlPlane {
     state.snapshots = state.snapshots.filter(snapshot => grants.has(snapshot.grantId));
   }
   health() { return { version: 1, status: this.closed || this.failed ? "unavailable" : "ready", configured: true, passkeyEnrolled: this.state.credentials.length > 0 }; }
+  admission() {
+    return { version: 1 as const, ready: !this.closed && !this.failed && !this.state.stopped, stopped: this.state.stopped,
+      reason: this.failed ? "persistence_failed" : this.closed ? "closed" : this.state.stopped ? "stopped" : null };
+  }
   runtimeExecutorBinding() {
     this.ready(); if (!this.options.localExecutorId) throw new BridgeError("Cloud runtime executor is not configured.", 503);
     const device = this.device(this.state, this.options.localExecutorId);
@@ -252,7 +266,7 @@ export class CloudControlPlane {
       const pending = state.proposals.find(proposal => proposal.deviceId === input.deviceId && proposal.digest === digest && proposal.status === "pending" &&
         proposal.deviceGeneration === device.generation && proposal.serverEpoch === state.serverEpoch && Date.parse(proposal.expiresAt) > this.now());
       if (pending) return pending;
-      if (state.proposals.some(proposal => proposal.deviceId === input.deviceId && proposal.digest === digest && ["executing", "completed", "unknown"].includes(proposal.status))) throw new BridgeError("This exact action was already submitted; inspect its existing outcome.", 409);
+      if (state.proposals.some(proposal => proposal.deviceId === input.deviceId && proposal.digest === digest && ["executing", "completed", "failed", "unknown"].includes(proposal.status))) throw new BridgeError("This exact action was already submitted; inspect its existing outcome.", 409);
       if (containsCredentialLikeData(action.exactArguments) || containsCredentialLikeData(action.reviewText)) throw new BridgeError("Credential-bearing actions require local review.", 403);
       const proposal: RemoteActionProposal = { version: 1, id: randomUUID(), projectId: input.projectId, deviceId: input.deviceId,
         deviceGeneration: device.generation, serverEpoch: state.serverEpoch, revision: 1, action, digest, status: "pending", createdAt: this.time(), expiresAt: this.until(300_000), receiptId: null, commandId: null };
@@ -349,6 +363,12 @@ export class CloudControlPlane {
         actionDigest: proposal.digest, credentialId: credential.id, nonce: randomUUID(), issuedAt: this.time(), expiresAt: this.until(120_000) };
       const receipt: RemoteApprovalReceipt = { ...content, signature: sign(null, Buffer.from(canonicalJson(content)), createPrivateKey(state.signingPrivateKey)).toString("base64url") };
       state.receipts.push(receipt); proposal.receiptId = receipt.id; proposal.status = "executing";
+      if (this.options.executeAction && (!this.options.localExecutorId || receipt.deviceId === this.options.localExecutorId)) {
+        // The exact local command is durable before dispatch, including when a
+        // response is lost or the gateway restarts before learning its outcome.
+        const command = remoteActionCommand(proposal.action, receipt, ++state.sequence);
+        state.commands.push(command); proposal.commandId = command.id;
+      }
       return { action: proposal.action, receipt };
     });
     // Durable single-use fence precedes the only existing execution authority.
@@ -356,11 +376,56 @@ export class CloudControlPlane {
       if (this.options.executeAction && (!this.options.localExecutorId || prepared.receipt.deviceId === this.options.localExecutorId)) {
         const result = await this.options.executeAction(prepared.action, prepared.receipt);
         await this.mutate(state => { const proposal = state.proposals.find(proposal => proposal.id === proposalId)!;
-          proposal.status = result.outcome === "completed" ? "completed" : result.outcome === "queued" && !state.stopped ? "executing" : "unknown";
-          if (result.commandId) proposal.commandId = result.commandId; });
+          if (["completed", "failed"].includes(proposal.status)) return;
+          if (result.commandId && result.commandId !== proposal.commandId) throw new BridgeError("Execution command binding changed.", 409);
+          proposal.status = result.outcome === "completed" || result.outcome === "failed" ? result.outcome : result.outcome === "queued" && !state.stopped ? "executing" : "unknown";
+          const command = state.commands.find(command => command.id === proposal.commandId);
+          if (command) command.status = proposal.status === "completed" || proposal.status === "failed" ? proposal.status : "unknown";
+        });
       } else await this.enqueueCommand(prepared.receipt.deviceId, { kind: "action.execute", proposalId, action: prepared.action, receipt: prepared.receipt });
-    } catch { await this.mutate(state => { state.proposals.find(proposal => proposal.id === proposalId)!.status = "unknown"; }); }
+    } catch { await this.mutate(state => {
+      const proposal = state.proposals.find(proposal => proposal.id === proposalId)!;
+      if (!["completed", "failed"].includes(proposal.status)) proposal.status = "unknown";
+      const command = state.commands.find(command => command.id === proposal.commandId);
+      if (command && !["completed", "failed"].includes(command.status)) command.status = "unknown";
+    }); }
     return this.proposal(proposalId, actor);
+  }
+  /** Observe a frozen command journal entry, even after expiry/restart/Stop.
+   * No action resolution, approval, dispatch or retry occurs on this path. */
+  async reconcileLocalExecutions(actor: CloudActor & { kind: "owner" }, proposalId?: string): Promise<{ checked: number; updated: number }> {
+    this.ready(); this.actor(this.state, actor);
+    if (!this.options.readActionResult) return { checked: 0, updated: 0 };
+    const commands = this.state.commands.filter(command => command.payload.kind === "action.execute" &&
+      (!this.options.localExecutorId || command.deviceId === this.options.localExecutorId) && ["sent", "unknown"].includes(command.status) &&
+      this.state.proposals.some(proposal => proposal.commandId === command.id && (!proposalId || proposal.id === proposalId) && ["executing", "unknown"].includes(proposal.status))).slice(0, 20);
+    let checked = 0, updated = 0; const deadline = Date.now() + 2_500;
+    for (const command of commands) {
+      if (Date.now() >= deadline) break;
+      let result, timeout: NodeJS.Timeout | undefined;
+      try { result = z.strictObject({ version: z.literal(1), status: z.enum(["completed", "failed", "unknown"]),
+        code: z.enum(["ok", "rejected", "stale", "unavailable", "interrupted", "unknown"]) }).parse(await Promise.race([
+          this.options.readActionResult(structuredClone(command)), new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("Receipt observation unavailable")), Math.max(1, deadline - Date.now()));
+          }),
+        ])); }
+      catch { continue; }
+      finally { clearTimeout(timeout); }
+      checked++; if (result.status === "unknown") continue;
+      const terminal = result.status;
+      const changed = await this.mutate(state => {
+        this.actor(state, actor);
+        const current = state.commands.find(value => value.id === command.id && value.digest === command.digest);
+        if (!current || current.payload.kind !== "action.execute" || !["sent", "unknown"].includes(current.status)) return false;
+        const payload = current.payload;
+        const proposal = state.proposals.find(proposal => proposal.id === payload.proposalId && proposal.commandId === current.id &&
+          proposal.receiptId === payload.receipt.id && proposal.digest === payload.receipt.actionDigest);
+        if (!proposal || !["executing", "unknown"].includes(proposal.status)) return false;
+        current.status = terminal; proposal.status = terminal; return true;
+      });
+      if (changed) updated++;
+    }
+    return { checked, updated };
   }
   async callOptions(callSid: string, actor: CloudActor & { kind: "owner" }) {
     if (!/^CA[0-9a-fA-F]{32}$/.test(callSid) || !this.options.readCall || !this.options.authorizeCall) throw new BridgeError("Live call authentication is unavailable.", 409);

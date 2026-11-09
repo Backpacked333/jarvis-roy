@@ -270,6 +270,77 @@ test("Twilio media stays generic until live call-bound passkey proof, converts a
   } finally { await f.cleanup(); }
 });
 
+test("Stop fences a passkey completion while cancellation is pending and after failed cancellation plus resume", async () => {
+  const f = await fixture();
+  try {
+    f.enableCalls(); await f.service.twilio!.verifyOwnerNumber(context);
+    await f.service.twilio!.startPriorityCall({ ...context, id: "stopped-call", issueId: "stopped-issue", blocked: true, unansweredSince: "2026-11-09T08:40:00.000Z", deadlineAt: "2026-11-09T09:30:00.000Z" });
+    const proof = { credentialId: "credential", ownerSessionId: "session", verifiedAt: f.now(), expiresAt: "2026-11-09T09:02:00.000Z" };
+    await f.service.authorizeCall(callSid, proof); assert.ok(await f.service.verifiedCall(callSid));
+    let entered!: () => void, failCancellation!: () => void;
+    const cancellationStarted = new Promise<void>(resolve => { entered = resolve; });
+    f.setHandler(url => {
+      if (url.pathname.endsWith(`/Calls/${callSid}.json`)) {
+        entered(); return new Promise<Response>((_resolve, reject) => { failCancellation = () => reject(new Error("provider cancellation lost")); });
+      }
+      return undefined;
+    });
+    const stopping = f.service.stop(), rejected = assert.rejects(stopping, /Stop is incomplete/);
+    await cancellationStarted;
+    await assert.rejects(f.service.authorizeCall(callSid, proof), /Fresh call-bound/);
+    assert.equal(await f.service.readCall(callSid), null); assert.equal(await f.service.verifiedCall(callSid), null);
+    f.service.resume();
+    await assert.rejects(f.service.authorizeCall(callSid, { ...proof, verifiedAt: f.now() }), /Fresh call-bound/);
+    failCancellation(); await rejected;
+    assert.equal(f.service.status().stopStatus, "uncertain"); assert.equal(f.service.twilio!.calls()[0].verification, null);
+    assert.equal(await f.service.verifiedCall(callSid), null);
+    const newSid = `CA${"e".repeat(32)}`;
+    f.setHandler(url => url.pathname.endsWith("/Calls.json") ? json({ sid: newSid, to: "+15550002222", from: "+15550001111", status: "queued" }) : undefined);
+    f.advance(300_001);
+    await f.service.twilio!.startPriorityCall({ ...context, id: "new-call", issueId: "new-issue", blocked: true, unansweredSince: "2026-11-09T08:40:00.000Z", deadlineAt: "2026-11-09T09:40:00.000Z" });
+    await f.service.authorizeCall(newSid, { ...proof, verifiedAt: f.now(), expiresAt: new Date(Date.parse(f.now()) + 120_000).toISOString() });
+    assert.ok(await f.service.verifiedCall(newSid), "a genuinely new call uses the new authorization generation");
+    f.service.revokeCallAuthorizations(); assert.equal(await f.service.verifiedCall(newSid), null);
+    f.service.resume(); await assert.rejects(f.service.authorizeCall(newSid, { ...proof, verifiedAt: f.now(), expiresAt: new Date(Date.parse(f.now()) + 120_000).toISOString() }), /Fresh call-bound/);
+  } finally { await f.cleanup(); }
+});
+
+test("Stop and resume cannot dispatch a call whose budget reservation began in an older generation", async () => {
+  let entered!: () => void, release!: () => void;
+  const enteredReservation = new Promise<void>(resolve => { entered = resolve; });
+  const f = await fixture({ ledger: {
+    async reserve(input) {
+      ReserveBudgetSchema.parse(input);
+      if (input.authority === "integration:priority_call") { entered(); await new Promise<void>(resolve => { release = resolve; }); }
+      return { id: randomUUID() };
+    }, settle() {},
+  } });
+  try {
+    f.enableCalls(); await f.service.twilio!.verifyOwnerNumber(context);
+    const creating = f.service.twilio!.startPriorityCall({ ...context, id: "late-reservation", issueId: "late-issue", blocked: true, unansweredSince: "2026-11-09T08:40:00.000Z", deadlineAt: "2026-11-09T09:30:00.000Z" });
+    const rejected = assert.rejects(creating, /not confirmed/); await enteredReservation;
+    f.service.twilio!.stop(); f.service.twilio!.resume(); release(); await rejected;
+    assert.equal(f.requests.some(request => request.url.pathname.endsWith("/Calls.json")), false);
+  } finally { await f.cleanup(); }
+});
+
+test("Telegram Stop attempts every cancellation and propagates root/provider uncertainty instead of acknowledgment", async () => {
+  let rootAttempts = 0, providerAttempts = 0;
+  const f = await fixture({ hooks: { authorizeDisclosure: () => true, authorizeCallOutreach: () => true,
+    async onStop() { rootAttempts++; throw new Error("runtime stop unavailable"); } } });
+  try {
+    f.enableCalls(); await f.pair(); await f.service.twilio!.verifyOwnerNumber(context);
+    await f.service.twilio!.startPriorityCall({ ...context, id: "stop-all-call", issueId: "stop-all-issue", blocked: true, unansweredSince: "2026-11-09T08:40:00.000Z", deadlineAt: "2026-11-09T09:30:00.000Z" });
+    f.setHandler(url => { if (url.pathname.endsWith(`/Calls/${callSid}.json`)) { providerAttempts++; throw new Error("provider stop unavailable"); } return undefined; });
+    f.updates.push([f.update(2, "/stop")]);
+    await assert.rejects(f.service.telegram!.pollOnce(), /Stop is incomplete/);
+    assert.equal(rootAttempts, 1); assert.equal(providerAttempts, 1); assert.equal(f.service.telegram!.stopped(), true);
+    assert.equal(f.service.status().stopped, true); assert.equal(f.service.status().stopStatus, "uncertain");
+    assert.equal(f.requests.some(request => request.url.pathname.endsWith("/sendMessage")), false);
+    assert.equal(await f.service.verifiedCall(callSid), null);
+  } finally { await f.cleanup(); }
+});
+
 test("G.711 conversion preserves silence, sign and bounded frame sizes", () => {
   const silence = muLaw8kToPcm16k(Buffer.from([255, 127])); assert.deepEqual([...silence], [0, 0, 0, 0, 0, 0, 0, 0]);
   const positive = Buffer.alloc(8); positive.writeInt16LE(10000, 0); positive.writeInt16LE(10000, 2); positive.writeInt16LE(-10000, 4); positive.writeInt16LE(-10000, 6);

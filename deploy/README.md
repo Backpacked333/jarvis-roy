@@ -26,15 +26,35 @@ does not install a cloud language model or bypass an unavailable model catalog.
 Fill `/etc/jarvis/runtime.env` (root-owned, mode 0600). Keep the dedicated cloud
 bootstrap token distinct from provider credentials. New features start off in
 the example except the assistant, knowledge and cloud transport prerequisites.
+Set `JARVIS_ENABLE_OBJECTIVES=1` before using cloud conversations: the objective
+service owns the shared ledger required by every cloud model call, even when no
+background objective is running. Ledger limits are $300/month, $10/day, and $5
+per objective or conversation turn; unknown accounting blocks new admission.
+Also set `JARVIS_ENABLE_RESEARCH=1` for research objectives. These are estimate
+ceilings rather than provider billing caps. The runtime independently validates
+the configured model's live pricing before dispatch.
 Optional integrations require `JARVIS_INTEGRATION_KEY`: 32 random bytes encoded
 as exactly 64 hexadecimal characters. Preserve it securely across restarts and
 restores; use a separate backup encryption key. Provider-specific setup is in
 [the integration guide](../runtime/bridge/integrations/README.md).
+The template names all optional provider secrets and price settings. Phone
+support additionally needs an ElevenLabs API key **and explicit voice ID**;
+only the private bridge receives these credentials. No default prices or voice
+are supplied. Proxy and custom CA settings are preserved without disabling TLS;
+CA files must be readable by the `jarvis` service outside protected home folders.
+Optional Linux semantic retrieval requires `JARVIS_ENABLE_SEMANTIC_RETRIEVAL=1`
+and `JARVIS_E5_MODEL_DIR` pointing at an operator-owned, read-only, nonsymlink
+directory provisioned according to [the encoder guide](../runtime/bridge/knowledge/README.md).
+No model weights are bundled or downloaded during inference; otherwise lexical
+retrieval remains available.
 Build/select a digest-pinned analysis image with `scripts/setup-analysis-image.sh`;
 its mandatory kernel enforcement probe must pass. A rootless engine without
 delegated cgroups is insufficient. Do not replace the digest with a mutable tag.
 
-Review `/etc/jarvis/Caddyfile` and activate it through the host's Caddy service.
+Review the staged `/etc/jarvis/Caddyfile`, then copy its site block into the
+dedicated host's `/etc/caddy/Caddyfile` or another configuration readable by the
+`caddy` service before reloading that service. `/etc/jarvis` remains private to
+root and must not be made public to expose the staged file.
 The ordered route exposes only `/v1/cloud/*`, explicitly rejects native-only
 routes, strips native authority headers and keeps Eve/bridge/gateway listeners
 on loopback ports 39201, 39202 and 39300. Gateway authentication and its own route
@@ -44,11 +64,18 @@ Start the units for verification (do not enable boot startup yet):
 
 ```sh
 sudo systemctl start jarvis-credentials jarvis-eve jarvis-bridge jarvis-gateway
-sudo bash -c 'set -a; . /etc/jarvis/runtime.env; . /run/jarvis/local.env; set +a; node /opt/jarvis/current/scripts/cloud-readiness.mjs'
+sudo systemctl start jarvis-readiness.service
+sudo journalctl -u jarvis-readiness.service --no-pager -n 100
 ```
 
-The readiness CLI checks private services, public TLS and denied private routes,
-model-catalog availability, distinct credentials and actual Docker enforcement.
+The one-shot readiness service runs as `jarvis` with the bridge's Docker group
+and protected filesystem settings; it is not enabled at boot. It checks actual
+Eve readiness, the shared budget ledger, private services, public TLS and denied
+private routes, live pricing for the exact configured models, enabled integration
+configuration, distinct credentials, controller availability, and actual Docker
+enforcement. Eve's optional build-time model catalog may be absent for the dynamic
+cloud model; known live pricing is mandatory. Enabling semantic retrieval also
+requires verified local encoder files.
 It reports fixed status codes and never prints credentials. Only after its gates
 pass, inspect service health and perform a real device pairing and task fixture,
 then explicitly enable the three service units. Fresh local/native/runtime

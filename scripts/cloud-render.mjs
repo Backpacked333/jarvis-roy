@@ -23,6 +23,7 @@ WorkingDirectory=${checkout}/runtime
 EnvironmentFile=/etc/jarvis/runtime.env
 EnvironmentFile=/run/jarvis/local.env
 Environment=JARVIS_DATA_DIR=/var/lib/jarvis
+Environment=HOME=/var/lib/jarvis
 Environment=JARVIS_RUNTIME_PROFILE=cloud
 Environment=JARVIS_CLOUD_HOST=127.0.0.1
 Environment=JARVIS_CLOUD_PORT=39300
@@ -48,6 +49,10 @@ WantedBy=multi-user.target
     'jarvis-eve.service': service('runtime', ''),
     'jarvis-bridge.service': service('bridge', 'jarvis-eve.service', 'SupplementaryGroups=docker'),
     'jarvis-gateway.service': service('gateway', 'jarvis-bridge.service'),
+    'jarvis-readiness.service': service('readiness', 'jarvis-eve.service jarvis-bridge.service jarvis-gateway.service', 'SupplementaryGroups=docker\nTimeoutStartSec=180')
+      .replace('Type=simple', 'Type=oneshot').replace('Restart=on-failure', 'Restart=no')
+      .replace(`ExecStart=${node} ${checkout}/scripts/cloud-runtime.mjs readiness`, `ExecStart=${node} ${checkout}/scripts/cloud-readiness.mjs`)
+      .replace('[Install]\nWantedBy=multi-user.target\n', ''),
     'jarvis-credentials.service': `[Unit]
 Description=Fresh boot-local Jarvis authority
 Before=jarvis-eve.service jarvis-bridge.service jarvis-gateway.service
@@ -79,6 +84,7 @@ RemainAfterExit=yes
     reverse_proxy @cloud 127.0.0.1:39300 {
         header_up -X-Jarvis-Native-Token
         header_up -X-Jarvis-Local-Token
+        header_up -X-Jarvis-Cloud-Runtime-Token
     }
     respond 404
   }
@@ -88,10 +94,15 @@ RemainAfterExit=yes
 # All services remain disabled until installation and readiness checks pass.
 AI_GATEWAY_API_KEY=
 JARVIS_MODEL=
+JARVIS_RUNTIME_PROFILE=cloud
 JARVIS_ENABLE_ASSISTANT=1
 JARVIS_ENABLE_KNOWLEDGE=1
 JARVIS_ENABLE_MEMORY=0
+JARVIS_ENABLE_SEMANTIC_RETRIEVAL=0
+# Optional operator-owned, read-only pinned encoder directory; never downloaded on inference.
+JARVIS_E5_MODEL_DIR=
 JARVIS_ENABLE_RESEARCH=0
+# Required shared budget ledger for cloud conversations; explicitly set 1 before readiness.
 JARVIS_ENABLE_OBJECTIVES=0
 JARVIS_ENABLE_CLOUD=1
 JARVIS_ENABLE_INTEGRATIONS=0
@@ -101,6 +112,25 @@ JARVIS_INTEGRATION_KEY=
 JARVIS_ENABLE_TELEGRAM=0
 JARVIS_ENABLE_GOOGLE=0
 JARVIS_ENABLE_PHONE=0
+# Optional integrations: explicit prices are required; enter 0 only for documented free APIs.
+JARVIS_TIME_ZONE=UTC
+JARVIS_INTEGRATION_PROJECT_ID=personal
+JARVIS_TELEGRAM_BOT_TOKEN=
+JARVIS_TELEGRAM_OWNER_CHAT_ID=
+JARVIS_PRICE_TELEGRAM_REQUEST_USD=
+JARVIS_GOOGLE_CLIENT_ID=
+JARVIS_GOOGLE_CLIENT_SECRET=
+JARVIS_PRICE_GOOGLE_REQUEST_USD=
+JARVIS_TWILIO_ACCOUNT_SID=
+JARVIS_TWILIO_AUTH_TOKEN=
+JARVIS_TWILIO_FROM_NUMBER=
+JARVIS_OWNER_PHONE_NUMBER=
+JARVIS_PRICE_TWILIO_REQUEST_USD=
+JARVIS_PRICE_TWILIO_MINUTE_USD=
+ELEVENLABS_API_KEY=
+ELEVENLABS_VOICE_ID=
+JARVIS_PRICE_ELEVENLABS_STT_MINUTE_USD=
+JARVIS_PRICE_ELEVENLABS_TTS_CHARACTER_USD=
 JARVIS_ENABLE_DESKTOP=0
 JARVIS_ENABLE_TERMINAL=0
 JARVIS_ENABLE_APPLE_SERVICES=0

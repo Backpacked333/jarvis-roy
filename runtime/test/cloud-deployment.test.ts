@@ -23,14 +23,20 @@ test("deployment renders disabled service artifacts with private ports, ordered 
   const caddy = await readFile(path.join(output, "Caddyfile"), "utf8");
   assert.match(caddy, /route \{[\s\S]*respond @native 404[\s\S]*reverse_proxy @cloud 127\.0\.0\.1:39300[\s\S]*respond 404/);
   assert.match(caddy, /header_up -X-Jarvis-Native-Token/);
+  assert.match(caddy, /header_up -X-Jarvis-Cloud-Runtime-Token/);
   assert.match(await readFile(path.join(output, "jarvis-bridge.service"), "utf8"), /NoNewPrivileges=true/);
+  const readinessUnit = await readFile(path.join(output, "jarvis-readiness.service"), "utf8");
+  assert.match(readinessUnit, /Type=oneshot/); assert.match(readinessUnit, /User=jarvis/); assert.match(readinessUnit, /SupplementaryGroups=docker/);
+  assert.match(readinessUnit, /scripts\/cloud-readiness\.mjs/); assert.doesNotMatch(readinessUnit, /WantedBy=/);
   assert.throws(() => deploymentFiles({ domain: "evil.example\nreverse_proxy 1.2.3.4" }));
   await assert.rejects(renderDeployment(output, { domain: "jarvis.example.com" }));
 });
 
 test("cloud role environments separate broker, native and provider authority without forwarding credentials to Eve", () => {
   const source = { JARVIS_LOCAL_TOKEN: "local", JARVIS_NATIVE_TOKEN: "native", JARVIS_CLOUD_RUNTIME_TOKEN: "broker", JARVIS_CLOUD_BOOTSTRAP_TOKEN: "bootstrap",
-    AI_GATEWAY_API_KEY: "provider", JARVIS_INTEGRATION_KEY: "integration", JARVIS_GOOGLE_CLIENT_SECRET: "google", JARVIS_DATA_DIR: "/state", NODE_OPTIONS: "private", RANDOM_SECRET: "private" };
+    AI_GATEWAY_API_KEY: "provider", JARVIS_INTEGRATION_KEY: "integration", JARVIS_GOOGLE_CLIENT_SECRET: "google", JARVIS_DATA_DIR: "/state", NODE_OPTIONS: "private", RANDOM_SECRET: "private",
+    JARVIS_RUNTIME_PROFILE: "cloud", JARVIS_ENABLE_OBJECTIVES: "1", JARVIS_ENABLE_GOOGLE: "1", JARVIS_E5_MODEL_DIR: "/opt/jarvis/models/e5",
+    ELEVENLABS_API_KEY: "speech-private", NODE_EXTRA_CA_CERTS: "/etc/ssl/provider-ca.pem", NODE_USE_ENV_PROXY: "1", HTTPS_PROXY: "http://proxy.example:8080" };
   const runtime = cloudEnvironment("runtime", source), gateway = cloudEnvironment("gateway", source), bridge = cloudEnvironment("bridge", source);
   assert.equal(runtime.AI_GATEWAY_API_KEY, "provider");
   for (const key of ["JARVIS_NATIVE_TOKEN", "JARVIS_CLOUD_RUNTIME_TOKEN", "JARVIS_CLOUD_BOOTSTRAP_TOKEN", "JARVIS_INTEGRATION_KEY", "JARVIS_GOOGLE_CLIENT_SECRET", "NODE_OPTIONS", "RANDOM_SECRET"]) assert.equal(runtime[key], undefined);
@@ -39,6 +45,10 @@ test("cloud role environments separate broker, native and provider authority wit
   assert.equal(gateway.JARVIS_NATIVE_TOKEN, undefined); assert.equal(gateway.AI_GATEWAY_API_KEY, undefined);
   assert.equal(bridge.JARVIS_NATIVE_TOKEN, "native"); assert.equal(bridge.JARVIS_CLOUD_RUNTIME_TOKEN, "broker");
   assert.equal(bridge.JARVIS_INTEGRATION_KEY, undefined);
+  for (const role of [runtime, bridge, gateway]) { assert.equal(role.JARVIS_RUNTIME_PROFILE, "cloud"); assert.equal(role.JARVIS_ENABLE_OBJECTIVES, "1"); assert.equal(role.JARVIS_ENABLE_GOOGLE, "1"); }
+  assert.equal(bridge.JARVIS_E5_MODEL_DIR, "/opt/jarvis/models/e5"); assert.equal(runtime.JARVIS_E5_MODEL_DIR, undefined); assert.equal(gateway.JARVIS_E5_MODEL_DIR, undefined);
+  assert.equal(bridge.ELEVENLABS_API_KEY, "speech-private"); assert.equal(gateway.ELEVENLABS_API_KEY, undefined); assert.equal(runtime.ELEVENLABS_API_KEY, undefined);
+  assert.equal(gateway.NODE_EXTRA_CA_CERTS, source.NODE_EXTRA_CA_CERTS); assert.equal(gateway.HTTPS_PROXY, source.HTTPS_PROXY);
 });
 
 test("encrypted backups round-trip immutable sources and SQLite bytes into a private inactive directory", async (t) => {
@@ -129,11 +139,48 @@ test("CLI errors redact secret arguments and failed readiness never enables a wo
   const root = await directory(t), key = path.join(root, "key"); await writeFile(key, randomBytes(32).toString("hex")); await chmod(key, 0o600);
   const result = spawnSync(process.execPath, [new URL("../../scripts/cloud-backup.mjs", import.meta.url).pathname, "restore", "--archive", "PRIVATE_CREDENTIAL_FIXTURE", "--destination", path.join(root, "new"), "--key-file", key], { encoding: "utf8" });
   assert.equal(result.status, 1); assert.equal((result.stderr + result.stdout).includes("PRIVATE_CREDENTIAL_FIXTURE"), false);
-  const environment = { JARVIS_ENABLE_CLOUD: "1", AI_GATEWAY_API_KEY: "provider", JARVIS_MODEL: "model", JARVIS_CLOUD_ORIGIN: "https://jarvis.example.com", JARVIS_WORKER_IMAGE: "sha256:" + "a".repeat(64),
+  const environment = { JARVIS_ENABLE_CLOUD: "1", JARVIS_RUNTIME_PROFILE: "cloud", JARVIS_ENABLE_OBJECTIVES: "1", AI_GATEWAY_API_KEY: "provider", JARVIS_MODEL: "model", JARVIS_CLOUD_ORIGIN: "https://jarvis.example.com", JARVIS_WORKER_IMAGE: "sha256:" + "a".repeat(64),
     JARVIS_LOCAL_TOKEN: "a".repeat(64), JARVIS_NATIVE_TOKEN: "b".repeat(64), JARVIS_CLOUD_RUNTIME_TOKEN: "c".repeat(64), JARVIS_CLOUD_BOOTSTRAP_TOKEN: "d".repeat(64) };
   assert.equal(inspectCloudConfiguration(environment, 'ID=ubuntu\nVERSION_ID="24.04"', "24.0.0").checks.every((check: { status: string }) => check.status === "pass"), true);
   const report = await runCloudReadiness({ environment, osRelease: 'ID=ubuntu\nVERSION_ID="24.04"', nodeVersion: "24.0.0", runtimeDirectory: root,
     fetcher: async (url: string) => new Response("", { status: url.includes("/health") || url.startsWith("http:") ? 200 : 404 }), workerProbe: async () => false });
   assert.equal(report.ready, false); assert.equal(report.checks.find((check: { code: string }) => check.code === "worker_actual_enforcement").status, "fail");
   assert.equal(JSON.stringify(report).includes(environment.JARVIS_CLOUD_RUNTIME_TOKEN), false);
+});
+
+test("readiness requires live exact pricing, actual Eve readiness and an available shared budget ledger", async (t) => {
+  const root = await directory(t);
+  const environment = { JARVIS_ENABLE_CLOUD: "1", JARVIS_RUNTIME_PROFILE: "cloud", JARVIS_ENABLE_OBJECTIVES: "1", AI_GATEWAY_API_KEY: "provider-private",
+    JARVIS_MODEL: "model", JARVIS_CLOUD_ORIGIN: "https://jarvis.example.com", JARVIS_WORKER_IMAGE: "sha256:" + "a".repeat(64),
+    JARVIS_LOCAL_TOKEN: "a".repeat(64), JARVIS_NATIVE_TOKEN: "b".repeat(64), JARVIS_CLOUD_RUNTIME_TOKEN: "c".repeat(64), JARVIS_CLOUD_BOOTSTRAP_TOKEN: "d".repeat(64) };
+  let eveReady = true, ledgerReady = true, pricedModel = "model";
+  const fetcher = async (input: string, init: { headers?: Record<string, string> } = {}) => {
+    const url = String(input);
+    if (url === "https://ai-gateway.vercel.sh/v1/models") {
+      assert.equal(init.headers?.Authorization, undefined);
+      return Response.json({ data: [{ id: pricedModel, type: "language", pricing: { input: "0.000001", output: "0.000002" } }] });
+    }
+    if (url === "http://127.0.0.1:39202/v1/state") return Response.json({ ready: eveReady, model: "model" });
+    if (url === "http://127.0.0.1:39202/v1/harness/state") return Response.json({ ready: true, worker: { available: true } });
+    if (url === "http://127.0.0.1:39202/v1/cloud/runtime") {
+      assert.equal(init.headers?.["x-jarvis-cloud-runtime-token"], environment.JARVIS_CLOUD_RUNTIME_TOKEN);
+      return Response.json({ version: 1, profile: "cloud", objectives: { ready: ledgerReady, stopped: false, unknownReservations: 0 } });
+    }
+    if (url === "http://127.0.0.1:39300/v1/cloud/health") assert.equal(init.headers?.Host, "jarvis.example.com");
+    if (url.endsWith("/health")) return Response.json({ version: 1, status: "ready" });
+    return new Response("", { status: 404 });
+  };
+  const options = { environment, osRelease: 'ID=ubuntu\nVERSION_ID="24.04"', nodeVersion: "24.0.0", runtimeDirectory: root, fetcher, workerProbe: async () => true };
+  assert.equal((await runCloudReadiness(options)).ready, true);
+  eveReady = false;
+  let result = await runCloudReadiness(options); assert.equal(result.ready, false); assert.equal(result.checks.find((item: { code: string }) => item.code === "private_bridge_ready").status, "fail");
+  eveReady = true; ledgerReady = false;
+  result = await runCloudReadiness(options); assert.equal(result.ready, false); assert.equal(result.checks.find((item: { code: string }) => item.code === "private_budget_ledger_ready").status, "fail");
+  ledgerReady = true; pricedModel = "different";
+  result = await runCloudReadiness(options); assert.equal(result.ready, false); assert.equal(result.checks.find((item: { code: string }) => item.code === "model_catalog_available").status, "fail");
+  assert.equal(JSON.stringify(result).includes(environment.AI_GATEWAY_API_KEY), false);
+  const integrations = inspectCloudConfiguration({ ...environment, JARVIS_ENABLE_INTEGRATIONS: "1", JARVIS_ENABLE_PHONE: "1", JARVIS_INTEGRATION_KEY: "invalid-private-key" }, options.osRelease, options.nodeVersion);
+  assert.equal(integrations.checks.find((item: { code: string }) => item.code === "integration_encryption_key").status, "fail");
+  assert.equal(integrations.checks.find((item: { code: string }) => item.code === "phone_configuration").status, "fail");
+  assert.equal(JSON.stringify(integrations).includes("invalid-private-key"), false);
 });

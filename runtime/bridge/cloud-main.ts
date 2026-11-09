@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { getDataDirectory } from "../agent/lib/persistence.ts";
 import { bearerTokenMatches } from "../agent/lib/local-auth.ts";
-import { CloudControlPlane, createCloudGateway, cloudCommandDigest } from "./cloud/index.ts";
+import { CloudControlPlane, createCloudGateway, remoteActionCommand } from "./cloud/index.ts";
 import { cloudRuntimeClient } from "./cloud-runtime-broker.ts";
 import { IntegrationService, ExistingVoiceSpeechAdapter, type ApprovedEffect, type IntegrationPrices } from "./integrations/index.ts";
 import { canonicalJson } from "./harness-contracts/validation.ts";
@@ -26,13 +26,19 @@ export async function createCloudApplication(options: { env?: NodeJS.ProcessEnv;
   if (!yes(env, "JARVIS_ENABLE_CLOUD") || env.JARVIS_RUNTIME_PROFILE !== "cloud") throw new Error("Select the cloud profile and explicitly enable cloud transport.");
   const origin = required(env, "JARVIS_CLOUD_ORIGIN"), runtimeToken = required(env, "JARVIS_CLOUD_RUNTIME_TOKEN"), localToken = required(env, "JARVIS_LOCAL_TOKEN");
   if (runtimeToken.length < 32 || localToken.length < 32 || runtimeToken === localToken) throw new Error("Distinct private runtime credentials required.");
+  if (env.JARVIS_CLOUD_BOOTSTRAP_TOKEN === runtimeToken || env.JARVIS_CLOUD_BOOTSTRAP_TOKEN === localToken) throw new Error("The cloud pairing credential must be distinct from runtime credentials.");
   const rpc = options.rpc ?? cloudRuntimeClient({ localToken, runtimeToken });
   const dataDirectory = options.dataDirectory ?? getDataDirectory();
   const approvedEffect = new AsyncLocalStorage<ApprovedEffect>();
   let integrations: IntegrationService;
   let lifecycleGeneration = 0;
+  let admissionStopped = false;
+  function assertWorkAdmission() {
+    const admission = control.admission();
+    if (admissionStopped || !admission.ready || admission.stopped) throw new BridgeError("Cloud work is paused or unavailable. Inspect status and explicitly resume before starting new work.", 409);
+  }
   async function stopWork(includeIntegrations = true) {
-    lifecycleGeneration++;
+    lifecycleGeneration++; admissionStopped = true;
     const outcomes = await Promise.allSettled([
       ...(includeIntegrations ? [Promise.resolve().then(() => integrations.stop())] : []),
       Promise.resolve().then(() => control.stopAll()),
@@ -48,6 +54,7 @@ export async function createCloudApplication(options: { env?: NodeJS.ProcessEnv;
       await control.resume(actor); assertCurrent();
       if (integrations.enabled) integrations.resume();
       assertCurrent();
+      if (!outreachOnly) admissionStopped = false;
     } catch {
       await stopWork().catch(() => {});
       throw new BridgeError("Resume was not confirmed. Work and outreach have been paused again; inspect status before retrying.", 503);
@@ -56,15 +63,20 @@ export async function createCloudApplication(options: { env?: NodeJS.ProcessEnv;
   const control = await CloudControlPlane.open({ dataDirectory, publicOrigin: origin, bootstrapToken: env.JARVIS_CLOUD_BOOTSTRAP_TOKEN, localExecutorId: "cloud-runtime",
     readAction: (ref, scope) => rpc("read_action", { ref, projectId: scope.projectId }),
     async executeAction(action, receipt) {
+      const generation = lifecycleGeneration;
+      assertWorkAdmission();
       const binding = control.runtimeExecutorBinding();
       await rpc("bind_executor", { version: 1, profileId: "cloud-runtime", origin, ...binding });
-      const fields = { version: 1 as const, type: "command" as const, id: receipt.id, ...binding, sequence: 1, payload: { kind: "action.execute" as const, proposalId: receipt.proposalId, action, receipt },
-        createdAt: receipt.issuedAt, expiresAt: receipt.expiresAt, status: "sent" as const };
-      const { receiptPublicKey: _key, ...command } = fields;
-      const result = await rpc("execute_action", { version: 1, profileId: "cloud-runtime", command: { ...command, digest: cloudCommandDigest(command) } });
-      return { outcome: result.status === "completed" ? "completed" : "unknown" };
+      assertWorkAdmission();
+      if (generation !== lifecycleGeneration) throw new BridgeError("The approved action was superseded by Stop.", 409);
+      const command = remoteActionCommand(action, receipt);
+      const result = await rpc("execute_action", { version: 1, profileId: "cloud-runtime", command });
+      return { outcome: result.status === "completed" || result.status === "failed" ? result.status : "unknown", commandId: command.id };
     },
+    readActionResult: command => rpc("action_result", { version: 1, profileId: "cloud-runtime", commandId: command.id,
+      commandDigest: command.digest, originalGeneration: command.generation, originalServerEpoch: command.serverEpoch }),
     readCall: sid => integrations.readCall(sid), authorizeCall: (sid, proof) => integrations.authorizeCall(sid, proof),
+    revokeCallAuthorizations: () => integrations.revokeCallAuthorizations(),
   });
   const integrationEnabled = yes(env, "JARVIS_ENABLE_INTEGRATIONS"), projectId = env.JARVIS_INTEGRATION_PROJECT_ID ?? "personal";
   const timezone = integrationEnabled ? required(env, "JARVIS_TIME_ZONE") : "UTC";
@@ -89,7 +101,7 @@ export async function createCloudApplication(options: { env?: NodeJS.ProcessEnv;
       } },
       hooks: {
         async onStop() { await stopWork(false); },
-        onTelegramMessage: message => conversations.onTelegramMessage(message),
+        onTelegramMessage: message => { assertWorkAdmission(); return conversations.onTelegramMessage(message); },
         async digest() { return `Your Jarvis status and pending reviews are ready: ${origin}/v1/cloud/review`; },
         authorizeDisclosure(input) { return control.authorizeDisclosure(input); },
         authorizeCallOutreach(input) { return control.authorizeDisclosure({ ...input, channel: "phone", proactive: true }); },
@@ -109,18 +121,20 @@ export async function createCloudApplication(options: { env?: NodeJS.ProcessEnv;
     const conversationRoute = /^\/v1\/cloud\/conversations(?:\/([A-Za-z0-9_-]+))?$/.exec(path);
     if (conversationRoute && ["GET", "POST"].includes(method)) {
       owner(request, true);
+      if (method === "POST") assertWorkAdmission();
       if (method === "POST" && conversationRoute[1]) throw new BridgeError("Invalid conversation route.", 404);
       const input = method === "POST" ? z.strictObject({ title: z.string().max(120).optional(), projectId: z.string() }).parse(await body(request)) : { ...(conversationRoute[1] ? { id: conversationRoute[1] } : {}), ...(url.searchParams.has("projectId") ? { projectId: url.searchParams.get("projectId")! } : {}) };
       json(response, method === "POST" ? 201 : 200, await rpc("conversations", { method, ...input })); return true;
     }
     const questionRoute = /^\/v1\/cloud\/tasks\/([A-Za-z0-9_-]+)\/respond$/.exec(path);
     if (questionRoute && method === "POST") {
-      owner(request, true); const input = z.strictObject({ interactionId: z.string(), expectedRevision: z.number().int().positive(), optionId: z.string().max(100).optional(), text: z.string().min(1).max(4000).optional() }).parse(await body(request));
+      owner(request, true); assertWorkAdmission(); const input = z.strictObject({ interactionId: z.string(), expectedRevision: z.number().int().positive(), optionId: z.string().max(100).optional(), text: z.string().min(1).max(4000).optional() }).parse(await body(request));
       json(response, 200, await rpc("respond_question", { taskId: questionRoute[1], ...input })); return true;
     }
     const taskRoute = /^\/v1\/cloud\/tasks(?:\/([A-Za-z0-9_-]+))?$/.exec(path);
     if (taskRoute && ["GET", "POST"].includes(method)) {
       owner(request, true);
+      if (method === "POST") assertWorkAdmission();
       if (method === "GET" && !taskRoute[1] || method === "POST" && taskRoute[1]) throw new BridgeError("Invalid task route.", 404);
       const input = method === "POST" ? z.strictObject({ message: z.string().min(1).max(16000), conversationId: z.string(), projectId: z.string() }).parse(await body(request)) : { id: taskRoute[1] };
       const task = await rpc("tasks", { method, ...input });
@@ -131,7 +145,8 @@ export async function createCloudApplication(options: { env?: NodeJS.ProcessEnv;
       json(response, method === "POST" ? 202 : 200, { ...task, remoteReviewUrl: `${origin}/v1/cloud/review` }); return true;
     }
     if (path === "/v1/cloud/objectives" || path.startsWith("/v1/cloud/objectives/")) {
-      owner(request, true); const result = await rpc("objectives", { method, path: path.replace("/v1/cloud/", "/v1/") + url.search, ...(method === "GET" ? {} : { body: await body(request) }) });
+      owner(request, true); if (method !== "GET" && !/^\/v1\/cloud\/objectives\/[^/]+\/(?:stop|pause)$/.test(path)) assertWorkAdmission();
+      const result = await rpc("objectives", { method, path: path.replace("/v1/cloud/", "/v1/") + url.search, ...(method === "GET" ? {} : { body: await body(request) }) });
       json(response, result.status, result.body); return true;
     }
     if (path === "/v1/cloud/setup/status" && method === "GET") { owner(request, true); json(response, 200, { ...integrations.status(), runtime: await rpc("readiness") }); return true; }

@@ -42,9 +42,7 @@ export class IntegrationService {
     const transport = new IntegrationTransport(store, options.ledger, options.prices, options.fetch, options.now);
     const hooks: IntegrationHooks = { ...options.hooks,
       authorizeCallOutreach: input => this.outreach!.allows(input.projectId, input.category ?? "blocking_deadline") && options.hooks.authorizeCallOutreach?.({ projectId: input.projectId, destinationId: input.destinationId }) === true,
-      onStop: async () => {
-      await Promise.allSettled([Promise.resolve().then(() => this.stopLocal()), Promise.resolve().then(() => this.twilio?.cancelCalls()), Promise.resolve().then(() => options.hooks.onStop())]);
-    } };
+      onStop: () => this.performStop(true) };
     if (options.telegram) this.telegram = new TelegramIntegration(transport, options.telegram, hooks);
     if (options.google) this.google = new GoogleIntegration(transport, options.google, hooks, options.approvalAuthority);
     if (options.twilio) this.twilio = new TwilioIntegration(transport, options.twilio, hooks, options.speech);
@@ -60,6 +58,7 @@ export class IntegrationService {
   status() {
     const owner = this.store?.get<{ number: string; accountSid: string }>("twilio", "owner");
     return { version: 1 as const, enabled: this.enabled, stopped: this.store?.get<{ stopped: boolean }>("control", "global")?.stopped ?? false,
+      stopStatus: this.store?.get<{ status: "stopping" | "confirmed" | "uncertain" }>("control", "stop_status")?.status ?? "not_requested",
       telegram: { configured: !!this.telegram, paired: this.telegram?.paired() ?? false, ownerChatId: this.options.telegram?.ownerChatId ?? null },
       google: { configured: !!this.google, accounts: this.google?.accounts().map(account => ({ ...account, consents: Object.keys(this.store!.get<{ credentials: object }>("google_account", account.id)!.credentials) })) ?? [] },
       twilio: { configured: !!this.twilio, ownerNumber: this.options.twilio?.ownerNumber ?? null, ownerVerified: !!owner && owner.number === this.options.twilio?.ownerNumber && owner.accountSid === this.options.twilio?.accountSid } };
@@ -68,6 +67,10 @@ export class IntegrationService {
   writeCursor(name: string, value: unknown): void { this.requireEnabled().put("runtime_cursor", IntegrationId.parse(name), value); }
   async readCall(callSid: string) { return this.twilio?.readCall(callSid) ?? null; }
   async verifiedCall(callSid: string) { return this.twilio?.currentVerifiedCall(callSid) ?? null; }
+  revokeCallAuthorizations(): void {
+    for (const socket of this.sockets.clients) socket.close(1000, "Call authorization revoked");
+    this.twilio?.revokeAuthorizations();
+  }
   async authorizeCall(callSid: string, proof: CallProof): Promise<void> { if (!this.twilio) throw new Error("Calling is not configured"); return this.twilio.authorizeCall(callSid, proof); }
   readOutreachPolicy(projectId: string) { this.requireEnabled(); return this.outreach!.read(projectId); }
   updateOutreachPolicy(raw: unknown) { this.requireEnabled(); return this.outreach!.update(raw); }
@@ -82,9 +85,19 @@ export class IntegrationService {
     if (!this.store) return;
     this.google?.cancelReads();
     for (const socket of this.sockets.clients) socket.close(1000, "Stopped");
-    this.twilio?.stop(); this.store.put("control", "global", { stopped: true }); this.telegram?.stopOutbound(); this.outreach?.cancelPending();
+    this.twilio?.stop(); this.store.put("control", "global", { stopped: true }); this.store.put("control", "stop_status", { status: "stopping" }); this.telegram?.stopOutbound(); this.outreach?.cancelPending();
   }
-  async stop(): Promise<void> { this.stopLocal(); await this.twilio?.cancelCalls(); }
+  private async performStop(includeRootHook: boolean): Promise<void> {
+    const operations = [Promise.resolve().then(() => this.stopLocal()), Promise.resolve().then(() => this.twilio?.cancelCalls())];
+    if (includeRootHook) operations.push(Promise.resolve().then(() => this.options.hooks.onStop()));
+    const results = await Promise.allSettled(operations), failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failures.length) {
+      try { this.store?.put("control", "stop_status", { status: "uncertain", failedOperations: failures.length }); } catch {}
+      throw new AggregateError(failures.map(result => result.reason), "Stop is incomplete; one or more cancellations remain unconfirmed.");
+    }
+    this.store?.put("control", "stop_status", { status: "confirmed" });
+  }
+  async stop(): Promise<void> { return this.performStop(false); }
   resume(): void { this.requireEnabled().put("control", "global", { stopped: false }); this.telegram?.resume(); this.twilio?.resume(); }
   async tick(signal?: AbortSignal): Promise<void> {
     this.requireEnabled(); signal?.throwIfAborted();
@@ -166,7 +179,7 @@ export class IntegrationService {
     }); return true;
   }
   async close(): Promise<void> {
-    this.controller?.abort(); this.google?.cancelReads(); this.twilio?.stop();
+    this.controller?.abort(); this.google?.cancelReads(); this.twilio?.revokeAuthorizations();
     for (const socket of this.sockets.clients) socket.terminate();
     await this.loop; await new Promise<void>(resolve => this.sockets.close(() => resolve())); this.store?.close();
   }

@@ -35,6 +35,23 @@ test("cloud conversation and task admission require the explicit budget authorit
   assert.equal(f.service.conversationSnapshot().length, 1); assert.equal(f.service.taskSnapshot().length, 0);
   const read = await f.broker(request("conversations", { method: "GET", projectId: "project-a" })) as { conversations: unknown[] };
   assert.equal(read.conversations.length, 1);
+  await assert.rejects(f.broker(request("stop", {})), status(409), "Direct broker calls cannot bypass coordinated cancellation");
+});
+
+test("remote action scope uses the action authority's room type instead of a coincidental task/project ID", async t => {
+  const f = await fixture(t), conversation = await f.service.createConversation("Project", "actual-project");
+  const task = await f.service.createTask("Review action", conversation.id, "actual-project");
+  let room = false;
+  const action = { taskId: task.id, interactionId: "approval", revision: 1, optionId: "approve", toolName: "save_note",
+    exactArguments: "{}", reviewText: "Save a note", voiceAllowed: true };
+  const broker = createCloudRuntimeBroker({ service: f.service, objectives: f.objectives, continuity: {} as ContinuityService,
+    authority: { async readAction() { return room ? { ...action, scope: "room" } : action; }, async executeAction() { throw new Error("Read cannot execute"); } } });
+  const ref = { taskId: task.id, interactionId: "approval", revision: 1, optionId: "approve" };
+  assert.equal(await broker(request("read_action", { ref, projectId: task.id })), null);
+  assert.deepEqual(await broker(request("read_action", { ref, projectId: "actual-project" })), action);
+  room = true;
+  assert.deepEqual(await broker(request("read_action", { ref, projectId: task.id })), { ...action, scope: "room" });
+  assert.equal(await broker(request("read_action", { ref, projectId: "actual-project" })), null);
 });
 
 test("cloud project selection is immutable before first task and reads remain scoped", async t => {
