@@ -52,6 +52,7 @@ export interface TaskRecord extends Omit<Task, "conversationId" | "userMessage">
   cancelConfirmed?: boolean;
   observingDeliveries?: number;
   cancellationPending?: boolean;
+  responseUnconfirmed?: boolean;
   replyParts?: Record<string, string>;
   childTasks: Record<string, { name: string; kind?: string; sessionId?: string; outcome?: string }>;
   googleEffects?: import("./google-effect-contracts.ts").GoogleEffectReceipt[];
