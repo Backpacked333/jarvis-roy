@@ -23,14 +23,16 @@ export interface IntegrationPrices {
   telegramRequestUsd?: number; googleRequestUsd?: number; twilioRequestUsd?: number;
   twilioMinuteUsd?: number; elevenLabsMinuteUsd?: number; elevenLabsCharacterUsd?: number;
 }
-export const QuestionBindingSchema = z.strictObject({
-  objectiveId: IntegrationId, questionId: IntegrationId, revision: z.number().int().positive(),
-  expiresAt: z.iso.datetime(),
-});
+const questionFields = { questionId: IntegrationId, revision: z.number().int().positive(), expiresAt: z.iso.datetime() };
+export const QuestionBindingSchema = z.union([
+  z.strictObject({ kind: z.literal("objective").default("objective"), objectiveId: IntegrationId, ...questionFields }),
+  z.strictObject({ kind: z.literal("task"), taskId: IntegrationId, projectId: IntegrationId, ...questionFields }),
+]);
 export type QuestionBinding = z.infer<typeof QuestionBindingSchema>;
 export const OutboxInputSchema = z.strictObject({
   id: IntegrationId, projectId: IntegrationId, objectiveId: IntegrationId.nullable(),
   kind: z.enum(["digest", "routine", "question", "reply"]), text: z.string().trim().min(1).max(4000),
+  disclosure: z.enum(["minimal", "project_details"]).default("minimal"),
   notBefore: z.iso.datetime(), question: QuestionBindingSchema.nullable().default(null),
 });
 export type OutboxInput = z.infer<typeof OutboxInputSchema>;
@@ -51,7 +53,8 @@ export interface InboundTelegram {
 export type GoogleChange = { provider: "gmail" | "calendar"; accountId: string; projectId: string; resourceId: string; externalId: string; content: unknown; cloudAllowed?: boolean; retentionAllowed?: boolean };
 export interface IntegrationHooks {
   authorizeDisclosure?(input: { projectId: string; channel: "telegram" | "phone"; destinationId: string; proactive: boolean }): boolean;
-  authorizeCallOutreach?(input: { projectId: string; destinationId: string }): boolean;
+  authorizeCallOutreach?(input: { projectId: string; destinationId: string; category?: "blocking_deadline" | "call_when_ready" }): boolean;
+  readObjective?(input: { projectId: string; objectiveId: string }): Promise<unknown>;
   onTelegramMessage?(message: InboundTelegram): Promise<void>;
   onStop(): Promise<void>;
   onGoogleChange?(change: GoogleChange): Promise<void>;

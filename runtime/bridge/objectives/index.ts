@@ -34,12 +34,13 @@ export class ObjectiveDispatchRejected extends Error {}
 /** Coordinates bounded child authorities, never executes tools or approves effects. */
 export class ObjectiveService {
   readonly enabled: boolean;
-  private snapshot: ObjectiveSnapshot = { version: 1, sequence: 0, objectives: [], reservations: [], events: [], requests: [], inbox: [] };
+  private snapshot: ObjectiveSnapshot = { version: 1, sequence: 0, schedulerStopped: false, objectives: [], reservations: [], events: [], requests: [], inbox: [] };
   private readonly store: ObjectivePersistence;
   private queue = Promise.resolve();
   private failed = false;
   private closed = false;
   private stopping = false;
+  private schedulerGeneration = 0;
   private timer?: NodeJS.Timeout;
   private ticking = false;
   private readonly listeners = new Set<(event: ObjectiveEvent) => void>();
@@ -54,6 +55,7 @@ export class ObjectiveService {
     try {
       service.snapshot = await service.store.open(options.dataDirectory);
       service.validate(service.snapshot);
+      service.stopping = service.snapshot.schedulerStopped;
       // No provider operation is replayed on startup. Exact retained child refs
       // may later be inspected; missing dispatch receipts remain unknown.
       if (service.snapshot.objectives.some(objective => objective.attempts.some(activeAttempt)) || service.snapshot.reservations.some(item => item.accounting === "reserved")) {
@@ -65,7 +67,7 @@ export class ObjectiveService {
               const reservation = draft.reservations.find(item => item.id === attempt.id)!;
               if (reservation.accounting !== "measured") reservation.accounting = "unknown";
             }
-            objective.status = "interrupted"; objective.lastError = "Restart requires observation of existing child work; no operation was replayed.";
+            objective.status = objective.pauseRequested ? "paused" : "interrupted"; objective.lastError = "Restart requires observation of existing child work; no operation was replayed.";
             service.event(draft, objective, "observed");
           }
         });
@@ -137,6 +139,14 @@ export class ObjectiveService {
   subscribe(listener: (event: ObjectiveEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   list(projectId?: string): Objective[] { this.requireReadable(); return structuredClone(this.snapshot.objectives.filter(item => projectId === undefined || item.projectId === projectId)); }
   get(id: string, projectId: string): Objective { this.requireReadable(); return structuredClone(this.object(this.snapshot, id, projectId)); }
+  hasReservedHarnessChild(projectId: string, runId: string): boolean {
+    if (!this.enabled || this.closed || this.failed || this.stopping) return false;
+    return this.snapshot.objectives.some(objective => objective.projectId === projectId && !objective.cancelRequested &&
+      Date.parse(objective.deadlineAt) > Date.parse(this.now()) && objective.attempts.some(attempt =>
+        attempt.child?.authority === "harness" && attempt.child.roomId === projectId && attempt.child.runId === runId &&
+        !terminal.has(attempt.status) && Date.parse(attempt.deadlineAt) > Date.parse(this.now()) &&
+        this.snapshot.reservations.some(reservation => reservation.id === attempt.id && reservation.accounting === "reserved")));
+  }
   events(after = 0, projectId?: string) {
     this.requireReadable(); if (!Number.isSafeInteger(after) || after < 0 || after > this.snapshot.sequence || after < (this.snapshot.events[0]?.sequence ?? 1) - 1) throw new BridgeError("Objective event cursor expired; reload state.", 409);
     return { version: 1 as const, sequence: this.snapshot.sequence, events: structuredClone(this.snapshot.events.filter(event => event.sequence > after && (!projectId || event.projectId === projectId))) };
@@ -172,6 +182,11 @@ export class ObjectiveService {
     const input = ObjectiveRevisionSchema.parse(raw);
     return this.mutate(draft => {
       const objective = this.object(draft, id, projectId); this.cas(objective, input.expectedRevision);
+      if (resume && objective.pauseRequested) {
+        if (objective.attempts.some(activeAttempt)) throw new BridgeError("Old objective children remain unconfirmed; reconcile Stop before reviewing continuation.", 409);
+        if (objective.attempts.some(attempt => attempt.status !== "completed")) throw new BridgeError("A stopped step cannot be replayed. Create a fresh objective with a reviewed plan from this preserved goal.", 409);
+        objective.cancelRequested = false; objective.pauseRequested = false;
+      }
       if (resume && (objective.cancelRequested || objective.attempts.some(attempt => attempt.status === "unknown") || objective.question || Date.parse(objective.deadlineAt) <= Date.parse(this.now()))) throw new BridgeError("Resolve unknown work, cancellation, questions or the expired horizon before resuming.", 409);
       if (["completed", "cancelled"].includes(objective.status)) throw new BridgeError("This objective is terminal.", 409);
       objective.status = resume ? (objective.steps.length ? "scheduled" : "needs_plan") : "paused";
@@ -203,7 +218,7 @@ export class ObjectiveService {
     return this.mutate(draft => {
       const objective = this.object(draft, id, projectId); this.cas(objective, input.expectedRevision); const question = objective.question;
       if (!question || question.id !== input.questionId || question.revision !== input.questionRevision || Date.parse(question.expiresAt) <= Date.parse(this.now())) throw new BridgeError("Question binding is stale or expired.", 409);
-      draft.inbox.push({ id: randomUUID(), objectiveId: id, questionId: question.id, questionRevision: question.revision, answer: input.answer, at: this.now() });
+      draft.inbox.push({ id: randomUUID(), objectiveId: id, questionId: question.id, questionRevision: question.revision, questionPrompt: question.prompt, answer: input.answer, at: this.now() });
       objective.question = null; objective.status = objective.steps.length ? "scheduled" : "needs_plan"; this.event(draft, objective, "answered"); return objective;
     });
   }
@@ -236,7 +251,7 @@ export class ObjectiveService {
   }
   readiness() {
     const now = this.now(), sum = (length: number) => dollars(this.snapshot.reservations.filter(entry => entry.createdAt.slice(0, length) === now.slice(0, length)).reduce((value, entry) => value + charge(entry), 0));
-    return { version: 1 as const, enabled: this.enabled, ready: this.enabled && !this.closed && !this.failed, stopped: this.stopping,
+    return { version: 1 as const, sequence: this.snapshot.sequence, enabled: this.enabled, ready: this.enabled && !this.closed && !this.failed, stopped: this.stopping,
       activeWorkers: this.snapshot.objectives.flatMap(value => value.attempts).filter(activeAttempt).length, maxWorkers: 2,
       dailyLimitUsd: 10, monthlyLimitUsd: 300, dailyCommittedUsd: sum(10), monthlyCommittedUsd: sum(7),
       unknownReservations: this.snapshot.reservations.filter(entry => entry.accounting === "unknown").length,
@@ -279,6 +294,7 @@ export class ObjectiveService {
       controller.signal.throwIfAborted(); if (this.stopping || this.failed) throw new Error("Dispatch stopped before receipt");
       const boundedStep = { ...structuredClone(step), maxWallTimeMs: Math.max(1_000, Math.min(step.maxWallTimeMs, Date.parse(attempt.deadlineAt) - Date.parse(this.now()))) };
       const operation = this.options.adapters![step.authority]!.dispatch({ objectiveId, projectId: objective.projectId, attemptId, step: boundedStep,
+        predecessors: structuredClone(objective.attempts.filter(value => step.dependsOn.includes(value.stepId) && value.status === "completed" && value.child).map(value => value.child!)),
         checkpoint: structuredClone(objective.checkpoint), answers: structuredClone(this.snapshot.inbox.filter(item => item.objectiveId === objectiveId)) }, controller.signal);
       // An adapter that ignores abort must not hold the scheduler forever. A late
       // exact receipt is still adopted and reconciled, never dispatched again.
@@ -292,7 +308,7 @@ export class ObjectiveService {
         if (attempt.child) return;
         this.settleInto(draft.reservations.find(item => item.id === attemptId)!, "measured", 0);
         attempt.status = "failed"; attempt.accounting = "measured"; attempt.detail = "Child admission was rejected before execution.";
-        objective.status = objective.cancelRequested ? "cancelled" : "failed"; objective.lastError = attempt.detail; this.event(draft, objective, "observed");
+        objective.status = objective.pauseRequested ? "paused" : objective.cancelRequested ? "cancelled" : "failed"; objective.lastError = attempt.detail; this.event(draft, objective, "observed");
       });
       else await this.unknown(objectiveId, attemptId, "Child dispatch did not yield a verified durable receipt; no automatic retry.");
     })
@@ -304,7 +320,7 @@ export class ObjectiveService {
       if (terminal.has(attempt.status) && attempt.accounting === "measured") return;
       attempt.status = "unknown"; attempt.accounting = "unknown"; attempt.detail = detail; attempt.updatedAt = this.now();
       this.settleInto(draft.reservations.find(item => item.id === attemptId)!, "unknown", null);
-      objective.status = "interrupted"; objective.lastError = detail; this.event(draft, objective, "observed"); });
+      objective.status = objective.pauseRequested ? "paused" : "interrupted"; objective.lastError = detail; this.event(draft, objective, "observed"); });
   }
   private async observe(objectiveId: string, attemptId: string, raw: unknown): Promise<void> {
     const result = ChildObservationSchema.parse(raw); this.sensitive(result);
@@ -317,7 +333,14 @@ export class ObjectiveService {
       const reservation = draft.reservations.find(item => item.id === attemptId)!;
       attempt.accounting = reservation.accounting; attempt.chargedUsd = reservation.chargedUsd;
       if (result.checkpoint) { this.checkpointBinding(objective, result.checkpoint); objective.checkpoint = result.checkpoint; }
-      if (objective.cancelRequested) objective.status = objective.attempts.some(activeAttempt) ? "interrupted" : "cancelled";
+      if (objective.cancelRequested) {
+        objective.status = objective.pauseRequested ? "paused" : objective.attempts.some(activeAttempt) ? "interrupted" : "cancelled";
+        if (objective.pauseRequested) objective.lastError = objective.attempts.some(activeAttempt)
+          ? "Paused; old child cancellation remains unconfirmed. No work will be replayed."
+          : objective.attempts.some(value => value.status !== "completed")
+            ? "Paused after stopping a child. Create a fresh reviewed objective from this goal; stopped steps cannot be replayed."
+            : "Paused. Review the current goal and plan before explicitly continuing.";
+      }
       else if (result.status === "unknown" || settled && reservation.accounting !== "measured") objective.status = "interrupted";
       else if (!["paused", "cancelled", "expired"].includes(objective.status)) {
         if (objective.attempts.some(item => item.status === "failed" || item.status === "cancelled")) objective.status = "failed";
@@ -351,13 +374,19 @@ export class ObjectiveService {
       finally { this.reconciling.delete(attempt.id); }
     }));
   }
-  async stop(id?: string, raw?: unknown, projectId?: string): Promise<Objective | void> {
+  async stop(id?: string, raw?: unknown, projectId?: string, mode: "cancel" | "pause" = "cancel"): Promise<Objective | void> {
     if (!this.enabled) return;
     const revision = id ? ObjectiveRevisionSchema.parse(raw).expectedRevision : undefined;
-    if (!id) { this.stopping = true; clearTimeout(this.timer); this.timer = undefined; }
+    if (!id) { this.stopping = true; this.schedulerGeneration++; clearTimeout(this.timer); this.timer = undefined; }
     await this.mutate(draft => {
+      if (!id) draft.schedulerStopped = true;
       const targets = id ? [this.object(draft, id, projectId!)] : draft.objectives.filter(item => !["completed", "failed", "cancelled"].includes(item.status));
-      for (const objective of targets) { if (revision !== undefined) this.cas(objective, revision); objective.cancelRequested = true; objective.status = "cancelled"; objective.question = null; this.event(draft, objective, "stopped"); }
+      for (const objective of targets) {
+        if (revision !== undefined) this.cas(objective, revision);
+        objective.cancelRequested = true; objective.pauseRequested = mode === "pause"; objective.status = mode === "pause" ? "paused" : "cancelled"; objective.question = null;
+        if (mode === "pause") objective.lastError = "Paused by Stop. Review the goal and prior child outcomes before explicitly continuing; old approvals are not resumed.";
+        this.event(draft, objective, mode === "pause" ? "paused" : "stopped");
+      }
     });
     for (const [attemptId, controller] of this.controllers) if (!id || this.snapshot.objectives.find(item => item.id === id)?.attempts.some(item => item.id === attemptId)) controller.abort();
     await this.reconcile();
@@ -365,15 +394,30 @@ export class ObjectiveService {
     if (targets.some(objective => objective.attempts.some(activeAttempt))) throw new BridgeError("Objective cancellation is unconfirmed; retained reservations and child receipts require reconciliation.", 503);
     if (id) return this.get(id, projectId!);
   }
+  pauseAll(): Promise<Objective | void> { return this.stop(undefined, undefined, undefined, "pause"); }
   startLoop(intervalMs = 1_000): void {
     this.requireReady(); if (!Number.isSafeInteger(intervalMs) || intervalMs < 100 || intervalMs > 60_000) throw new Error("Invalid objective scheduler interval");
-    this.stopping = false; if (this.timer) return;
+    if (this.stopping || this.snapshot.schedulerStopped || this.timer) return;
     const tick = async () => {
       if (this.closed || this.failed || this.stopping) return;
       if (!this.ticking) { this.ticking = true; try { await this.reconcile(); await this.dispatch(); } catch {} finally { this.ticking = false; } }
       if (!this.closed && !this.failed && !this.stopping) { this.timer = setTimeout(() => void tick(), intervalMs); this.timer.unref(); }
     };
     this.timer = setTimeout(() => void tick(), 0); this.timer.unref();
+  }
+  /** Explicit owner recovery enables fresh work only. Cancelled objectives,
+   * consumed attempts, questions and external approvals are never revived. */
+  async resumeScheduler(intervalMs = 1_000): Promise<void> {
+    this.requireReady();
+    if (!Number.isSafeInteger(intervalMs) || intervalMs < 100 || intervalMs > 60_000) throw new Error("Invalid objective scheduler interval");
+    const generation = this.schedulerGeneration;
+    await this.mutate(draft => {
+      if (generation !== this.schedulerGeneration) throw new BridgeError("Scheduler resume was fenced by a newer Stop.", 409);
+      if (draft.objectives.some(objective => objective.attempts.some(activeAttempt))) throw new BridgeError("Old objective children remain unconfirmed; reconcile Stop before resuming fresh work.", 409);
+      draft.schedulerStopped = false;
+    });
+    if (generation !== this.schedulerGeneration) throw new BridgeError("Scheduler resume was fenced by a newer Stop.", 409);
+    this.stopping = false; this.startLoop(intervalMs);
   }
   async drain(): Promise<void> { await Promise.all([...this.operations.values()]); await this.queue; }
   async close(): Promise<void> {

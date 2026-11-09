@@ -26,6 +26,10 @@ does not install a cloud language model or bypass an unavailable model catalog.
 Fill `/etc/jarvis/runtime.env` (root-owned, mode 0600). Keep the dedicated cloud
 bootstrap token distinct from provider credentials. New features start off in
 the example except the assistant, knowledge and cloud transport prerequisites.
+Optional integrations require `JARVIS_INTEGRATION_KEY`: 32 random bytes encoded
+as exactly 64 hexadecimal characters. Preserve it securely across restarts and
+restores; use a separate backup encryption key. Provider-specific setup is in
+[the integration guide](../runtime/bridge/integrations/README.md).
 Build/select a digest-pinned analysis image with `scripts/setup-analysis-image.sh`;
 its mandatory kernel enforcement probe must pass. A rootless engine without
 delegated cgroups is insufficient. Do not replace the digest with a mutable tag.
@@ -76,6 +80,23 @@ Restore authenticates the entire archive before exposing restored files, checks
 all paths and file hashes, and writes only to a new private directory. It never
 replaces the live state or starts services. Inspect the restored data and run a
 separate stopped-host recovery drill before choosing an activation cutover.
+Every restore includes `.jarvis-restore-review-required.json`; all cloud service
+launchers refuse to start while it exists. Effects and scheduled work after the
+backup may already have happened. Review unresolved actions against authoritative
+provider/device receipts, review previously scheduled work, and keep uncertain
+effects unknown without retrying them. Disable or reconcile stale scheduled and
+ready objectives before removing the startup block: work that was pending at the
+backup may have completed later. Create a private `0600` review JSON with:
+
+```json
+{"version":1,"restoreId":"COPY_FROM_MARKER","archiveSha256":"COPY_FROM_MARKER","reviewer":"Operator","reviewedAt":"CURRENT_UTC_ISO_TIMESTAMP","pendingActionsReviewed":true,"effectsAfterBackupReconciled":true,"previouslyScheduledWorkReviewed":true,"providerCredentialsReviewed":true,"unresolvedEffects":"remain_unknown_do_not_retry"}
+```
+
+With every Jarvis service stopped, run
+`sudo node scripts/cloud-recovery.mjs review --directory /var/lib/jarvis-restored-drill --review-file /root/recovery-review.json`.
+This validates the review's exact restore binding and persists an audit receipt
+before removing the startup block. It does not start services or choose a cutover.
+Restore inspection alone cannot prove external effects did not occur after backup.
 Record an actual off-host restore result and recovery duration before calling
 the deployment production-ready. No off-host transfer has been performed here.
 

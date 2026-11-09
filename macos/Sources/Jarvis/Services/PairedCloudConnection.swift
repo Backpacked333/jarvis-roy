@@ -153,8 +153,9 @@ final class PairedCloudConnection: ObservableObject {
         try requireEnabled()
         guard let profile = profiles.cloudProfile, let token = try credentials.read(profileID: profile.id),
               let parts = URLComponents(string: path), parts.scheme == nil, parts.host == nil, parts.fragment == nil,
-              parts.path.range(of: #"^/v1/cloud/objectives(?:/[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?:/(?:pause|resume|stop|answer))?)?$"#, options: .regularExpression) != nil,
+              parts.path.range(of: #"^/v1/cloud/objectives(?:/[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?:/(?:pause|resume|stop|answer|deliverable))?)?$"#, options: .regularExpression) != nil,
               ["GET", "POST"].contains(method),
+              !parts.path.hasSuffix("/deliverable") || method == "GET" && (parts.queryItems ?? []).count == 1,
               (parts.queryItems ?? []).count <= 1,
               (parts.queryItems ?? []).allSatisfy({ $0.name == "projectId" && $0.value.map(CloudProfilePolicy.identifier) == true }) else { throw CloudConnectionFailure.configuration }
         let origin = try CloudProfilePolicy.origin(profile.origin)
@@ -173,7 +174,7 @@ final class PairedCloudConnection: ObservableObject {
     func setupData(path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> Data {
         try requireEnabled()
         let allowed = method == "GET" && path == "/v1/cloud/setup/integrations/status" ||
-            method == "POST" && ["/v1/cloud/setup/integrations/telegram/pair", "/v1/cloud/setup/integrations/google/connect", "/v1/cloud/setup/integrations/twilio/verify-owner"].contains(path)
+            method == "POST" && ["/v1/cloud/setup/integrations/telegram/pair", "/v1/cloud/setup/integrations/google/connect", "/v1/cloud/setup/integrations/google/permissions", "/v1/cloud/setup/integrations/twilio/verify-owner"].contains(path)
         guard allowed, let profile = profiles.cloudProfile, let token = try credentials.read(profileID: profile.id) else { throw CloudConnectionFailure.configuration }
         let origin = try CloudProfilePolicy.origin(profile.origin)
         guard let endpoint = URL(string: path, relativeTo: origin)?.absoluteURL, endpoint.host == origin.host, endpoint.port == origin.port, endpoint.scheme == "https" else { throw CloudConnectionFailure.configuration }
@@ -183,6 +184,44 @@ final class PairedCloudConnection: ObservableObject {
         let result = try await json(request)
         guard profiles.cloudProfile?.id == profile.id else { throw CloudConnectionFailure.configuration }
         return try JSONSerialization.data(withJSONObject: result)
+    }
+    func conversationData(path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> Data {
+        try requireEnabled()
+        guard let parts = URLComponents(string: path), parts.scheme == nil, parts.host == nil, parts.fragment == nil,
+              parts.query == nil || method == "GET" && parts.path == "/v1/cloud/conversations" &&
+                (parts.queryItems ?? []).count == 1 && (parts.queryItems ?? []).allSatisfy({ $0.name == "projectId" && $0.value.map(CloudProfilePolicy.identifier) == true }) else { throw CloudConnectionFailure.configuration }
+        let collection = parts.path == "/v1/cloud/conversations" && ["GET", "POST"].contains(method)
+        let createTask = parts.path == "/v1/cloud/tasks" && method == "POST"
+        let readOne = method == "GET" && parts.path.range(of: #"^/v1/cloud/(?:conversations|tasks)/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"#, options: .regularExpression) != nil
+        // The server accepts this route only for the exact current question card;
+        // action approvals still require their separate bound review protocol.
+        let answerQuestion = method == "POST" && parts.path.range(of: #"^/v1/cloud/tasks/[A-Za-z0-9][A-Za-z0-9_-]{0,127}/respond$"#, options: .regularExpression) != nil
+        guard collection || createTask || readOne || answerQuestion, let profile = profiles.cloudProfile,
+              let token = try credentials.read(profileID: profile.id) else { throw CloudConnectionFailure.configuration }
+        let origin = try CloudProfilePolicy.origin(profile.origin)
+        guard let endpoint = URL(string: path, relativeTo: origin)?.absoluteURL, endpoint.host == origin.host, endpoint.port == origin.port,
+              endpoint.scheme == "https" else { throw CloudConnectionFailure.configuration }
+        var request = URLRequest(url: endpoint); request.httpMethod = method; request.timeoutInterval = 30
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let body { request.setValue("application/json", forHTTPHeaderField: "Content-Type"); request.httpBody = try JSONSerialization.data(withJSONObject: body) }
+        let (stream, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw CloudConnectionFailure.transport }
+        var data = Data()
+        for try await byte in stream { try Task.checkCancellation(); guard data.count < 12 * 1024 * 1024 else { throw CloudConnectionFailure.protocolMismatch }; data.append(byte) }
+        guard profiles.cloudProfile?.id == profile.id else { throw CloudConnectionFailure.configuration }
+        return data
+    }
+    func stopCloudWork() async throws {
+        try requireEnabled()
+        guard let profile = profiles.cloudProfile, let token = try credentials.read(profileID: profile.id) else { throw CloudConnectionFailure.credentials }
+        let result = try await remoteJSON(try CloudProfilePolicy.origin(profile.origin), path: "/v1/cloud/stop", token: token, body: [:])
+        guard profiles.cloudProfile?.id == profile.id, result["version"] as? Int == 1, result["stopped"] as? Bool == true else { throw CloudConnectionFailure.protocolMismatch }
+    }
+    func resumeCloudWork() async throws {
+        try requireEnabled()
+        guard let profile = profiles.cloudProfile, let token = try credentials.read(profileID: profile.id) else { throw CloudConnectionFailure.credentials }
+        let result = try await remoteJSON(try CloudProfilePolicy.origin(profile.origin), path: "/v1/cloud/resume", token: token, body: [:])
+        guard profiles.cloudProfile?.id == profile.id, result["version"] as? Int == 1, result["resumed"] as? Bool == true else { throw CloudConnectionFailure.protocolMismatch }
     }
     func beginOwnerEnrollment() async throws -> URL {
         try requireEnabled()
@@ -217,7 +256,7 @@ final class PairedCloudConnection: ObservableObject {
                 do { result = try await localJSON("/v1/cloud/native-command-result", body: ["version": 1, "profileId": profile.id,
                     "commandId": receipt.commandId, "commandDigest": receipt.commandDigest,
                     "originalGeneration": receipt.generation, "originalServerEpoch": receipt.serverEpoch]) }
-                catch { continue }
+                catch { return }
                 guard ticket == connectionGeneration, !Task.isCancelled else { return }
                 guard result["version"] as? Int == 1, let status = result["status"] as? String,
                       let code = result["code"] as? String else { throw CloudConnectionFailure.protocolMismatch }

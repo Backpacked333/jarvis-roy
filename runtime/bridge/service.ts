@@ -62,7 +62,7 @@ function projectQuestion(card: Approval): Approval {
       title: BLOCKED_QUESTION_TITLE, detail: BLOCKED_QUESTION_DETAIL, blockedReason: BLOCKED_QUESTION_REASON,
       reviewable: false, allowText: false, options: [] };
   }
-  return { ...card, options: card.options.map((option) => ({ ...option })) };
+  return { ...card, ...(card.kind === "question" ? { reviewable: true } : {}), options: card.options.map((option) => ({ ...option })) };
 }
 
 function publicTask(record: TaskRecord): Task {
@@ -187,17 +187,27 @@ export class JarvisService {
     };
   }
 
-  async createConversation(title?: string): Promise<Conversation> {
+  conversationSnapshot(projectId?: string): Conversation[] {
+    if (projectId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(projectId)) throw new BridgeError("Invalid project scope.", 400);
+    return this.store.conversations().filter(value => projectId === undefined || value.projectId === projectId)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).map(publicConversation);
+  }
+
+  conversationProject(id: string): string | null { return this.store.conversation(id)?.projectId ?? null; }
+
+  async createConversation(title?: string, projectId?: string): Promise<Conversation> {
     if (title !== undefined && (typeof title !== "string" || !title.trim() || title.length > 120)) {
       throw new BridgeError("Conversation title must contain 1–120 characters.", 400);
     }
     if (title && containsCredentialLikeData(title)) {
       throw new BridgeError("Conversation titles containing credential-like data cannot be persisted.", 400);
     }
+    if (projectId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(projectId)) throw new BridgeError("Invalid project scope.", 400);
     const now = new Date().toISOString();
     const conversation: ConversationRecord = {
       id: randomUUID(), title: title?.trim() ?? "New conversation",
       autoTitle: title === undefined,
+      ...(projectId !== undefined ? { projectId } : {}),
       createdAt: now, updatedAt: now, messages: [],
     };
     await this.store.addConversation(conversation);

@@ -5,6 +5,8 @@ import { ObjectiveDispatchRejected, ObjectiveId, ObjectiveService, type ChildObs
 import type { ResearchRun, ResearchService } from "./research/index.ts";
 import type { HarnessService } from "./harness-contracts/service.ts";
 import type { Run } from "./harness-contracts/domain.ts";
+import { objectiveResearchGoal } from "./objectives/continuation.ts";
+import { objectiveDeliverable } from "./objectives/deliverable.ts";
 
 const ResearchParameters = z.strictObject({
   publicQuery: z.string().trim().min(1).max(400).optional(),
@@ -38,8 +40,9 @@ export function objectiveAdapters(research?: ResearchService, harness?: HarnessS
       try { parameters = ResearchParameters.parse(input.step.parameters); signal.throwIfAborted(); }
       catch { throw new ObjectiveDispatchRejected("Invalid research work specification before admission."); }
       const { maxTokens, maxModelCalls, ...options } = parameters;
+      const goal = objectiveResearchGoal(input);
       let run: ResearchRun;
-      try { run = await research.start({ ...options, requestId: input.attemptId, projectId: input.projectId, goal: input.step.prompt,
+      try { run = await research.start({ ...options, requestId: input.attemptId, projectId: input.projectId, goal,
         budget: { estimatedUsd: input.step.estimatedUsd, maxWallTimeMs: input.step.maxWallTimeMs, maxTokens, maxModelCalls, maxConcurrentWorkers: 2 } }); }
       catch { throw new ObjectiveDispatchRejected("Research refused admission before returning a child."); }
       return researchObservation(run);
@@ -82,6 +85,7 @@ export interface ObjectiveRuntimeOptions extends Omit<ObjectiveOptions, "adapter
 export interface ObjectiveRouteContext { nativeAuthenticated: boolean; ownerAuthenticated?: boolean; projectId?: string }
 export async function createObjectiveRuntime(options: ObjectiveRuntimeOptions) {
   const service = await ObjectiveService.open({ ...options, adapters: objectiveAdapters(options.research, options.harness) });
+  const deliverable = (id: string, projectId: string) => objectiveDeliverable(service, id, projectId, options.research, options.harness);
   const route = async (method: string, url: URL, body: unknown, context: ObjectiveRouteContext): Promise<{ status: number; body: unknown } | null> => {
     if (!url.pathname.startsWith("/v1/objectives")) return null;
     const owner = context.nativeAuthenticated || context.ownerAuthenticated === true;
@@ -99,12 +103,16 @@ export async function createObjectiveRuntime(options: ObjectiveRuntimeOptions) {
     if (url.pathname === "/v1/objectives/events" && method === "GET") return reply(service.events(Number(url.searchParams.get("after") ?? "0"), owner && !url.searchParams.has("projectId") ? undefined : project()));
     if (url.pathname === "/v1/objectives" && method === "GET") {
       const scope = owner && !url.searchParams.has("projectId") ? undefined : project();
-      return reply({ version: 1, objectives: service.list(scope), ...(owner ? { readiness: service.readiness() } : {}) });
+      return reply({ version: 1, sequence: service.readiness().sequence, objectives: service.list(scope), ...(owner ? { readiness: service.readiness() } : {}) });
     }
     if (url.pathname === "/v1/objectives" && method === "POST") { project(); return reply(await service.create(body), 201); }
-    const match = /^\/v1\/objectives\/([A-Za-z0-9_-]+)(?:\/(pause|resume|stop|answer|checkpoint))?$/.exec(url.pathname);
+    const match = /^\/v1\/objectives\/([A-Za-z0-9_-]+)(?:\/(pause|resume|stop|answer|checkpoint|deliverable))?$/.exec(url.pathname);
     if (!match) throw new BridgeError("Objective route not found.", 404);
     const [, id, action] = match, scope = project();
+    if (method === "GET" && action === "deliverable") {
+      if (!owner) throw new BridgeError("Objective deliverable review requires the authenticated owner.", 403);
+      return reply(await deliverable(id, scope));
+    }
     if (method === "GET" && !action) return reply(service.get(id, scope));
     if (method === "PATCH" && !action) return reply(await service.revise(id, body, scope));
     if (method === "POST" && action === "pause") return reply(await service.pause(id, body, scope));
@@ -117,6 +125,6 @@ export async function createObjectiveRuntime(options: ObjectiveRuntimeOptions) {
     }
     throw new BridgeError("Objective route not found.", 404);
   };
-  return { service, route };
+  return { service, route, deliverable };
 }
 export type ObjectiveRuntime = Awaited<ReturnType<typeof createObjectiveRuntime>>;

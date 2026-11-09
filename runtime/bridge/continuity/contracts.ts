@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ContextId, ContextPinSchema, ContextCitationSchema } from "../context/contracts.ts";
+import { ContextId, ContextPinSchema, ContextCitationSchema, ContextCandidateSchema } from "../context/contracts.ts";
 
 export const ContinuityReferenceSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("source"), id: ContextId, revision: z.number().int().positive(), sourceVersionId: ContextId, originalSha256: z.string().regex(/^[a-f0-9]{64}$/).optional() }),
@@ -38,6 +38,7 @@ export const UsageManifestSchema = z.strictObject({
   selections: z.array(z.strictObject({ kind: z.enum(["source", "memory", "history", "checkpoint"]), id: ContextId,
     revision: z.number().int().positive(), originalSha256: z.string().regex(/^[a-f0-9]{64}$/),
     reasons: z.array(z.string().max(80)).max(5), citations: z.array(ContextCitationSchema).max(20),
+    retention: ContextCandidateSchema.shape.retention, accountContext: ContextCandidateSchema.shape.accountContext,
   })).max(32),
 });
 export type UsageManifest = z.infer<typeof UsageManifestSchema>;

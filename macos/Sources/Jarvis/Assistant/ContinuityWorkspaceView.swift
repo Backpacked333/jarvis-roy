@@ -28,10 +28,11 @@ final class WorkingSetModel: ObservableObject {
     func load() async {
         guard !busy else { return }
         busy = true; defer { busy = false }
+        let originalGoal = goal
         do {
             let result = try await client.value(AssistantWorkingSet.self, path: path)
             guard result.version == 1, result.projectId == projectID, result.revision >= 0 else { throw AssistantClientError.invalidResponse }
-            value = result; goal = result.goal ?? ""; error = nil
+            value = result; if goal == originalGoal { goal = result.goal ?? "" }; error = nil
         } catch { self.error = error.localizedDescription }
     }
     func save(pins: [AssistantContextPin]? = nil) async {
@@ -107,29 +108,13 @@ struct ContextUsedView: View {
                 if let error { Text(error).foregroundStyle(.orange) }
                 ForEach(manifests) { manifest in
                     ForEach(manifest.selections) { selection in
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Text("\(selection.kind.rawValue.capitalized) · revision \(selection.revision)").font(.headline)
-                                Spacer()
-                                Text(selection.available == true ? "Available now" : "Unavailable or changed").font(.caption).foregroundStyle(selection.available == true ? .secondary : .orange)
-                                Button("Keep in working set") { Task { await workingSet.add(selection.pin) } }.disabled(selection.available != true || workingSet.busy)
-                            }
-                            Text(selection.reasons.map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
-                            ForEach(Array(selection.citations.enumerated()), id: \.offset) { _, citation in
-                                Button("Inspect passage \(citation.passageId)") { Task { await inspect(citation) } }.disabled(selection.available != true)
-                            }
-                            DisclosureGroup("Record identity") { Text("\(selection.id)\nSHA-256 \(selection.originalSha256)").font(.caption.monospaced()).textSelection(.enabled) }
-                        }.padding(16).background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 12))
+                        ContextManifestSelectionView(selection: selection, busy: workingSet.busy,
+                            pin: { Task { await workingSet.add(selection.pin) } },
+                            inspect: { citation in Task { await inspect(citation) } })
                     }
                 }
                 if !busy && manifests.isEmpty { Text("No context manifest is available for this task. Earlier conversations may predate context recording.").foregroundStyle(.secondary) }
-                if let evidence {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(evidence.source.title).font(.headline)
-                        Text((evidence.passage.locator.page.map { "Page \($0) · " } ?? "") + "lines \(evidence.passage.locator.lineStart)–\(evidence.passage.locator.lineEnd)").font(.caption).foregroundStyle(.secondary)
-                        Text(evidence.passage.text).textSelection(.enabled)
-                    }.padding(16).background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                }
+                if let evidence { ContextEvidenceView(evidence: evidence) }
                 WorkingSetView(model: workingSet)
             }.padding(24)
         }.task { await load() }
@@ -159,5 +144,46 @@ struct ContextUsedView: View {
                   let passage = value.passages.first(where: { $0.id == citation.passageId && $0.sourceVersionId == citation.sourceVersionId && $0.projectId == projectID }) else { throw AssistantClientError.invalidResponse }
             if request == evidenceRequest { evidence = .init(source: value.source, passage: passage) }
         } catch { if request == evidenceRequest { self.error = error.localizedDescription } }
+    }
+}
+
+private struct ContextManifestSelectionView: View {
+    let selection: AssistantUsageManifest.Selection
+    let busy: Bool
+    let pin: () -> Void
+    let inspect: (AssistantContextCitation) -> Void
+    private var available: Bool { selection.available == true }
+    private var reasonText: String { selection.reasons.map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: " · ") }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("\(selection.kind.rawValue.capitalized) · revision \(selection.revision)").font(.headline)
+                Spacer()
+                Text(available ? "Available now" : "Unavailable or changed").font(.caption)
+                    .foregroundStyle(available ? Color.secondary : Color.orange)
+            }
+            Text(reasonText).font(.caption).foregroundStyle(.secondary)
+            Button("Keep in working set", action: pin).disabled(!available || busy)
+            ForEach(Array(selection.citations.enumerated()), id: \.offset) { entry in
+                Button("Inspect passage \(entry.element.passageId)") { inspect(entry.element) }.disabled(!available)
+            }
+            DisclosureGroup("Record identity") {
+                Text("\(selection.id)\nSHA-256 \(selection.originalSha256)").font(.caption.monospaced()).textSelection(.enabled)
+            }
+        }.padding(16).background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+private struct ContextEvidenceView: View {
+    let evidence: KnowledgeMatch
+    private var locator: String {
+        let page = evidence.passage.locator.page.map { "Page \($0) · " } ?? ""
+        return page + "lines \(evidence.passage.locator.lineStart)–\(evidence.passage.locator.lineEnd)"
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(evidence.source.title).font(.headline)
+            Text(locator).font(.caption).foregroundStyle(.secondary)
+            Text(evidence.passage.text).textSelection(.enabled)
+        }.padding(16).background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
     }
 }

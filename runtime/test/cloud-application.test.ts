@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import test from "node:test";
 import { createCloudApplication } from "../bridge/cloud-main.ts";
+import { BridgeError } from "../bridge/errors.ts";
 
 test("cloud composition routes paired objectives to the single runtime and never exposes private brokers", async () => {
   const directory = await mkdtemp(join(tmpdir(), "jarvis-cloud-app-"));
@@ -41,4 +42,40 @@ test("cloud composition routes paired objectives to the single runtime and never
     assert.equal((await request("/v1/tasks")).status, 404);
     assert.equal((await request("/v1/cloud/setup/status", { headers: { authorization: `Bearer ${paired.deviceToken}` } })).status, 200);
   } finally { await app.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("cloud Stop attempts every authority and a partial Resume rolls back to paused", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "jarvis-cloud-stop-"));
+  const bootstrap = randomBytes(32).toString("base64url"), operations: string[] = [];
+  let resumeStarted: (() => void) | undefined, releaseResume: (() => void) | undefined;
+  const app = await createCloudApplication({ dataDirectory: directory, env: {
+    JARVIS_ENABLE_CLOUD: "1", JARVIS_RUNTIME_PROFILE: "cloud", JARVIS_CLOUD_ORIGIN: "https://jarvis.example",
+    JARVIS_LOCAL_TOKEN: randomBytes(32).toString("base64url"), JARVIS_CLOUD_RUNTIME_TOKEN: randomBytes(32).toString("base64url"), JARVIS_CLOUD_BOOTSTRAP_TOKEN: bootstrap,
+  }, rpc: async operation => { operations.push(operation); if (operation === "resume" && resumeStarted) { resumeStarted(); await new Promise<void>(resolve => { releaseResume = resolve; }); } return { version: 1 }; } });
+  const server = createServer(app.handler); server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const port = (server.address() as { port: number }).port;
+  const pairing = await app.control.startPairing({ deviceId: "mac", label: "Mac" }, bootstrap);
+  const paired = await app.control.completePairing({ pairingId: pairing.pairingId, deviceId: "mac" }, pairing.pairingToken);
+  const request = (action: "stop" | "resume") => new Promise<number>((resolve, reject) => {
+    const req = httpRequest({ hostname: "127.0.0.1", port, path: `/v1/cloud/${action}`, method: "POST", headers: { host: "jarvis.example", authorization: `Bearer ${paired.deviceToken}` } }, response => { response.resume(); response.on("end", () => resolve(response.statusCode!)); });
+    req.on("error", reject); req.end();
+  });
+  const originalStop = app.control.stopAll.bind(app.control), originalResume = app.control.resume.bind(app.control);
+  let controlStops = 0, integrationStops = 0;
+  app.control.stopAll = async () => { controlStops++; return originalStop(); };
+  app.integrations.stop = async () => { integrationStops++; throw new Error("Fixture provider cancellation is unknown"); };
+  try {
+    assert.equal(await request("stop"), 503);
+    assert.equal(integrationStops, 1); assert.equal(controlStops, 1); assert.deepEqual(operations, ["stop"]);
+    app.control.resume = async () => { throw new BridgeError("Fixture durable commit failed", 503); };
+    assert.equal(await request("resume"), 503);
+    assert.equal(integrationStops, 2); assert.equal(controlStops, 2); assert.deepEqual(operations, ["stop", "resume", "stop"]);
+    app.control.resume = originalResume;
+    const started = new Promise<void>(resolve => { resumeStarted = resolve; });
+    const pendingResume = request("resume"); await started;
+    assert.equal(await request("stop"), 503);
+    releaseResume!();
+    assert.equal(await pendingResume, 503, "Stop must supersede a concurrently awaited resume");
+    assert.equal(controlStops, 4); assert.equal(integrationStops, 4);
+  } finally { releaseResume?.(); await app.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
 });

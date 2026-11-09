@@ -28,6 +28,9 @@ export async function createContinuityRuntime(runtime: JarvisService, knowledge:
       const eventId = `${task.taskId}:${task.status}`;
       if (recorded.has(eventId)) continue;
       try {
+        if (continuity.hasCommittedTaskObservation(task.projectId, eventId, task.taskId, task.status, task.goal.slice(0, 8000))) {
+          recorded.add(eventId); continue;
+        }
         // Store direct user goals and observed task state. Assistant replies can
         // include revoked excerpts, so they are deliberately not summarized here.
         continuity.recordCommittedTask({ ...task, goal: task.goal.slice(0, 8000), eventId, references: [],

@@ -3,8 +3,8 @@ import WebKit
 
 enum EquationDocument {
     static func make(latex: String, script: String, nonce: String) throws -> String {
-        guard latex.utf16.count <= 32_000, nonce.allSatisfy({ $0.isLetter || $0.isNumber }) else { throw AssistantClientError.invalidResponse }
-        let encoded = try JSONSerialization.data(withJSONObject: [latex])
+        guard latex.utf16.count <= 32_000, nonce.range(of: #"^[A-Za-z0-9]{1,100}$"#, options: .regularExpression) != nil else { throw AssistantClientError.invalidResponse }
+        let encoded = try JSONSerialization.data(withJSONObject: [latex], options: [.withoutEscapingSlashes])
         guard var expression = String(data: encoded, encoding: .utf8) else { throw AssistantClientError.invalidResponse }
         // A quoted JS argument is never allowed to terminate its script element.
         expression = expression.replacingOccurrences(of: "<", with: "\\u003c").replacingOccurrences(of: ">", with: "\\u003e")

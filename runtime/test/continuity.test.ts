@@ -21,6 +21,8 @@ test("twenty projects retain five committed sessions each across restart without
   service.updateWorkingSet("project-3", { expectedRevision: 0, pins: [{ kind: "source", id: "passage-3", revision: 2 }], goal: "Continue the reviewed draft" });
   service.close(); service = await ContinuityService.open(config);
   t.after(() => service.close());
+  assert.equal(service.hasCommittedTaskObservation("project-0", "settled-0-0", "task-0-0", "completed", "Project 0 session 0: review constraint 0"), true);
+  assert.throws(() => service.hasCommittedTaskObservation("project-0", "settled-0-0", "task-0-0", "failed", "Project 0 session 0: review constraint 0"), /changed after persistence/);
   for (let project = 0; project < 20; project++) {
     const checkpoint = service.checkpoint(`project-${project}`, "cloud");
     assert.equal(checkpoint.episodes.length, 5);

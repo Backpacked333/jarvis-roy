@@ -27,7 +27,7 @@ export function sharedEmbeddingProvider(provider: LocalEmbeddingProvider): Local
     job.options.signal?.removeEventListener("abort", job.abort);
     if (job.options.signal?.aborted) { job.reject(job.options.signal.reason); drain(); return; }
     active = true;
-    provider.embed(job.texts, job.options).then(job.resolve, job.reject).finally(() => { active = false; drain(); });
+    Promise.resolve().then(() => provider.embed(job.texts, job.options)).then(job.resolve, job.reject).finally(() => { active = false; drain(); });
   };
   const scheduled = (texts: readonly string[], options: Parameters<LocalEmbeddingProvider["embed"]>[1]) => new Promise<readonly (readonly number[])[]>((resolve, reject) => {
     if (jobs.length >= 64) { reject(new Error("Local embedding queue is full")); return; }

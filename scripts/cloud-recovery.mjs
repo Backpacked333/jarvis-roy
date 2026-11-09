@@ -41,7 +41,8 @@ export async function reviewRestoration({ directory, reviewFile, isActive = acti
   if (!root.isDirectory() || root.isSymbolicLink()) throw new Error('Recovery requires a real restored directory.');
   for (const service of SERVICES) if (await isActive(service)) throw new Error('Stop every Jarvis service before reviewing restored state.');
   const markerPath = path.join(directory, RESTORE_REVIEW_MARKER), marker = await privateJSON(markerPath), review = await privateJSON(reviewFile);
-  if (marker.version !== 1 || marker.state !== 'operator_review_required' || !/^[a-f0-9]{64}$/.test(marker.archiveSha256) ||
+  if (marker.version !== 1 || marker.state !== 'operator_review_required' || !/^[a-f0-9-]{36}$/.test(marker.restoreId) ||
+      !Number.isFinite(Date.parse(marker.restoredAt)) || !Number.isFinite(Date.parse(marker.backupCreatedAt)) || !/^[a-f0-9]{64}$/.test(marker.archiveSha256) ||
       review.version !== 1 || review.restoreId !== marker.restoreId || review.archiveSha256 !== marker.archiveSha256 ||
       typeof review.reviewer !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}$/.test(review.reviewer) ||
       !Number.isFinite(Date.parse(review.reviewedAt)) || Date.parse(review.reviewedAt) < Date.parse(marker.restoredAt) ||

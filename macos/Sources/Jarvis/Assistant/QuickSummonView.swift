@@ -63,7 +63,7 @@ private struct QuickSummonView: View {
                         Task { await app.startNewConversation(); creating = false; focused = true }
                     }.disabled(creating || !app.isConnected)
                 } else {
-                    TextField("What are you working on?", text: $assistant.draft, axis: .vertical)
+                    TextField("What are you working on?", text: $assistant.draft, axis: .vertical).id(assistant.selectedSessionID)
                         .textFieldStyle(.plain).font(.title3).lineLimit(2...5).focused($focused)
                         .onSubmit { send() }
                     if let selection = assistant.visualSelection { Text("Referring to: \(selection.label)").font(.caption).foregroundStyle(.secondary) }

@@ -52,6 +52,7 @@ export class MemoryService {
   private backgroundTimer?: NodeJS.Timeout;
   private backgroundBusy = false;
   private backgroundPaused = false;
+  private backgroundRequested = false;
   private constructor(options: MemoryOptions) {
     this.options = options; this.enabled = options.enabled ?? process.env.JARVIS_ENABLE_MEMORY === "1";
     this.embeddingIdentity = options.embeddingProvider ? Object.freeze(EmbeddingIdentitySchema.parse(options.embeddingProvider.identity)) : null;
@@ -68,6 +69,7 @@ export class MemoryService {
   private time(): string { return (this.options.now?.() ?? new Date()).toISOString(); }
   private scheduleMemoryIndex(resume = false): void {
     if (resume) this.backgroundPaused = false;
+    if (resume && this.backgroundBusy) this.backgroundRequested = true;
     if (!this.options.backgroundIndexing || !this.options.embeddingProvider || this.backgroundPaused || this.closed || this.backgroundBusy || this.backgroundTimer) return;
     this.backgroundTimer = setTimeout(() => { this.backgroundTimer = undefined; void this.indexMemoryBatch(); }, 100);
     this.backgroundTimer.unref();
@@ -77,24 +79,39 @@ export class MemoryService {
     this.backgroundBusy = true; const controller = new AbortController(); this.activeReads.add(controller);
     let more = false;
     try {
-      await this.serialized(async () => {
+      const batch = await this.serialized(() => {
         const pending = this.store.all().filter(entry => this.authorize(entry, { projectId: entry.scope.kind === "project" ? entry.scope.projectId : null, purpose: "local" }) &&
           !this.store.db().prepare("SELECT 1 FROM memory_vectors WHERE entry_id=? AND digest=? AND provider_key=?").get(entry.id, entry.digest, this.embeddingModelKey!));
         more = pending.length > 16; const batch = pending.slice(0, 16);
         while (batch.reduce((sum, entry) => sum + Buffer.byteLength(entry.text), 0) > 65536) { batch.pop(); more = true; }
-        if (!batch.length) return;
-        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]);
-        const values = await this.options.embeddingProvider!.embed(batch.map(entry => entry.text), { signal, purpose: "document" });
+        return batch;
+      });
+      if (!batch.length) return;
+      // Inference must never hold the mutation queue: consent edits and lexical
+      // recall remain responsive even when the local encoder is busy.
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]);
+      const values = await new Promise<readonly (readonly number[])[]>((resolve, reject) => {
+        const abort = () => reject(signal.reason);
+        signal.throwIfAborted(); signal.addEventListener("abort", abort, { once: true });
+        Promise.resolve().then(() => this.options.embeddingProvider!.embed(batch.map(entry => entry.text), { signal, purpose: "document" }))
+          .then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+      });
+      signal.throwIfAborted();
+      if (embeddingKey(this.options.embeddingProvider!.identity) !== this.embeddingModelKey || values.length !== batch.length) throw new Error("Local memory embedding model changed");
+      await this.serialized(() => {
         signal.throwIfAborted();
-        if (embeddingKey(this.options.embeddingProvider!.identity) !== this.embeddingModelKey || values.length !== batch.length) throw new Error("Local memory embedding model changed");
         this.store.transaction(() => batch.forEach((entry, index) => {
-          if (!this.authorize(entry, { projectId: entry.scope.kind === "project" ? entry.scope.projectId : null, purpose: "local" })) return;
+          if (this.store.get(entry.id)?.digest !== entry.digest || !this.authorize(entry, { projectId: entry.scope.kind === "project" ? entry.scope.projectId : null, purpose: "local" })) return;
           this.store.db().prepare("INSERT INTO memory_vectors VALUES (?,?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET digest=excluded.digest,provider_key=excluded.provider_key,dimensions=excluded.dimensions,vector=excluded.vector")
             .run(entry.id, entry.digest, this.embeddingModelKey!, this.embeddingIdentity!.dimensions, encodeVector(normalizedVector(values[index], this.embeddingIdentity!.dimensions)));
         }));
       });
     } catch { this.backgroundPaused = true; }
-    finally { this.activeReads.delete(controller); this.backgroundBusy = false; if (more) this.scheduleMemoryIndex(); }
+    finally {
+      this.activeReads.delete(controller); this.backgroundBusy = false;
+      if (this.backgroundRequested) { this.backgroundRequested = false; this.scheduleMemoryIndex(true); }
+      else if (more) this.scheduleMemoryIndex();
+    }
   }
   private saveEntry(entry: MemoryEntry): void { this.store.save(entry); this.scheduleMemoryIndex(true); }
   private requireEnabled(): void {
@@ -476,6 +493,6 @@ export class MemoryService {
     }
     throw new BridgeError("Memory route not found.", 404);
   }
-  cancelReads(): void { this.backgroundPaused = true; if (this.backgroundTimer) { clearTimeout(this.backgroundTimer); this.backgroundTimer = undefined; } for (const controller of this.activeReads) controller.abort(new Error("Memory recall stopped")); }
+  cancelReads(): void { this.backgroundPaused = true; this.backgroundRequested = false; if (this.backgroundTimer) { clearTimeout(this.backgroundTimer); this.backgroundTimer = undefined; } for (const controller of this.activeReads) controller.abort(new Error("Memory recall stopped")); }
   async close(): Promise<void> { this.cancelReads(); await this.queue; this.closed = true; this.store.close(); }
 }

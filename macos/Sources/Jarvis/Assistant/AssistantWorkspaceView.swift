@@ -121,7 +121,7 @@ struct AssistantWorkspaceView: View {
                         if let selected = assistant.selectedPresentation {
                             if let text = selected.content.markdown {
                                 Button("Read aloud") { voice.speak(text, context: selected.capturedFocus.voiceContext) }
-                                    .disabled(!voice.cloudConsentGranted || voice.captureInProgress)
+                                    .disabled(!voice.cloudConsentGranted || voice.captureInProgress || voice.dictationActive)
                             }
                             Text("Revision \(selected.revision)").font(.caption).foregroundStyle(.secondary)
                             Button { assistant.togglePin(selected.id) } label: {
@@ -162,7 +162,7 @@ struct AssistantWorkspaceView: View {
                     Button("Stop speaking") { assistant.muteNarration(); voice.stopSpeaking(); Task { await assistant.invalidateVoiceReview() } }
                 }
                 HStack(alignment: .bottom) {
-                    TextField("Ask Jarvis, or continue by voice…", text: $assistant.draft, axis: .vertical)
+                    TextField("Ask Jarvis, or continue by voice…", text: $assistant.draft, axis: .vertical).id(assistant.selectedSessionID)
                         .disabled(assistant.selectedSession == nil)
                         .textFieldStyle(.plain).lineLimit(1...5).padding(12)
                         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))

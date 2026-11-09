@@ -63,6 +63,19 @@ export class ContinuityService {
     try { const value = operation(); db.exec("COMMIT"); return value; }
     catch (error) { try { db.exec("ROLLBACK"); } catch {} throw error; }
   }
+  /** Terminal state notifications may be replayed after message archival or late
+   * transport updates. Reuse the first durable observation time without allowing
+   * a changed task, goal or status to hide behind the same event identity. */
+  hasCommittedTaskObservation(projectId: string, eventId: string, taskId: string, status: ProjectEpisode["status"], goal: string): boolean {
+    ContextId.parse(projectId);
+    const row = this.db().prepare("SELECT body FROM episodes WHERE project_id=? AND event_id=?").get(projectId, eventId);
+    if (!row) return false;
+    const episode = ProjectEpisodeSchema.parse(JSON.parse(String(row.body)));
+    if (episode.taskId !== taskId || episode.status !== status || episode.goal !== goal || episode.outcomeAuthority !== "runtime_status") {
+      throw new BridgeError("Committed task observation changed after persistence.", 409);
+    }
+    return true;
+  }
   recordCommittedTask(raw: z.input<typeof CommittedTaskEpisodeSchema>): ProjectEpisode {
     const input = CommittedTaskEpisodeSchema.parse(raw);
     if (containsCredentialLikeData(JSON.stringify(input))) throw new BridgeError("Episode contains credential-like content.", 400);
@@ -137,6 +150,7 @@ export class ContinuityService {
     const value = UsageManifestSchema.parse({ version: 1, id, packetId: packet.id, ...packet.scope, createdAt: this.time(),
       usageAuthority: "supplied_context_not_claim_attribution", selections: packet.selections.map(selection => ({
         kind: selection.kind, id: selection.id, revision: selection.revision, originalSha256: selection.originalSha256, reasons: selection.reasons, citations: selection.citations,
+        ...(selection.retention ? { retention: selection.retention } : {}), ...(selection.accountContext ? { accountContext: selection.accountContext } : {}),
       })) });
     this.db().prepare("INSERT OR IGNORE INTO manifests VALUES (?,?,?,?)").run(id, value.projectId, value.taskId, JSON.stringify(value));
     return UsageManifestSchema.parse(JSON.parse(String(this.db().prepare("SELECT body FROM manifests WHERE id=?").get(id)!.body)));
@@ -153,6 +167,9 @@ export class ContinuityService {
     const manifest = UsageManifestSchema.parse(JSON.parse(String(row.body)));
     return { ...manifest, selections: manifest.selections.map(selection => {
       let available = false;
+      // Remote references remain inspectable as content-free receipts. A local
+      // source lookup cannot grant access to retained account/snapshot content.
+      if (selection.retention || selection.accountContext) return { ...selection, available };
       if (selection.kind === "checkpoint") available = this.authorizeCheckpoint(selection.id, selection.revision, projectId, purpose);
       else if (selection.kind === "source") available = selection.citations.length > 0 && selection.citations.every(citation => this.options.authorizeReference({ kind: "source", id: citation.passageId,
         revision: selection.revision, sourceVersionId: citation.sourceVersionId, originalSha256: selection.originalSha256 }, { projectId, purpose }));

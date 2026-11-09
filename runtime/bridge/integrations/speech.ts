@@ -20,7 +20,7 @@ export class ExistingVoiceSpeechAdapter implements TelephonySpeechAdapter {
   async open(options: Parameters<TelephonySpeechAdapter["open"]>[0]): Promise<TelephonySpeechSession> {
     options.signal.throwIfAborted();
     const socket = this.connect(this.url, { headers: { authorization: `Bearer ${this.token}` }, followRedirects: false, handshakeTimeout: 5000, perMessageDeflate: false, maxPayload: 32768 });
-    const sessionId = randomUUID(); let generation = 0, sequence = 0, ready = false, closed = false, mode: "listen" | "speak" = "listen";
+    const sessionId = randomUUID(); let generation = 0, sequence = 0, ready = false, closed = false, mode: "listen" | "thinking" | "speak" = "listen";
     let bytes = 0, silentBytes = 0, pending = Buffer.alloc(0);
     const send = (body: Record<string, unknown>) => {
       if (closed || socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > 96_000) throw new Error("Voice bridge unavailable or overflowing");
@@ -34,7 +34,7 @@ export class ExistingVoiceSpeechAdapter implements TelephonySpeechAdapter {
         const chunk = pending.subarray(0, 16000); pending = pending.subarray(chunk.length);
         send({ type: "audio", sequence: sequence++, pcm: chunk.toString("base64"), sampleRate: 16000 }); bytes += chunk.length;
       }
-      if (ready && bytes >= 8000 && (silentBytes >= 16000 || bytes >= 256000)) { ready = false; send({ type: "commit" }); }
+      if (ready && bytes >= 8000 && (silentBytes >= 16000 || bytes >= 256000)) { ready = false; mode = "thinking"; send({ type: "commit" }); }
     };
     await new Promise<void>((resolve, reject) => {
       const abort = () => { close(); reject(new Error("Voice session stopped")); };

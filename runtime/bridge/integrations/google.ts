@@ -247,7 +247,9 @@ export class GoogleIntegration {
       for (const event of result.items) {
         if (event.status === "cancelled") { this.removeRetainedItem(account.id, "calendar", calendar, event.id); continue; }
         await this.publish({ provider: "calendar", accountId: account.id, projectId: account.projectId, resourceId: calendar, externalId: event.id,
-          content: { id: event.id, summary: String(event.summary ?? "").slice(0, 500), description: String(event.description ?? "").slice(0, 16000), location: String(event.location ?? "").slice(0, 1000), start: event.start, end: event.end } }, event.etag ?? event.updated ?? hash(canonicalJson(event)));
+          content: { id: event.id, summary: String(event.summary ?? "").slice(0, 500), description: String(event.description ?? "").slice(0, 16000), location: String(event.location ?? "").slice(0, 1000), start: event.start, end: event.end,
+            recurrence: Array.isArray(event.recurrence) ? event.recurrence.slice(0, 20).map(rule => String(rule).slice(0, 500)) : [], recurringEventId: event.recurringEventId ?? null, originalStartTime: event.originalStartTime ?? null,
+            coverageNotice: "Provider event records with recurrence rules; recurring schedules are not expanded into every daily occurrence." } }, event.etag ?? event.updated ?? hash(canonicalJson(event)));
       }
       nextPage = result.nextPageToken; syncToken = result.nextSyncToken; if (!nextPage) break;
     }

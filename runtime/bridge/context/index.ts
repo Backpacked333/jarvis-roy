@@ -29,6 +29,7 @@ function inScope(candidate: ContextCandidate | ContextSelection, input: Pick<Con
 }
 function correctOrigin(candidate: ContextCandidate): boolean {
   const origin = candidate.provenance.origin;
+  if (origin === "account_context") return !!candidate.accountContext && candidate.kind === "source" && candidate.provenance.revision === candidate.revision;
   if (origin === "retained_snapshot") return !!candidate.retention && ["source", "memory"].includes(candidate.kind) && candidate.provenance.revision === candidate.revision;
   return candidate.provenance.revision === candidate.revision && (
     candidate.kind === "source" ? origin === "original_source" && candidate.citations.length > 0 :
@@ -68,7 +69,9 @@ function selection(candidate: ContextCandidate, reasons: ContextSelection["reaso
     const lower = candidate.text.toLocaleLowerCase("en-US"); let best = -1;
     for (const term of terms) {
       const at = lower.indexOf(term); if (at < 0) continue;
-      const position = Math.max(0, at - 128), window = prefix(candidate.text.slice(position), maximumBytes).toLocaleLowerCase("en-US");
+      let position = Math.max(0, at - 128);
+      if (position > 0 && /[\uDC00-\uDFFF]/u.test(candidate.text[position])) position--;
+      const window = prefix(candidate.text.slice(position), maximumBytes).toLocaleLowerCase("en-US");
       const score = terms.filter(value => window.includes(value)).length;
       if (score > best) { start = position; best = score; }
     }

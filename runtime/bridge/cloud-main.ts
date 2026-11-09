@@ -9,6 +9,7 @@ import { CloudControlPlane, createCloudGateway, cloudCommandDigest } from "./clo
 import { cloudRuntimeClient } from "./cloud-runtime-broker.ts";
 import { IntegrationService, ExistingVoiceSpeechAdapter, type ApprovedEffect, type IntegrationPrices } from "./integrations/index.ts";
 import { canonicalJson } from "./harness-contracts/validation.ts";
+import { createCloudConversationRuntime } from "./cloud-conversation-runtime.ts";
 import { ObjectiveSchema } from "./objectives/contracts.ts";
 import { BridgeError } from "./errors.ts";
 
@@ -29,6 +30,29 @@ export async function createCloudApplication(options: { env?: NodeJS.ProcessEnv;
   const dataDirectory = options.dataDirectory ?? getDataDirectory();
   const approvedEffect = new AsyncLocalStorage<ApprovedEffect>();
   let integrations: IntegrationService;
+  let lifecycleGeneration = 0;
+  async function stopWork(includeIntegrations = true) {
+    lifecycleGeneration++;
+    const outcomes = await Promise.allSettled([
+      ...(includeIntegrations ? [Promise.resolve().then(() => integrations.stop())] : []),
+      Promise.resolve().then(() => control.stopAll()),
+      Promise.resolve().then(() => rpc("stop")),
+    ]);
+    if (outcomes.some(outcome => outcome.status === "rejected")) throw new BridgeError("Stop is not fully confirmed. Admission remains paused; inspect active work and retry Stop to reconcile.", 503);
+  }
+  async function resumeWork(actor: Parameters<CloudControlPlane["resume"]>[0], outreachOnly = false) {
+    const generation = lifecycleGeneration;
+    const assertCurrent = () => { if (generation !== lifecycleGeneration) throw new BridgeError("Resume was superseded by Stop.", 409); };
+    try {
+      if (!outreachOnly) { await rpc("resume"); assertCurrent(); }
+      await control.resume(actor); assertCurrent();
+      if (integrations.enabled) integrations.resume();
+      assertCurrent();
+    } catch {
+      await stopWork().catch(() => {});
+      throw new BridgeError("Resume was not confirmed. Work and outreach have been paused again; inspect status before retrying.", 503);
+    }
+  }
   const control = await CloudControlPlane.open({ dataDirectory, publicOrigin: origin, bootstrapToken: env.JARVIS_CLOUD_BOOTSTRAP_TOKEN, localExecutorId: "cloud-runtime",
     readAction: (ref, scope) => rpc("read_action", { ref, projectId: scope.projectId }),
     async executeAction(action, receipt) {
@@ -50,7 +74,8 @@ export async function createCloudApplication(options: { env?: NodeJS.ProcessEnv;
     twilioRequestUsd: price("JARVIS_PRICE_TWILIO_REQUEST_USD"), twilioMinuteUsd: price("JARVIS_PRICE_TWILIO_MINUTE_USD"),
     elevenLabsMinuteUsd: price("JARVIS_PRICE_ELEVENLABS_STT_MINUTE_USD"), elevenLabsCharacterUsd: price("JARVIS_PRICE_ELEVENLABS_TTS_CHARACTER_USD") };
   const objective = async (id: string, scope: string) => ObjectiveSchema.parse((await rpc("objectives", { method: "GET", path: `/v1/objectives/${id}?projectId=${encodeURIComponent(scope)}` })).body);
-  const reply = (id: string, text: string) => integrations.telegram?.enqueue({ id, ...context, kind: "reply", text, notBefore: new Date().toISOString(), question: null });
+  const conversations = createCloudConversationRuntime({ rpc, integrations: () => integrations, control, origin, projectId,
+    telegramDestination: env.JARVIS_TELEGRAM_OWNER_CHAT_ID ?? "", phoneDestination: env.JARVIS_OWNER_PHONE_NUMBER ?? "" });
   try {
     integrations = await IntegrationService.open({ dataDirectory, enabled: integrationEnabled, encryptionKey: env.JARVIS_INTEGRATION_KEY ? Buffer.from(env.JARVIS_INTEGRATION_KEY, "hex") : undefined,
       fetch: options.fetch, prices, ledger: { reserve: input => rpc("reserve", input), settle: (id, result) => rpc("settle", { id, ...result }) },
@@ -63,25 +88,13 @@ export async function createCloudApplication(options: { env?: NodeJS.ProcessEnv;
         return execute();
       } },
       hooks: {
-        async onStop() { await control.stopAll(); await rpc("stop"); },
-        async onTelegramMessage(message) {
-          const id = `telegram-${message.updateId}`;
-          if (!message.question) { reply(id, `Open Jarvis to choose an objective or reply to its current question. ${origin}/v1/cloud/review`); return; }
-          const current = await objective(message.question.objectiveId, projectId);
-          if (!current.question || current.question.id !== message.question.questionId || current.question.revision !== message.question.revision) { reply(id, "That question has changed. Open Jarvis for the current question."); return; }
-          await rpc("objectives", { method: "POST", path: `/v1/objectives/${current.id}/answer?projectId=${encodeURIComponent(current.projectId)}`,
-            body: { expectedRevision: current.revision, questionId: current.question.id, questionRevision: current.question.revision, answer: message.text } });
-          reply(id, "Your answer is attached to that objective. External actions still require secure review.");
-        },
+        async onStop() { await stopWork(false); },
+        onTelegramMessage: message => conversations.onTelegramMessage(message),
         async digest() { return `Your Jarvis status and pending reviews are ready: ${origin}/v1/cloud/review`; },
         authorizeDisclosure(input) { return control.authorizeDisclosure(input); },
         authorizeCallOutreach(input) { return control.authorizeDisclosure({ ...input, channel: "phone", proactive: true }); },
-        async onVerifiedCallTranscript(input) {
-          if (!control.authorizeDisclosure({ projectId: input.projectId, channel: "phone", destinationId: env.JARVIS_OWNER_PHONE_NUMBER ?? "", proactive: false })) return "Private phone discussion is not enabled for this project.";
-          if (!input.objectiveId) return "Open your secure review page to choose the work you want to discuss.";
-          const current = await objective(input.objectiveId, input.projectId);
-          return `The objective is ${current.status.replaceAll("_", " ")}. ${current.question ? "There is a question waiting in Jarvis. Reply to its bound Telegram message or use the workspace." : "Open the workspace to inspect its evidence and results."} External actions require the exact passkey review.`;
-        },
+        readObjective: ({ objectiveId, projectId }) => objective(objectiveId, projectId),
+        onVerifiedCallTranscript: input => conversations.onVerifiedCallTranscript(input),
       },
     });
   } catch (error) { await control.close(); throw error; }
@@ -93,16 +106,44 @@ export async function createCloudApplication(options: { env?: NodeJS.ProcessEnv;
   }
   const gateway = createCloudGateway(control, { async routeExtension(request, response, url) {
     const path = url.pathname, method = request.method ?? "GET";
+    const conversationRoute = /^\/v1\/cloud\/conversations(?:\/([A-Za-z0-9_-]+))?$/.exec(path);
+    if (conversationRoute && ["GET", "POST"].includes(method)) {
+      owner(request, true);
+      if (method === "POST" && conversationRoute[1]) throw new BridgeError("Invalid conversation route.", 404);
+      const input = method === "POST" ? z.strictObject({ title: z.string().max(120).optional(), projectId: z.string() }).parse(await body(request)) : { ...(conversationRoute[1] ? { id: conversationRoute[1] } : {}), ...(url.searchParams.has("projectId") ? { projectId: url.searchParams.get("projectId")! } : {}) };
+      json(response, method === "POST" ? 201 : 200, await rpc("conversations", { method, ...input })); return true;
+    }
+    const questionRoute = /^\/v1\/cloud\/tasks\/([A-Za-z0-9_-]+)\/respond$/.exec(path);
+    if (questionRoute && method === "POST") {
+      owner(request, true); const input = z.strictObject({ interactionId: z.string(), expectedRevision: z.number().int().positive(), optionId: z.string().max(100).optional(), text: z.string().min(1).max(4000).optional() }).parse(await body(request));
+      json(response, 200, await rpc("respond_question", { taskId: questionRoute[1], ...input })); return true;
+    }
+    const taskRoute = /^\/v1\/cloud\/tasks(?:\/([A-Za-z0-9_-]+))?$/.exec(path);
+    if (taskRoute && ["GET", "POST"].includes(method)) {
+      owner(request, true);
+      if (method === "GET" && !taskRoute[1] || method === "POST" && taskRoute[1]) throw new BridgeError("Invalid task route.", 404);
+      const input = method === "POST" ? z.strictObject({ message: z.string().min(1).max(16000), conversationId: z.string(), projectId: z.string() }).parse(await body(request)) : { id: taskRoute[1] };
+      const task = await rpc("tasks", { method, ...input });
+      if (task.status === "waiting") for (const approval of task.approvals ?? []) {
+        if (approval.kind !== "approval" || !approval.reviewable || !approval.options?.some((option: { id: string }) => option.id === "approve")) continue;
+        await control.createActionProposal({ projectId: task.projectId ?? (input as { projectId?: string }).projectId, deviceId: "cloud-runtime", ref: { taskId: task.id, interactionId: approval.id, revision: approval.revision, optionId: "approve" } }).catch(() => {});
+      }
+      json(response, method === "POST" ? 202 : 200, { ...task, remoteReviewUrl: `${origin}/v1/cloud/review` }); return true;
+    }
     if (path === "/v1/cloud/objectives" || path.startsWith("/v1/cloud/objectives/")) {
       owner(request, true); const result = await rpc("objectives", { method, path: path.replace("/v1/cloud/", "/v1/") + url.search, ...(method === "GET" ? {} : { body: await body(request) }) });
       json(response, result.status, result.body); return true;
     }
     if (path === "/v1/cloud/setup/status" && method === "GET") { owner(request, true); json(response, 200, { ...integrations.status(), runtime: await rpc("readiness") }); return true; }
     if (path.startsWith("/v1/cloud/setup/integrations/")) {
-      owner(request, true); json(response, 200, await integrations.setup(method, path.replace("/v1/cloud/setup/", "/v1/"), method === "GET" ? undefined : await body(request))); return true;
+      owner(request, true); json(response, 200, await integrations.setup(method, path.replace("/v1/cloud/setup/", "/v1/"), method === "GET" ? (url.searchParams.has("projectId") ? { projectId: url.searchParams.get("projectId") } : undefined) : await body(request))); return true;
     }
-    if (path === "/v1/cloud/stop" && method === "POST") { owner(request, true); await integrations.stop(); await control.stopAll(); await rpc("stop"); json(response, 200, { version: 1, stopped: true }); return true; }
-    if (path === "/v1/cloud/resume-outreach" && method === "POST") { const actor = owner(request); await control.resume(actor); integrations.resume(); json(response, 200, { version: 1, resumed: true }); return true; }
+    if (path === "/v1/cloud/stop" && method === "POST") { owner(request, true); await stopWork(); json(response, 200, { version: 1, stopped: true }); return true; }
+    if (path === "/v1/cloud/resume" && method === "POST") {
+      const actor = owner(request, true); await resumeWork(actor);
+      json(response, 200, { version: 1, resumed: true }); return true;
+    }
+    if (path === "/v1/cloud/resume-outreach" && method === "POST") { const actor = owner(request); await resumeWork(actor, true); json(response, 200, { version: 1, resumed: true }); return true; }
     return integrations.route(request, response, url);
   } });
   async function privateRoute(request: IncomingMessage, response: ServerResponse, url: URL) {
@@ -143,18 +184,31 @@ export async function createCloudApplication(options: { env?: NodeJS.ProcessEnv;
   async function notifyObjectives() {
     if (tickActive || !integrations.telegram?.paired() || integrations.status().stopped) return; tickActive = true;
     try {
+      await conversations.notifyPending();
       const after = integrations.readCursor<number>("objectives") ?? 0;
-      const result = await rpc("objectives", { method: "GET", path: `/v1/objectives/events?projectId=${encodeURIComponent(projectId)}&after=${after}` });
+      let result;
+      try { result = await rpc("objectives", { method: "GET", path: `/v1/objectives/events?projectId=${encodeURIComponent(projectId)}&after=${after}` }); }
+      catch (error) {
+        if (!(error instanceof BridgeError) || error.status !== 409) throw error;
+        const snapshot = await rpc("objectives", { method: "GET", path: `/v1/objectives?projectId=${encodeURIComponent(projectId)}` });
+        result = { body: { sequence: snapshot.body.sequence, events: snapshot.body.objectives.map((item: { id: string; projectId: string; revision: number; status: string; updatedAt: string }) => ({ objectiveId: item.id, projectId: item.projectId, revision: item.revision, status: item.status, at: item.updatedAt })) } };
+      }
       for (const event of result.body.events) {
         if (!["completed", "failed", "waiting_for_user", "waiting_for_device"].includes(event.status)) continue;
         const current = await objective(event.objectiveId, event.projectId);
+        const notificationId = `objective-${current.id}-${current.revision}`;
+        if (integrations.telegram!.outbox().some(item => item.id === notificationId)) continue;
         const allowed = control.authorizeDisclosure({ projectId: current.projectId, channel: "telegram", destinationId: env.JARVIS_TELEGRAM_OWNER_CHAT_ID ?? "", proactive: true });
         const question = current.question ? { objectiveId: current.id, questionId: current.question.id, revision: current.question.revision, expiresAt: current.question.expiresAt } : null;
-        integrations.telegram!.enqueue({ id: `objective-event-${event.sequence}`, projectId: current.projectId, objectiveId: current.id, kind: question ? "question" : "routine",
+        integrations.telegram!.enqueue({ id: notificationId, projectId: current.projectId, objectiveId: current.id, kind: question ? "question" : "routine",
           text: allowed ? `${current.title}: ${current.status.replaceAll("_", " ")}.${question ? ` ${current.question!.prompt}` : ""}\n${origin}/v1/cloud/review` : `Jarvis has ${question ? "a question" : "a status update"}. ${origin}/v1/cloud/review`,
-          question, notBefore: new Date().toISOString() });
+          question, disclosure: allowed ? "project_details" : "minimal", notBefore: current.updatedAt });
       }
       integrations.writeCursor("objectives", result.body.sequence);
+      if (integrations.twilio) {
+        const snapshot = await rpc("objectives", { method: "GET", path: `/v1/objectives?projectId=${encodeURIComponent(projectId)}` });
+        for (const candidate of snapshot.body.objectives) await integrations.considerObjectiveCall(candidate);
+      }
     } finally { tickActive = false; }
   }
   return { control, integrations, handler, upgrade(request: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) {

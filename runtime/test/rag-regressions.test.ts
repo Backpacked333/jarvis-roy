@@ -92,3 +92,12 @@ test("format-aware sections and relevant spans preserve exact evidence near a lo
   const selected = packet.selections[0]; assert(selected.text.includes("42 units")); assert(selected.span);
   assert.equal(text.slice(selected.span.start, selected.span.end), selected.text);
 });
+
+test("a synchronous local encoder failure cannot wedge the shared embedding queue", async () => {
+  let calls = 0;
+  const provider = sharedEmbeddingProvider({ identity: { id: "throw-fixture", version: "1", dimensions: 2, local: true }, embed() {
+    if (++calls === 1) throw new Error("fixture encoder unavailable"); return Promise.resolve([[1, 0]]);
+  } });
+  await assert.rejects(provider.embed(["first"], { purpose: "document" }), /unavailable/);
+  assert.deepEqual(await provider.embed(["second"], { purpose: "query" }), [[1, 0]]);
+});

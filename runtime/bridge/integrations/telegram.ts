@@ -1,6 +1,6 @@
 import { createHash, randomInt, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { NumericOwnerId, OutboxInputSchema, type IntegrationContext, type IntegrationHooks, type OutboxRecord, type QuestionBinding } from "./contracts.ts";
+import { NumericOwnerId, OutboxInputSchema, QuestionBindingSchema, type IntegrationContext, type IntegrationHooks, type OutboxRecord, type QuestionBinding } from "./contracts.ts";
 import { IntegrationTransport } from "./transport.ts";
 
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -87,7 +87,8 @@ export class TelegramIntegration {
           if (!stopHandled.has(update.update_id)) { this.stopOutbound(); await this.hooks.onStop(); }
           this.store.put("inbox", id, { id, status: "delivered", update }); continue;
         }
-        const binding = message.reply_to_message ? this.store.get<QuestionBinding>("question", String(message.reply_to_message.message_id)) : undefined;
+        const parsedBinding = QuestionBindingSchema.safeParse(message.reply_to_message ? this.store.get("question", String(message.reply_to_message.message_id)) : undefined);
+        const binding = parsedBinding.success ? parsedBinding.data : undefined;
         // A reply to an expired/unknown card never becomes an unbound generic answer.
         if (message.reply_to_message && (!binding || Date.parse(binding.expiresAt) <= this.transport.now().getTime())) { this.store.put("inbox", id, { id, status: "delivered", update }); continue; }
         this.store.put("inbox", id, { id, status: "dispatching", update });
@@ -106,6 +107,7 @@ export class TelegramIntegration {
       return existing;
     }
     if (input.kind === "question" && !input.question || input.kind !== "question" && input.question) throw new Error("Question notifications require their exact question binding");
+    if (input.question?.kind === "task" && input.question.projectId !== input.projectId) throw new Error("Task question belongs to another project");
     const record: OutboxRecord = { ...input, version: 1, status: "queued", createdAt: this.now(), sentAt: null, messageId: null };
     this.store.put("outbox", input.id, record); return record;
   }
@@ -115,7 +117,7 @@ export class TelegramIntegration {
     const slot = local.hour === 9 ? "09" : "18", id = `digest-${local.day}-${slot}`;
     if (this.store.get("outbox", id)) return;
     const text = await this.hooks.digest?.(slot, this.options.context);
-    if (text) this.enqueue({ id, ...this.options.context, kind: "digest", text, notBefore: this.now(), question: null });
+    if (text) this.enqueue({ id, ...this.options.context, kind: "digest", disclosure: "project_details", text, notBefore: this.now(), question: null });
   }
   async flushOnce(signal?: AbortSignal): Promise<{ sent: number }> {
     if (this.flushing || this.stopped() || !this.paired()) return { sent: 0 }; this.flushing = true;
@@ -127,13 +129,17 @@ export class TelegramIntegration {
         const local = this.local(this.now()), routine = item.kind !== "reply";
         if (routine && (local.hour >= 22 || local.hour < 8)) continue;
         if (routine && this.store.list<OutboxRecord>("outbox").filter(record => record.kind !== "reply" && record.sentAt && this.local(record.sentAt).day === local.day && ["sending", "sent", "unknown"].includes(record.status)).length >= 4) continue;
-        if (this.hooks.authorizeDisclosure?.({ projectId: item.projectId, channel: "telegram", destinationId: this.options.ownerChatId, proactive: routine }) !== true) continue;
+        const disclosureAllowed = () => item.disclosure === "minimal" || this.hooks.authorizeDisclosure?.({ projectId: item.projectId, channel: "telegram", destinationId: this.options.ownerChatId, proactive: routine }) === true;
+        if (!disclosureAllowed()) { this.store.put("outbox", item.id, { ...item, status: "cancelled" }); continue; }
         if (item.question && Date.parse(item.question.expiresAt) <= this.transport.now().getTime()) { this.store.put("outbox", item.id, { ...item, status: "cancelled" }); continue; }
         let dispatched = false;
         try {
           const result = await this.transport.request(this.api("sendMessage"), { method: "POST", headers: { "content-type": "application/json" },
             body: JSON.stringify({ chat_id: this.options.ownerChatId, text: item.text, ...(item.question ? { reply_markup: { force_reply: true, selective: true } } : {}) }) }, item, "telegramRequestUsd", signal,
-            () => { if (this.stopped() || this.hooks.authorizeDisclosure?.({ projectId: item.projectId, channel: "telegram", destinationId: this.options.ownerChatId, proactive: routine }) !== true) throw new Error("Outbound messages stopped or disclosure grant changed"); this.store.put("outbox", item.id, { ...item, status: "sending", sentAt: this.now() }); dispatched = true; });
+            () => {
+              if (this.stopped() || !disclosureAllowed()) { this.store.put("outbox", item.id, { ...item, status: "cancelled" }); throw new Error("Outbound messages stopped or disclosure grant changed"); }
+              this.store.put("outbox", item.id, { ...item, status: "sending", sentAt: this.now() }); dispatched = true;
+            });
           const receipt = z.object({ ok: z.literal(true), result: z.object({ message_id: z.number().int().positive(), chat: z.object({ id: z.number().int().safe() }) }) }).parse(result);
           if (String(receipt.result.chat.id) !== this.options.ownerChatId) throw new Error("Telegram receipt belongs to another chat");
           this.store.transaction(() => {

@@ -2,6 +2,22 @@ import XCTest
 @testable import Jarvis
 
 final class DailyExperienceTests: XCTestCase {
+    func testPublicResearchQueryRequiresSeparateConsentAndNeverUsesPrivateGoal() {
+        var selection = ObjectiveEvidenceSelection()
+        selection.publicQuery = "public scholarly terms"
+        XCTAssertFalse(selection.valid)
+        XCTAssertNil(selection.parameters["publicQuery"])
+        selection.sourceIDs = ["source-two", "source-one"]
+        XCTAssertEqual(selection.parameters["sourceVersionIds"] as? [String], ["source-one", "source-two"])
+        selection.publicSearchAllowed = true
+        XCTAssertTrue(selection.valid)
+        XCTAssertEqual(selection.parameters["publicQuery"] as? String, "public scholarly terms")
+        XCTAssertEqual(selection.parameters["providers"] as? [String], ["arxiv", "crossref"])
+        XCTAssertNil(selection.parameters["goal"])
+        selection.publicQuery = String(repeating: "x", count: 401)
+        XCTAssertFalse(selection.valid)
+        XCTAssertNil(selection.parameters["publicQuery"])
+    }
     private func presentation(_ id: String, revision: Int) throws -> AssistantPresentation {
         let object: [String: Any] = ["version": 1, "id": id, "sessionId": "session-a", "turnId": "turn-a", "revision": revision,
             "title": "Evidence", "capturedFocus": ["kind": "conversation", "conversationId": "project-a", "roomId": NSNull()],
@@ -110,6 +126,39 @@ final class DailyExperienceTests: XCTestCase {
         XCTAssertNil(set.pins[0].revision)
         let encoded = try set.pins[0].assistantJSONObject()
         XCTAssertNil(encoded["revision"])
+    }
+    @MainActor
+    func testStopSpeakingDoesNotDiscardIndependentDictationCapture() async {
+        let transport = FixtureVoiceTransport()
+        let voice = VoiceController(audioInputAvailable: { true }, audioOutputAvailable: { true }, transport: transport, microphonePermission: { true })
+        defer { voice.stopListening() }
+        voice.captureMode = .dictation; voice.setCloudConsent(true)
+        await voice.startListening()
+        let context = voice.capturedContext
+        voice.stopSpeaking()
+        XCTAssertTrue(voice.dictationActive)
+        XCTAssertEqual(voice.capturedContext, context)
+        voice.speak("Background update", context: .init())
+        XCTAssertTrue(voice.dictationActive)
+        XCTAssertFalse(transport.frames.contains { $0.type == "speak" })
+    }
+    @MainActor
+    func testContinuousTurnsReuseProviderPreflightButMuteRequiresFreshCheck() async {
+        let transport = FixtureVoiceTransport()
+        let voice = VoiceController(audioInputAvailable: { true }, audioOutputAvailable: { true }, transport: transport, microphonePermission: { true }, now: { 10 })
+        defer { voice.stopListening() }
+        voice.continuousConnectionEnabled = true; voice.setCloudConsent(true)
+        await voice.startListening()
+        let first = transport.frames.last
+        await voice.startListening()
+        let second = transport.frames.last
+        XCTAssertEqual(transport.statusCalls, 1)
+        XCTAssertEqual(first?.sessionId, second?.sessionId)
+        XCTAssertGreaterThan(second?.generation ?? 0, first?.generation ?? 0)
+        voice.stopListening()
+        await voice.startListening()
+        XCTAssertEqual(transport.statusCalls, 2)
+        XCTAssertNotEqual(transport.frames.last?.sessionId, second?.sessionId)
     }
     @MainActor
     func testConfirmationCaptureNeverStartsExtendedDictation() async {

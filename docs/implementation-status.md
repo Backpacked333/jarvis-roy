@@ -5,6 +5,17 @@ voice-first research and action plan. The app remains a **source-build preview**
 New Assistant, Knowledge, Personal Memory, Semantic Retrieval, Research and Voice Approval flags default off. No stage is
 declared released solely because its automated tests pass.
 
+## Persistent partner update
+
+The [persistent partner guide](persistent-partner.md) describes objectives,
+continuity, background retrieval, private cloud pairing, owner integrations,
+remote passkey review and recovery. The [deployment package](../deploy/README.md)
+is prepared for an operator-provided VM; no host or live accounts were configured
+in this workspace. New cloud, objectives and integration flags remain opt-in.
+The [baseline record](../evaluations/persistent-partner-baseline.json) supersedes
+older automated-count summaries below for the previous implementation. Physical
+Mac interaction, real research quality and the seven-day pilot remain unrun.
+
 ## What is implemented
 
 | Stage | Source implementation | Remaining release evidence |
@@ -35,10 +46,13 @@ values take precedence. See the [main setup instructions](../README.md#reproduci
 | Voice-first assistant / `JARVIS_ENABLE_ASSISTANT` | Off. Enables coordinated sessions and the adaptive workspace. |
 | Project knowledge / `JARVIS_ENABLE_KNOWLEDGE` | Off. Enables imports and scoped grants. Room history also needs the Assistant workspace. |
 | Personal memory / `JARVIS_ENABLE_MEMORY` | Off. Enables reviewed structured memory, personal/project scopes and bounded per-turn recall. |
-| Local semantic retrieval / `JARVIS_ENABLE_SEMANTIC_RETRIEVAL` | Off. Adds on-device Apple embeddings to source and memory search, with explicit lexical fallback. |
+| Local semantic retrieval / `JARVIS_ENABLE_SEMANTIC_RETRIEVAL` | Off. Apple embeddings locally; provisioned pinned multilingual E5 CPU embeddings on Linux. Explicit lexical fallback and separate model identities. |
 | Deep research / `JARVIS_ENABLE_RESEARCH` | Off. Enables bounded research runs; also requires Knowledge. |
 | Voice confirmation / `JARVIS_ENABLE_VOICE_APPROVAL` | Off. Also requires the Assistant and session cloud-voice consent. |
 | Desktop, Apple services, terminal | Separately off. These switches do not grant macOS permissions or approve actions. |
+| Persistent objectives / `JARVIS_ENABLE_OBJECTIVES` | Off. Durable bounded research/accepted-room child runs, checkpoints, questions and shared admission ledger. |
+| Cloud pairing / `JARVIS_ENABLE_CLOUD` | Off. Dedicated device credentials, separate cloud profile and exact remote review. |
+| Cloud integrations / `JARVIS_ENABLE_INTEGRATIONS` | Off. Google, Telegram and Phone each require separate flags, setup and scope. |
 | Daily briefing | Off. One chosen project and local time; runs when Jarvis is active, awake and unlocked. |
 
 ## Evidence and disclosure

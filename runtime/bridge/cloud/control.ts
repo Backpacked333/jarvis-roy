@@ -249,6 +249,9 @@ export class CloudControlPlane {
       if (!current) throw new BridgeError("Exact pending action is unavailable.", 409);
       const action = ReviewableActionSchema.parse(current), digest = actionDigest(action);
       if (canonicalJson(input.ref) !== canonicalJson({ taskId: action.taskId, interactionId: action.interactionId, revision: action.revision, optionId: action.optionId })) throw new BridgeError("Pending action reference changed.", 409);
+      const pending = state.proposals.find(proposal => proposal.deviceId === input.deviceId && proposal.digest === digest && proposal.status === "pending" &&
+        proposal.deviceGeneration === device.generation && proposal.serverEpoch === state.serverEpoch && Date.parse(proposal.expiresAt) > this.now());
+      if (pending) return pending;
       if (state.proposals.some(proposal => proposal.deviceId === input.deviceId && proposal.digest === digest && ["executing", "completed", "unknown"].includes(proposal.status))) throw new BridgeError("This exact action was already submitted; inspect its existing outcome.", 409);
       if (containsCredentialLikeData(action.exactArguments) || containsCredentialLikeData(action.reviewText)) throw new BridgeError("Credential-bearing actions require local review.", 403);
       const proposal: RemoteActionProposal = { version: 1, id: randomUUID(), projectId: input.projectId, deviceId: input.deviceId,

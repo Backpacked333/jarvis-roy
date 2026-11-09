@@ -157,8 +157,10 @@ export class LocalKnowledgeRetrieval {
     const sources = this.sourceMap(input.projectId, input.purpose, input.includeArchived);
     const lexical = this.lexical(input, sources), candidates = new Map(lexical.map(match => [match.passage.id, match]));
     let scannedVectors = 0, vectorScanLimited = false;
+    let vectorEngine: "sqlite_vec_exact" | "bounded_javascript" = "bounded_javascript";
     if (queryVector) {
       const native = this.dependencies.nativeVectors() && this.coverage(sources).indexedPassages <= 100_000;
+      if (native) vectorEngine = "sqlite_vec_exact";
       const rows = native ? this.dependencies.db().prepare(`SELECT p.record,e.vector,e.text_hash,
         CASE WHEN length(e.vector)=? THEN vec_distance_cosine(e.vector,?) ELSE NULL END AS distance
         FROM passage_embeddings e JOIN passages p ON p.id=e.passage_id
@@ -212,7 +214,7 @@ export class LocalKnowledgeRetrieval {
     this.dependencies.audit(input.projectId, "context_retrieval", input.purpose);
     return { version: 1 as const, matches, contentTrust: "untrusted" as const,
       retrieval: { mode: queryVector ? "hybrid" as const : "lexical" as const, terms, vectorStatus, provider: this.identity,
-        vectorEngine: this.dependencies.nativeVectors() ? "sqlite_vec_exact" as const : "bounded_javascript" as const,
+        vectorEngine,
         coverage: { ...coverage, scannedVectors, vectorScanLimited, sourceScanLimited }, diversity: { maxPerSource: input.maxPerSource }, warnings: [...new Set(warnings)] } };
   }
 }

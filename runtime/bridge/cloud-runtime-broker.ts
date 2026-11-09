@@ -7,15 +7,52 @@ import type { AssistantAdapters } from "./assistant/coordinator.ts";
 import { ActionRefSchema } from "./assistant/contracts.ts";
 import type { NativeCloudRuntime } from "./native-cloud-runtime.ts";
 
-const Input = z.strictObject({ version: z.literal(1), operation: z.enum(["objectives", "reserve", "settle", "stop", "read_action", "bind_executor", "execute_action", "checkpoint", "readiness"]), payload: z.unknown() });
+const Input = z.strictObject({ version: z.literal(1), operation: z.enum(["objectives", "reserve", "settle", "stop", "read_action", "bind_executor", "execute_action", "checkpoint", "readiness", "conversations", "tasks", "respond_question", "resume"]), payload: z.unknown() });
 export type CloudRuntimeBroker = (input: unknown) => Promise<unknown>;
 export function createCloudRuntimeBroker(options: {
   objectives: ObjectiveRuntime; continuity: ContinuityService; service: JarvisService;
-  authority: Required<Pick<AssistantAdapters, "readAction" | "executeAction">>; nativeCloud?: NativeCloudRuntime;
+  authority: Required<Pick<AssistantAdapters, "readAction" | "executeAction">>; nativeCloud?: NativeCloudRuntime; cloudConversationReady?: () => boolean; resumeWork?: () => Promise<void>;
 }): CloudRuntimeBroker {
   return async raw => {
     const { operation, payload } = Input.parse(raw);
+    if (operation === "resume") { z.strictObject({}).parse(payload); if (!options.resumeWork) throw new BridgeError("Cloud resume is unavailable.", 503); await options.resumeWork(); return { version: 1, resumed: true }; }
     if (operation === "readiness") return { version: 1, profile: "cloud", objectives: options.objectives.service.readiness() };
+    if (operation === "conversations") {
+      const input = z.strictObject({ method: z.enum(["GET", "POST"]), id: z.string().optional(), projectId: z.string().optional(), title: z.string().max(120).optional() }).parse(payload);
+      if (input.method === "POST") {
+        if (!options.cloudConversationReady?.()) throw new BridgeError("Budgeted cloud conversation is unavailable.", 503);
+        if (!input.projectId) throw new BridgeError("Choose an explicit cloud project.", 400);
+        return options.service.createConversation(input.title, input.projectId);
+      }
+      const conversations = options.service.conversationSnapshot(input.projectId);
+      if (!input.id) return { version: 1, conversations };
+      const conversation = conversations.find(item => item.id === input.id);
+      if (!conversation) throw new BridgeError("Cloud conversation not found.", 404);
+      return conversation;
+    }
+    if (operation === "respond_question") {
+      if (!options.cloudConversationReady?.()) throw new BridgeError("Budgeted cloud conversation is unavailable.", 503);
+      const input = z.strictObject({ taskId: z.string(), interactionId: z.string(), expectedRevision: z.number().int().positive(), optionId: z.string().max(100).optional(), text: z.string().min(1).max(4000).optional() })
+        .refine(value => (value.optionId !== undefined) !== (value.text !== undefined), "Choose one response channel").parse(payload);
+      const task = options.service.taskSnapshot().find(task => task.id === input.taskId);
+      const card = task?.questions?.find(card => card.id === input.interactionId && card.revision === input.expectedRevision);
+      if (!card || card.kind !== "question") throw new BridgeError("Only the current clarification question can accept this response.", 403);
+      return options.service.respond(input.taskId, input.interactionId, input.optionId ?? "", input.expectedRevision, input.text);
+    }
+    if (operation === "tasks") {
+      const input = z.discriminatedUnion("method", [
+        z.strictObject({ method: z.literal("GET"), id: z.string() }),
+        z.strictObject({ method: z.literal("POST"), message: z.string().min(1).max(16000), conversationId: z.string(), projectId: z.string() }),
+      ]).parse(payload);
+      if (input.method === "POST") {
+        if (!options.cloudConversationReady?.()) throw new BridgeError("Budgeted cloud conversation is unavailable.", 503);
+        if (options.service.conversationProject(input.conversationId) !== input.projectId) throw new BridgeError("Cloud conversation project changed.", 403);
+        return options.service.createTask(input.message, input.conversationId, input.projectId);
+      }
+      const task = options.service.taskSnapshot().find(task => task.id === input.id);
+      if (!task) throw new BridgeError("Cloud task not found.", 404);
+      return { ...task, projectId: options.service.projectForTask(task.id) };
+    }
     if (operation === "objectives") {
       const input = z.strictObject({ method: z.enum(["GET", "POST", "PATCH"]), path: z.string().max(2048), body: z.unknown().optional() }).parse(payload);
       const url = new URL(input.path, "http://127.0.0.1");

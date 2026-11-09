@@ -4,6 +4,7 @@ import { CallSid, ContextSchema, IntegrationId, PhoneNumber, type CallProof, typ
 import { IntegrationTransport } from "./transport.ts";
 import { muLaw8kToPcm16k, pcmToMuLaw8k } from "./audio.ts";
 import type { TelephonySpeechAdapter, TelephonySpeechSession } from "./speech.ts";
+import type { ReadyCallRequest } from "./outreach.ts";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const equal = (a: string, b: string) => Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -36,15 +37,23 @@ export class TwilioIntegration {
     this.store.put("twilio", "owner", { accountSid: this.options.accountSid, number: this.options.ownerNumber, verifiedAt: this.transport.now().toISOString() });
   }
   async startPriorityCall(raw: unknown, signal?: AbortSignal): Promise<CallRecord> {
+    return this.startCall(PriorityCallSchema.parse(raw), "blocking_deadline", signal);
+  }
+  async startReadyCall(request: ReadyCallRequest, signal?: AbortSignal): Promise<CallRecord> {
+    const durable = this.store.get<ReadyCallRequest>("ready_call", IntegrationId.parse(request.id));
+    if (!durable || durable.status !== "consumed" || durable.definitionDigest !== request.definitionDigest || durable.projectId !== request.projectId || durable.objectiveId !== request.objectiveId || Date.parse(durable.expiresAt) <= this.transport.now().getTime()) throw new Error("Fresh owner-bound ready-call request required");
+    return this.startCall({ id: `ready-${request.id}`, issueId: `ready-${hash(`${request.projectId}:${request.objectiveId}:${request.definitionDigest}`)}`, projectId: request.projectId, objectiveId: request.objectiveId, deadlineAt: request.expiresAt }, "call_when_ready", signal);
+  }
+  private async startCall(input: { id: string; issueId: string; projectId: string; objectiveId: string | null; deadlineAt: string; unansweredSince?: string }, category: "blocking_deadline" | "call_when_ready", signal?: AbortSignal): Promise<CallRecord> {
     if (this.store.get<{ stopped: boolean }>("twilio", "control")?.stopped) throw new Error("Calling is stopped");
-    const input = PriorityCallSchema.parse(raw), previous = this.store.get<CallRecord>("call", input.id);
+    const previous = this.store.get<CallRecord>("call", input.id);
     if (previous) { if (previous.issueId !== input.issueId || previous.projectId !== input.projectId) throw new Error("Call request identity changed"); return previous; }
     if (this.initiating) throw new Error("A call is already being initiated");
     const owner = this.store.get<{ accountSid: string; number: string }>("twilio", "owner");
     if (owner?.number !== this.options.ownerNumber || owner.accountSid !== this.options.accountSid || !this.speech) throw new Error("Verified owner number and shared speech adapter required");
-    if (this.hooks.authorizeCallOutreach?.({ projectId: input.projectId, destinationId: this.options.ownerNumber }) !== true) throw new Error("Owner phone outreach permission required");
+    if (this.hooks.authorizeCallOutreach?.({ projectId: input.projectId, destinationId: this.options.ownerNumber, category }) !== true) throw new Error("Owner phone outreach permission required");
     const now = this.transport.now(), remaining = Date.parse(input.deadlineAt) - now.getTime();
-    if (remaining <= 0 || remaining > 3_600_000 || now.getTime() - Date.parse(input.unansweredSince) < 600_000) throw new Error("Priority calls require a blocked deadline within 60 minutes and an unanswered question for 10 minutes");
+    if (category === "blocking_deadline" && (remaining <= 0 || remaining > 3_600_000 || !input.unansweredSince || now.getTime() - Date.parse(input.unansweredSince) < 600_000)) throw new Error("Priority calls require a blocked deadline within 60 minutes and an unanswered question for 10 minutes");
     const recent = this.store.list<CallRecord>("call").filter(call => this.day(call.createdAt) === this.day(now.toISOString()));
     if (recent.length >= 2 || recent.some(call => call.issueId === input.issueId) || recent.some(call => now.getTime() - Date.parse(call.createdAt) < 300_000)) throw new Error("Daily call, one-issue, or five-minute spacing limit reached");
     const estimatedUsd = this.transport.price("twilioMinuteUsd") * 5 + this.transport.price("elevenLabsMinuteUsd") * 5 + this.transport.price("elevenLabsCharacterUsd") * 10_000;
@@ -65,7 +74,7 @@ export class TwilioIntegration {
           method: "POST", headers: { authorization: this.auth(), "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ To: this.options.ownerNumber, From: this.options.fromNumber,
             Url: callback.href, Method: "POST", StatusCallback: status.href, StatusCallbackMethod: "POST", "StatusCallbackEvent": "completed", TimeLimit: "300", Timeout: "30", Record: "false" }).toString(),
         }, input, "twilioRequestUsd", signal, () => {
-          if (this.store.get<{ stopped: boolean }>("twilio", "control")?.stopped || this.hooks.authorizeCallOutreach?.({ projectId: input.projectId, destinationId: this.options.ownerNumber }) !== true) throw new Error("Calling stopped or owner phone outreach permission changed"); dispatched = true;
+          if (this.store.get<{ stopped: boolean }>("twilio", "control")?.stopped || this.hooks.authorizeCallOutreach?.({ projectId: input.projectId, destinationId: this.options.ownerNumber, category }) !== true) throw new Error("Calling stopped or owner phone outreach permission changed"); dispatched = true;
         }));
         if (receipt.to !== this.options.ownerNumber || receipt.from !== this.options.fromNumber) throw new Error("Twilio returned an unexpected phone identity");
         const current = this.store.get<CallRecord>("call", input.id)!;
@@ -130,6 +139,12 @@ export class TwilioIntegration {
     return this.readCall(callSid) && call?.verifiedUntil && Date.parse(call.verifiedUntil) > this.transport.now().getTime() &&
       this.hooks.authorizeDisclosure?.({ projectId: call.projectId, channel: "phone", destinationId: this.options.ownerNumber, proactive: false }) === true ? call : null;
   }
+  currentVerifiedCall(callSid: string): { callSid: string; projectId: string; status: "ringing" | "in_progress" } | null {
+    try {
+      const call = this.verified(callSid);
+      return call && (call.status === "ringing" || call.status === "in_progress") ? { callSid, projectId: call.projectId, status: call.status } : null;
+    } catch { return null; }
+  }
   openMediaConnection(url: string, signature: string | undefined, send: (frame: unknown) => void): { receive(raw: string): Promise<void>; close(): void } {
     if (!this.verifyWebhook(url, {}, signature)) throw new Error("Authenticated Twilio WebSocket upgrade required");
     let callSid: string | null = null, streamSid: string | null = null, sequence = 0, speech: TelephonySpeechSession | undefined, opening: Promise<void> | undefined, output = Buffer.alloc(0);
@@ -193,7 +208,7 @@ export class TwilioIntegration {
   resume(): void { this.store.put("twilio", "control", { stopped: false }); }
   async cancelCalls(signal?: AbortSignal): Promise<void> {
     this.stop();
-    const results = await Promise.allSettled(this.store.list<CallRecord>("call").filter(call => call.callSid && ["ringing", "in_progress"].includes(call.status)).map(async call => {
+    const results = await Promise.allSettled(this.store.list<CallRecord>("call").filter(call => call.callSid && ["ringing", "in_progress", "unknown"].includes(call.status)).map(async call => {
       const result = z.object({ sid: CallSid, status: z.literal("completed") }).parse(await this.transport.request(this.endpoint(`Calls/${call.callSid}.json`), {
         method: "POST", headers: { authorization: this.auth(), "content-type": "application/x-www-form-urlencoded" }, body: "Status=completed",
       }, call, "twilioRequestUsd", signal));

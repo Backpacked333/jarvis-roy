@@ -50,7 +50,7 @@ export const ObjectiveSchema = z.strictObject({
   version: z.literal(1), id: ObjectiveId, requestId: ObjectiveId, projectId: ObjectiveId,
   title: z.string().trim().min(1).max(240), goal: z.string().trim().min(1).max(16_000),
   revision: z.number().int().positive(), status: ObjectiveStatusSchema,
-  cancelRequested: z.boolean(),
+  cancelRequested: z.boolean(), pauseRequested: z.boolean().optional(),
   createdAt: date, updatedAt: date, deadlineAt: date, wakeAt: date.nullable(),
   steps: z.array(ObjectiveStepSchema).max(32), attempts: z.array(ObjectiveAttemptSchema).max(128),
   checkpoint: WorkCheckpointSchema.nullable(), question: ObjectiveQuestionSchema.nullable(),
@@ -71,7 +71,7 @@ export const ReviseObjectiveSchema = ObjectiveRevisionSchema.extend({
   steps: z.array(ObjectiveStepSchema).max(32).optional(), deadlineAt: date.optional(), wakeAt: date.nullable().optional(),
 });
 export const AnswerObjectiveSchema = ObjectiveRevisionSchema.extend({
-  questionId: ObjectiveId, questionRevision: z.number().int().positive(), answer: z.string().trim().min(1).max(4_000),
+  questionId: ObjectiveId, questionRevision: z.number().int().positive(), questionPrompt: z.string().max(4_000).optional(), answer: z.string().trim().min(1).max(4_000),
 });
 export const ObjectiveEventSchema = z.strictObject({
   version: z.literal(1), sequence: z.number().int().positive(), at: date,
@@ -88,17 +88,17 @@ export type BudgetReservation = z.infer<typeof BudgetReservationSchema>;
 export const ReserveBudgetSchema = z.strictObject({ requestId: ObjectiveId, objectiveId: ObjectiveId.nullable().default(null),
   projectId: ObjectiveId, authority: z.string().min(1).max(80), estimatedUsd: usd.refine(value => value <= 5) });
 export const ObjectiveSnapshotSchema = z.strictObject({
-  version: z.literal(1), sequence: z.number().int().nonnegative(),
+  version: z.literal(1), sequence: z.number().int().nonnegative(), schedulerStopped: z.boolean().default(false),
   objectives: z.array(ObjectiveSchema).max(500), events: z.array(ObjectiveEventSchema).max(1_000),
   reservations: z.array(BudgetReservationSchema).max(10_000),
   requests: z.array(z.strictObject({ key: z.string().max(300), digest: z.string().regex(/^[a-f0-9]{64}$/), objectiveId: ObjectiveId })).max(5_000),
   inbox: z.array(z.strictObject({ id: ObjectiveId, objectiveId: ObjectiveId, questionId: ObjectiveId,
-    questionRevision: z.number().int().positive(), answer: z.string().max(4_000), at: date })).max(5_000),
+    questionRevision: z.number().int().positive(), questionPrompt: z.string().max(4_000).optional(), answer: z.string().max(4_000), at: date })).max(5_000),
 });
 export type ObjectiveSnapshot = z.infer<typeof ObjectiveSnapshotSchema>;
 export interface ObjectiveDispatch {
   objectiveId: string; projectId: string; attemptId: string; step: ObjectiveStep;
-  checkpoint: WorkCheckpoint | null; answers: ObjectiveSnapshot["inbox"];
+  checkpoint: WorkCheckpoint | null; answers: ObjectiveSnapshot["inbox"]; predecessors?: ChildRunRef[];
 }
 /** Adapters delegate to existing execution authorities. Dispatch receives a
  * durable unique attempt ID and must bind receipts to that exact operation. */

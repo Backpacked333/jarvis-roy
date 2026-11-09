@@ -3,12 +3,14 @@ import { createHmac, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:http";
+import { WebSocketServer } from "ws";
 import test from "node:test";
 import {
-  IntegrationService, muLaw8kToPcm16k, pcmToMuLaw8k,
+  IntegrationService, ExistingVoiceSpeechAdapter, muLaw8kToPcm16k, pcmToMuLaw8k,
   type GoogleChange, type InboundTelegram, type IntegrationOptions, type TelephonySpeechAdapter,
 } from "../bridge/integrations/index.ts";
-import { ReserveBudgetSchema } from "../bridge/objectives/contracts.ts";
+import { ReserveBudgetSchema, type Objective } from "../bridge/objectives/contracts.ts";
 
 const owner = "123456789", callSid = `CA${"a".repeat(32)}`, accountSid = `AC${"b".repeat(32)}`, streamSid = `MZ${"c".repeat(32)}`;
 const context = { projectId: "project-1", objectiveId: null };
@@ -56,6 +58,7 @@ async function fixture(overrides: Partial<IntegrationOptions> = {}) {
   }
   const sign = (url: string, parameters: Record<string, string>) => createHmac("sha1", "fixture-twilio-token").update(url + Object.keys(parameters).sort().map(key => key + parameters[key]).join("")).digest("base64");
   return { directory, options, get service() { return service; }, requests, messages, changes, updates, reservations, settlements, pcm,
+    enableCalls() { return service.updateOutreachPolicy({ projectId: context.projectId, expectedRevision: service.readOutreachPolicy(context.projectId).revision, enabled: true, timeZone: "UTC", timezoneConfirmed: true, categories: ["blocking_deadline", "call_when_ready"] }); },
     get speechOptions() { return speechOptions; }, stops: () => stops, update, pair, connect, sign,
     setHandler(value: typeof handler) { handler = value; }, setTime(value: string) { clock = Date.parse(value); }, advance(ms: number) { clock += ms; },
     now: () => new Date(clock).toISOString(),
@@ -74,10 +77,23 @@ test("Telegram pairs one numeric private owner, binds exact reply cards, persist
     f.service.telegram!.enqueue({ id: "question-out", ...context, kind: "question", text: "Which scope?", notBefore: f.now(), question });
     assert.equal((await f.service.telegram!.flushOnce()).sent, 1);
     f.updates.push([f.update(3, "Project one", owner, 101), f.update(4, "yes", owner, 999)]);
-    await f.service.telegram!.pollOnce(); assert.deepEqual(f.messages[0].question, question); assert.equal(f.messages.length, 1);
+    await f.service.telegram!.pollOnce(); assert.deepEqual(f.messages[0].question, { kind: "objective", ...question }); assert.equal(f.messages.length, 1);
     await f.restart(); f.updates.push([f.update(3, "Project one", owner, 101), f.update(5, "/stop")]);
     await f.service.telegram!.pollOnce(); assert.equal(f.messages.length, 1); assert.equal(f.stops(), 1); assert.equal(f.service.status().stopped, true);
     assert.equal((f.requests.filter(request => request.url.pathname.endsWith("getUpdates")).at(-1)!.init.body as string).includes('"offset":5'), true);
+  } finally { await f.cleanup(); }
+});
+
+test("Telegram task-question replies retain exact task/project/card revision and cannot authorize an effect", async () => {
+  let approvals = 0;
+  const f = await fixture({ approvalAuthority: { async run(_effect, execute) { approvals++; return execute(); } } });
+  try {
+    await f.pair();
+    const question = { kind: "task", taskId: "task-1", projectId: "project-1", questionId: "question-1", revision: 4, expiresAt: "2026-11-09T10:00:00.000Z" };
+    f.service.telegram!.enqueue({ id: "task-question", ...context, kind: "question", text: "Which source should I read?", disclosure: "project_details", notBefore: f.now(), question });
+    await f.service.telegram!.flushOnce(); f.updates.push([f.update(2, "yes, approve all", owner, 101)]); await f.service.telegram!.pollOnce();
+    assert.deepEqual(f.messages[0].question, question); assert.equal(f.messages[0].text, "yes, approve all"); assert.equal(approvals, 0);
+    assert.throws(() => f.service.telegram!.enqueue({ id: "forged-approval", ...context, kind: "question", text: "Approve?", notBefore: f.now(), question: { ...question, kind: "approval", optionId: "approve" } }));
   } finally { await f.cleanup(); }
 });
 
@@ -106,6 +122,19 @@ test("uncertain Telegram delivery survives restart without automatic replay; unk
   const noPrice = await fixture({ prices: {} });
   try { await assert.rejects(noPrice.service.telegram!.pollOnce(), /Explicit provider price/); assert.equal(noPrice.requests.length, 0); }
   finally { await noPrice.cleanup(); }
+});
+
+test("Telegram project disclosure revoked during budget reservation cancels the durable message before send", async () => {
+  let allowed = true, revoke = false;
+  const f = await fixture({
+    hooks: { async onStop() {}, authorizeDisclosure: () => allowed },
+    ledger: { reserve(input) { ReserveBudgetSchema.parse(input); if (revoke) allowed = false; return { id: randomUUID() }; }, settle() {} },
+  });
+  try {
+    await f.pair(); f.service.telegram!.enqueue({ id: "private-out", ...context, kind: "routine", text: "Private project result", disclosure: "project_details", notBefore: f.now() });
+    revoke = true; await assert.rejects(f.service.telegram!.flushOnce(), /disclosure grant changed/);
+    assert.equal(f.service.telegram!.outbox()[0].status, "cancelled"); assert.equal(f.requests.some(request => request.url.pathname.endsWith("/sendMessage")), false);
+  } finally { await f.cleanup(); }
 });
 
 test("Google PKCE is single-use, read and write consent are separate, tokens are encrypted at rest", async () => {
@@ -204,7 +233,7 @@ test("Twilio priority calls require verified fixed owner, deadline policy, confi
   try {
     const input = { ...context, id: "call-1", issueId: "issue-1", blocked: true, unansweredSince: "2026-11-09T08:40:00.000Z", deadlineAt: "2026-11-09T09:30:00.000Z" };
     await assert.rejects(f.service.twilio!.startPriorityCall(input), /Verified owner/);
-    await f.service.twilio!.verifyOwnerNumber(context);
+    await f.service.twilio!.verifyOwnerNumber(context); f.enableCalls();
     await assert.rejects(f.service.twilio!.startPriorityCall({ ...input, unansweredSince: "2026-11-09T08:59:00.000Z" }), /10 minutes/);
     const call = await f.service.twilio!.startPriorityCall(input); assert.equal(call.callSid, callSid);
     assert.equal((await f.service.twilio!.startPriorityCall(input)).callSid, callSid);
@@ -221,7 +250,7 @@ test("Twilio priority calls require verified fixed owner, deadline policy, confi
 test("Twilio media stays generic until live call-bound passkey proof, converts audio and invalidates expired proof", async () => {
   const f = await fixture();
   try {
-    await f.service.twilio!.verifyOwnerNumber(context);
+    await f.service.twilio!.verifyOwnerNumber(context); f.enableCalls();
     await f.service.twilio!.startPriorityCall({ ...context, id: "media-call", issueId: "issue-1", blocked: true, unansweredSince: "2026-11-09T08:40:00.000Z", deadlineAt: "2026-11-09T09:30:00.000Z" });
     const url = "https://jarvis.example/v1/cloud/integrations/twilio/voice?id=media-call", parameters = { CallSid: callSid, AccountSid: accountSid, To: "+15550002222", From: "+15550001111" };
     const twiml = f.service.twilio!.voiceWebhook(url, parameters, f.sign(url, parameters)); const token = /name="token" value="([^"]+)"/.exec(twiml)![1];
@@ -229,12 +258,13 @@ test("Twilio media stays generic until live call-bound passkey proof, converts a
     const media = f.service.twilio!.openMediaConnection(mediaUrl, f.sign(mediaUrl, {}), frame => output.push(frame));
     await media.receive(JSON.stringify({ event: "start", start: { callSid, streamSid, accountSid, mediaFormat: { encoding: "audio/x-mulaw", sampleRate: 8000, channels: 1 }, customParameters: { token } } }));
     const frame = (chunk: number) => JSON.stringify({ event: "media", streamSid, media: { track: "inbound", chunk: String(chunk), payload: Buffer.alloc(160, 255).toString("base64") } });
-    await media.receive(frame(1)); assert.equal(f.speechOptions, undefined); assert.equal(f.pcm.length, 0);
+    await media.receive(frame(1)); assert.equal(f.speechOptions, undefined); assert.equal(f.pcm.length, 0); assert.equal(await f.service.verifiedCall(callSid), null);
     await f.service.authorizeCall(callSid, { credentialId: "credential", ownerSessionId: "session", verifiedAt: f.now(), expiresAt: "2026-11-09T09:02:00.000Z" });
+    assert.deepEqual(await f.service.verifiedCall(callSid), { callSid, projectId: context.projectId, status: "in_progress" });
     await media.receive(frame(2)); assert.equal(f.pcm[0].length, 640); assert.equal(f.pcm[0].every(byte => byte === 0), true);
     assert.equal(await f.speechOptions!.onTranscript("What changed?"), "Private project status");
     f.speechOptions!.onAudio(Buffer.alloc(960)); assert.equal(output.length, 1);
-    f.advance(120_001); assert.equal(await f.speechOptions!.onTranscript("What changed?"), null);
+    f.advance(120_001); assert.equal(await f.speechOptions!.onTranscript("What changed?"), null); assert.equal(await f.service.verifiedCall(callSid), null);
     const count = output.length; f.speechOptions!.onAudio(Buffer.alloc(960)); assert.equal(output.length, count);
     media.close();
   } finally { await f.cleanup(); }
@@ -245,4 +275,102 @@ test("G.711 conversion preserves silence, sign and bounded frame sizes", () => {
   const positive = Buffer.alloc(8); positive.writeInt16LE(10000, 0); positive.writeInt16LE(10000, 2); positive.writeInt16LE(-10000, 4); positive.writeInt16LE(-10000, 6);
   const restored = muLaw8kToPcm16k(pcmToMuLaw8k(positive)); assert.ok(restored.readInt16LE(0) > 9000); assert.ok(restored.readInt16LE(4) < -9000);
   assert.throws(() => muLaw8kToPcm16k(Buffer.alloc(8001)), /too large/); assert.throws(() => pcmToMuLaw8k(Buffer.alloc(3)), /Invalid/);
+});
+
+function waitingObjective(): Objective {
+  return { version: 1, id: "objective-1", requestId: "request-1", projectId: "project-1", title: "Research", goal: "Compare the selected sources", revision: 1,
+    status: "waiting_for_user", cancelRequested: false, createdAt: "2026-11-09T08:00:00.000Z", updatedAt: "2026-11-09T09:00:00.000Z", deadlineAt: "2026-11-09T09:45:00.000Z", wakeAt: null,
+    steps: [], attempts: [], checkpoint: null, question: { id: "question-1", revision: 1, prompt: "Which sources?", expiresAt: "2026-11-09T10:00:00.000Z" },
+    budget: { limitUsd: 5, spentUsd: 0, reservedUsd: 0 }, lastError: null };
+}
+
+test("outreach is disabled by default and escalation derives a known-sent current question with a ten-minute wait", async () => {
+  const f = await fixture();
+  try {
+    const objective = waitingObjective(); assert.equal(f.service.readOutreachPolicy(context.projectId).enabled, false);
+    assert.equal(await f.service.considerObjectiveCall(objective), null);
+    assert.throws(() => f.service.updateOutreachPolicy({ projectId: context.projectId, expectedRevision: 0, enabled: true, timeZone: "UTC", timezoneConfirmed: false, categories: ["blocking_deadline"] }), /Confirm/);
+    f.enableCalls(); await f.service.twilio!.verifyOwnerNumber(context); await f.pair();
+    assert.equal(await f.service.considerObjectiveCall(objective), null);
+    f.service.telegram!.enqueue({ id: "blocking-question", projectId: objective.projectId, objectiveId: objective.id, kind: "question", disclosure: "project_details", text: objective.question!.prompt, notBefore: f.now(),
+      question: { kind: "objective", objectiveId: objective.id, questionId: objective.question!.id, revision: objective.question!.revision, expiresAt: objective.question!.expiresAt } });
+    await f.service.telegram!.flushOnce(); f.advance(599_999); assert.equal(await f.service.considerObjectiveCall(objective), null);
+    f.advance(2); assert.equal((await f.service.considerObjectiveCall(objective))!.callSid, callSid); assert.equal(await f.service.considerObjectiveCall(objective), null);
+    assert.equal(f.requests.filter(request => request.url.pathname.endsWith("/Calls.json")).length, 1);
+    await f.restart(); assert.equal(f.service.readOutreachPolicy(context.projectId).enabled, true);
+  } finally { await f.cleanup(); }
+});
+
+test("call-when-ready needs a fresh owner request for the authoritative unchanged objective and consumes it once", async () => {
+  let current = { ...waitingObjective(), status: "running" as const, question: null } as Objective;
+  const f = await fixture({ hooks: { async onStop() {}, authorizeDisclosure: () => true, authorizeCallOutreach: () => true, async readObjective() { return current; } } });
+  try {
+    f.enableCalls(); await f.service.twilio!.verifyOwnerNumber(context);
+    await assert.rejects(f.service.requestCallWhenReady({ projectId: current.projectId, objectiveId: current.id, expectedRevision: 2, expiresAt: "2026-11-09T18:00:00.000Z" }), /changed/);
+    await f.service.requestCallWhenReady({ projectId: current.projectId, objectiveId: current.id, expectedRevision: 1, expiresAt: "2026-11-09T18:00:00.000Z" });
+    assert.equal(await f.service.considerObjectiveCall(current), null);
+    current = { ...current, revision: 2, status: "completed" };
+    assert.equal(await f.service.considerObjectiveCall({ ...current, goal: "Changed work" }), null);
+    assert.equal((await f.service.considerObjectiveCall(current))!.callSid, callSid); assert.equal(await f.service.considerObjectiveCall(current), null);
+  } finally { await f.cleanup(); }
+});
+
+test("real HTTP callback routing rejects forged Twilio requests and settles an authenticated terminal receipt", async () => {
+  const f = await fixture();
+  const server = createServer((request, response) => { void f.service.route(request, response, new URL(request.url!, "https://jarvis.example")).then(handled => { if (!handled) { response.writeHead(404); response.end(); } }); });
+  try {
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address(); assert.ok(address && typeof address === "object");
+    await f.service.twilio!.verifyOwnerNumber(context); f.enableCalls();
+    await f.service.twilio!.startPriorityCall({ ...context, id: "http-call", issueId: "issue-http", blocked: true, unansweredSince: "2026-11-09T08:40:00.000Z", deadlineAt: "2026-11-09T09:30:00.000Z" });
+    const path = "/v1/cloud/integrations/twilio/voice?id=http-call", publicUrl = `https://jarvis.example${path}`;
+    const parameters = { CallSid: callSid, AccountSid: accountSid, To: "+15550002222", From: "+15550001111" };
+    const target = `http://127.0.0.1:${address.port}${path}`;
+    const forged = await fetch(target, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "x-twilio-signature": "forged" }, body: new URLSearchParams(parameters) });
+    assert.equal(forged.status, 403);
+    const accepted = await fetch(target, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "x-twilio-signature": f.sign(publicUrl, parameters) }, body: new URLSearchParams(parameters) });
+    assert.equal(accepted.status, 200); assert.match(await accepted.text(), /<Connect>/);
+    const statusPath = "/v1/cloud/integrations/twilio/status?id=http-call", status = { CallSid: callSid, AccountSid: accountSid, CallStatus: "completed", CallDuration: "59" };
+    const terminal = await fetch(`http://127.0.0.1:${address.port}${statusPath}`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "x-twilio-signature": f.sign(`https://jarvis.example${statusPath}`, status) }, body: new URLSearchParams(status) });
+    assert.equal(terminal.status, 204); assert.equal(await f.service.readCall(callSid), null);
+    assert.equal(f.service.twilio!.calls()[0].chargedUsd, 0.01);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await f.cleanup(); }
+});
+
+test("telephony speech uses the existing authenticated WebSocket protocol and ignores input while thinking", { timeout: 5000 }, async () => {
+  const server = createServer(), sockets = new WebSocketServer({ server });
+  let commit!: () => void, spoken!: () => void, respond!: () => void, heard!: () => void;
+  const committed = new Promise<void>(resolve => { commit = resolve; }), speech = new Promise<void>(resolve => { spoken = resolve; }), heardAudio = new Promise<void>(resolve => { heard = resolve; });
+  const frames: Record<string, unknown>[] = [], audio: Buffer[] = []; let failed = false;
+  sockets.on("connection", (socket, request) => {
+    assert.equal(request.headers.authorization, "Bearer fixture-private-voice-token");
+    socket.on("message", raw => {
+      const frame = JSON.parse(raw.toString()) as Record<string, unknown>; frames.push(frame);
+      const header = { version: 1, sessionId: frame.sessionId, generation: frame.generation };
+      if (frame.type === "start") socket.send(JSON.stringify({ ...header, type: "state", state: "listening", detail: null }));
+      if (frame.type === "commit") { respond = () => socket.send(JSON.stringify({ ...header, type: "transcript", text: "Give me the status", final: true, context: { roomId: "project-1", conversationId: null, question: null } })); commit(); }
+      if (frame.type === "speak") {
+        socket.send(JSON.stringify({ ...header, type: "audio", sequence: 0, sampleRate: 24000, pcm: Buffer.alloc(960).toString("base64") }));
+        socket.send(JSON.stringify({ ...header, type: "audio_end" })); spoken();
+      }
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address === "object");
+  const adapter = new ExistingVoiceSpeechAdapter({ url: `ws://127.0.0.1:${address.port}/v1/voice/stream`, token: "fixture-private-voice-token" });
+  const controller = new AbortController();
+  const session = await adapter.open({ callSid, context: { roomId: "project-1", conversationId: null, question: null }, signal: controller.signal,
+    onAudio(bytes) { audio.push(bytes); heard(); }, async onTranscript(text) { assert.equal(text, "Give me the status"); return "A concise reply"; }, onError() { failed = true; } });
+  try {
+    session.acceptPcm(Buffer.alloc(32000)); await committed;
+    for (let i = 0; i < 100; i++) session.acceptPcm(Buffer.alloc(640));
+    assert.equal(failed, false); respond(); await speech;
+    await heardAudio;
+    assert.equal(frames.filter(frame => frame.type === "audio").length, 2);
+    assert.equal(frames.find(frame => frame.type === "speak")!.text, "A concise reply");
+    assert.equal(audio[0].length, 960);
+  } finally {
+    session.close(); for (const socket of sockets.clients) socket.terminate();
+    await new Promise<void>(resolve => sockets.close(() => resolve())); await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });

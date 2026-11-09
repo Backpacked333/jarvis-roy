@@ -36,6 +36,15 @@ final class CloudProfileTests: XCTestCase {
         var changed = value.object; changed["payload"] = ["kind": "work.cancel", "projectId": "other", "jobId": "job-1"]
         XCTAssertThrowsError(try CloudCommandEnvelope(changed, profile: profile, epoch: 4))
     }
+    func testPairedGenerationAdvancesOnlyOnANewWelcome() throws {
+        let initial = PairedCloudProfile(version: 1, id: profile.id, origin: profile.origin, deviceId: profile.deviceId,
+            label: profile.label, generation: 0, receiptPublicKey: profile.receiptPublicKey, pairedAt: profile.pairedAt)
+        let connected = try initial.advancing(to: 1)
+        XCTAssertEqual(connected.id, initial.id); XCTAssertEqual(connected.receiptPublicKey, initial.receiptPublicKey)
+        XCTAssertThrowsError(try connected.advancing(to: 1))
+        XCTAssertThrowsError(try connected.advancing(to: 0))
+        XCTAssertEqual(try connected.advancing(to: 2).generation, 2)
+    }
     @MainActor
     func testReceiptPreparedBeforeDispatchSurvivesRestartWithoutReplayAndRefusesRetargeting() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -49,6 +58,7 @@ final class CloudProfileTests: XCTestCase {
         XCTAssertThrowsError(try restarted.prepare(command(job: "different-job")))
         let complete = try repeated.receipt.resolved(status: "completed", code: "ok")
         try restarted.finish(complete)
+        XCTAssertThrowsError(try restarted.finish(prepared.receipt))
         let reopened = try CloudReceiptJournal(profileID: profile.id, directory: directory)
         XCTAssertEqual(try reopened.prepare(command()).receipt, complete)
         XCTAssertThrowsError(try reopened.prepare(command(id: "older", epoch: 3)))

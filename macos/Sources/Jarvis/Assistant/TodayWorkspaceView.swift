@@ -24,24 +24,34 @@ final class TodayModel: ObservableObject {
     init(client: AssistantClient) { self.client = client }
 
     func refresh() async {
-        guard AssistantFeatures.objectives else { objectives = []; readiness = nil; return }
         readGeneration += 1
+        guard AssistantFeatures.objectives else { objectives = []; readiness = nil; return }
         let generation = readGeneration, authority = Self.currentAuthorityID
         do {
             struct Response: Decodable { let version: Int, objectives: [AssistantObjective], readiness: ObjectiveReadiness }
             let result = try await request(Response.self, path: "/v1/objectives", authority: authority)
-            guard generation == readGeneration, authority == Self.currentAuthorityID else { return }
+            guard generation == readGeneration, authority == Self.currentAuthorityID, AssistantFeatures.objectives else { return }
             guard result.version == 1, result.readiness.version == 1, result.objectives.allSatisfy({ $0.version == 1 && $0.revision > 0 }) else { throw AssistantClientError.invalidResponse }
             objectives = ObjectiveDisplayPolicy.ordered(result.objectives); readiness = result.readiness; error = nil
         } catch { if generation == readGeneration, authority == Self.currentAuthorityID { self.error = error.localizedDescription } }
     }
 
-    func create(projectID: String, goal: String, ceiling: Double) async -> Bool {
+    func resumeCloudWork() async {
+        guard !busy, authorityID != "local", authorityID == Self.currentAuthorityID else { return }
+        busy = true; let authority = authorityID; defer { busy = false }
+        do {
+            try await PairedCloudConnection.shared.resumeCloudWork()
+            guard authority == Self.currentAuthorityID else { return }
+            await refresh()
+        } catch { if authority == Self.currentAuthorityID { self.error = error.localizedDescription } }
+    }
+
+    func create(projectID: String, goal: String, ceiling: Double, evidence: ObjectiveEvidenceSelection) async -> Bool {
         let goal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !busy, !goal.isEmpty, goal.utf16.count <= 16_000, ceiling >= 1, ceiling <= 5 else { return false }
+        guard !busy, evidence.valid, !goal.isEmpty, goal.utf16.count <= 16_000, ceiling >= 1, ceiling <= 5 else { return false }
         return await mutate(path: "/v1/objectives", body: ["version": 1, "requestId": UUID().uuidString,
             "projectId": projectID, "title": String(goal.prefix(120)), "goal": goal, "estimatedUsdLimit": ceiling,
-            "steps": [["id": "research", "authority": "research", "prompt": goal, "parameters": [:],
+            "steps": [["id": "research", "authority": "research", "prompt": goal, "parameters": evidence.parameters,
                 "dependsOn": [], "estimatedUsd": 1, "maxWallTimeMs": 1_800_000]]])
     }
 
@@ -85,7 +95,18 @@ struct TodayWorkspaceView: View {
     @StateObject private var today: TodayModel
     @ObservedObject private var profiles = RuntimeProfiles.shared
     @State private var goalDrafts: [String: String] = [:]
+    @State private var evidenceSelections: [String: ObjectiveEvidenceSelection] = [:]
+    private var evidenceSelection: ObjectiveEvidenceSelection { evidenceSelections[draftScope] ?? ObjectiveEvidenceSelection() }
+    private var evidenceBinding: Binding<ObjectiveEvidenceSelection> {
+        let key = draftScope
+        return Binding(get: { evidenceSelections[key] ?? ObjectiveEvidenceSelection() }, set: { evidenceSelections[key] = $0 })
+    }
+    private var goalBinding: Binding<String> {
+        let key = draftScope
+        return Binding(get: { goalDrafts[key] ?? "" }, set: { goalDrafts[key] = $0 })
+    }
     @State private var cloudProjectID = ""
+    @State private var recentCloudProjects: [String] = []
     private var draftScope: String { TodayModel.currentAuthorityID + ":" + (projectID ?? "none") }
     private var goal: String {
         get { goalDrafts[draftScope] ?? "" }
@@ -94,6 +115,9 @@ struct TodayWorkspaceView: View {
     @State private var ceiling = 5.0
     @State private var setupVisible = false
     @State private var memoryVisible = false
+    @State private var cloudConversation: CloudConversationTarget?
+    @State private var resultTarget: ObjectiveResultTarget?
+    private struct CloudConversationTarget: Identifiable { let profileID: String, projectID: String; var id: String { profileID + ":" + projectID } }
     @State private var stopTarget: ObjectiveStopTarget?
     private struct ObjectiveStopTarget { let objective: AssistantObjective, authority: String }
     init(app: AppModel, assistant: AssistantModel) {
@@ -119,6 +143,12 @@ struct TodayWorkspaceView: View {
                     Button { setupVisible = true } label: { Label("Setup", systemImage: "checklist") }
                 }
                 HStack(spacing: 12) {
+                    if profiles.selected == .cloud, let profile = profiles.cloudProfile {
+                        Button("Talk to cloud Jarvis") {
+                            if cloudProjectID.isEmpty { cloudProjectID = UUID().uuidString }
+                            cloudConversation = .init(profileID: profile.id, projectID: cloudProjectID)
+                        }.buttonStyle(.borderedProminent)
+                    }
                     Button { Task { await app.startNewConversation() } } label: { Label(profiles.selected == .cloud ? "Start a local conversation" : "Start a conversation", systemImage: "waveform") }
                         .buttonStyle(.borderedProminent).disabled(!app.isConnected)
                     if assistant.selectedSession != nil { Button("Continue conversation") { app.tab = .assistant } }
@@ -141,6 +171,10 @@ struct TodayWorkspaceView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         if let reason = readiness.reason { Text(reason).font(.caption).foregroundStyle(.orange) }
+                        if readiness.stopped, profiles.selected == .cloud {
+                            Button("Resume cloud work") { Task { await today.resumeCloudWork() } }.disabled(today.busy)
+                            Text("Allows new work after uncertain tasks are resolved. Cancelled goals and old approvals remain closed.").font(.caption).foregroundStyle(.secondary)
+                        }
                         if readiness.unknownReservations > 0 { Text("\(readiness.unknownReservations) budget reservations have uncertain outcomes. Review them before starting more work.").font(.caption).foregroundStyle(.orange) }
                     }
                     HStack { Text("Your objectives").font(.title2); Spacer(); Button("Refresh") { Task { await today.refresh() } } }
@@ -150,6 +184,7 @@ struct TodayWorkspaceView: View {
                     ForEach(today.objectives) { objective in
                         let authority = TodayModel.currentAuthorityID
                         ObjectiveCard(objective: objective, busy: today.busy,
+                            inspect: { resultTarget = .init(objectiveID: objective.id, projectID: objective.projectId, authority: authority) },
                             openProject: { if profiles.selected == .cloud { cloudProjectID = objective.projectId } else { Task { await app.openProject(objective.projectId) } } },
                             control: { action in
                                 if action == "stop" { stopTarget = .init(objective: objective, authority: authority) }
@@ -167,13 +202,25 @@ struct TodayWorkspaceView: View {
         }
         .task(id: TodayModel.currentAuthorityID) {
             today.resetAuthority()
+            if profiles.selected == .cloud {
+                let key = "Jarvis.cloudProjects." + TodayModel.currentAuthorityID
+                recentCloudProjects = UserDefaults.standard.stringArray(forKey: key) ?? []
+                cloudProjectID = recentCloudProjects.first ?? ""
+            }
             while !Task.isCancelled {
                 await today.refresh()
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
         }
+        .onChange(of: cloudProjectID) { _, project in
+            guard profiles.selected == .cloud, !project.isEmpty else { return }
+            recentCloudProjects = Array(([project] + recentCloudProjects.filter { $0 != project }).prefix(50))
+            UserDefaults.standard.set(recentCloudProjects, forKey: "Jarvis.cloudProjects." + TodayModel.currentAuthorityID)
+        }
         .onChange(of: TodayModel.currentAuthorityID) { _, _ in stopTarget = nil }
         .sheet(isPresented: $setupVisible) { GuidedSetupView(app: app, cloudProjectID: profiles.selected == .cloud ? projectID : nil) }
+        .sheet(item: $resultTarget) { target in ObjectiveResultView(target: target, client: assistant.client).id(target.id) }
+        .sheet(item: $cloudConversation) { target in CloudConversationView(profileID: target.profileID, projectID: target.projectID).id(target.id) }
         .sheet(isPresented: $memoryVisible) {
             VStack { HStack { Spacer(); Button("Done") { memoryVisible = false } }.padding(); MemoryWorkspaceView(projectID: assistant.selectedSession?.focus.projectID, client: assistant.client, reviewInbox: true) }
                 .frame(minWidth: 860, minHeight: 620)
@@ -186,27 +233,28 @@ struct TodayWorkspaceView: View {
     private var objectiveComposer: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Give Jarvis a research objective", systemImage: "target").font(.headline)
-            TextField("For example: Compare the evidence for these approaches and write a sourced brief", text: Binding(get: { goal }, set: { goal = $0 }), axis: .vertical)
+            TextField("For example: Compare the evidence for these approaches and write a sourced brief", text: goalBinding, axis: .vertical).id(draftScope)
                 .lineLimit(2...5).textFieldStyle(.roundedBorder)
             if profiles.selected == .cloud {
                 HStack {
                     Picker("Cloud project", selection: $cloudProjectID) {
                         Text("Choose a cloud project").tag("")
-                        ForEach(Array(Set(today.objectives.map(\.projectId) + (cloudProjectID.isEmpty ? [] : [cloudProjectID]))).sorted(), id: \.self) { id in Text(String(id.prefix(24))).tag(id) }
+                        ForEach(Array(Set(today.objectives.map(\.projectId) + recentCloudProjects + (cloudProjectID.isEmpty ? [] : [cloudProjectID]))).sorted(), id: \.self) { id in Text(String(id.prefix(24))).tag(id) }
                     }
                     Button("New cloud project") { cloudProjectID = UUID().uuidString }
                 }
                 Text("Runs on your paired cloud. Local documents and conversations are not copied by this action.").font(.caption).foregroundStyle(.secondary)
             }
+            ObjectiveEvidenceSelectionView(projectID: projectID, authority: TodayModel.currentAuthorityID, client: assistant.client, selection: evidenceBinding).id(draftScope)
             HStack {
                 Text(profiles.selected == .cloud ? "Cloud project" : assistant.selectedSession?.title ?? "Choose a project by starting a conversation").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Picker("Estimate ceiling", selection: $ceiling) { ForEach(1...5, id: \.self) { Text("$\($0)").tag(Double($0)) } }.frame(width: 190)
                 Button("Start bounded research") {
                     guard let projectID else { return }
-                    let captured = goal, scope = draftScope, capturedCeiling = ceiling
-                    Task { if await today.create(projectID: projectID, goal: captured, ceiling: capturedCeiling), goalDrafts[scope] == captured { goalDrafts[scope] = "" } }
-                }.disabled(today.busy || today.readiness?.acceptingWork != true || projectID == nil || goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || goal.utf16.count > 16_000)
+                    let captured = goal, scope = draftScope, capturedCeiling = ceiling, capturedEvidence = evidenceSelection
+                    Task { if await today.create(projectID: projectID, goal: captured, ceiling: capturedCeiling, evidence: capturedEvidence), goalDrafts[scope] == captured { goalDrafts[scope] = "" } }
+                }.disabled(today.busy || !evidenceSelection.valid || today.readiness?.acceptingWork != true || projectID == nil || goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || goal.utf16.count > 16_000)
             }
             Text("Up to 30 minutes; two workers shared across objectives. Uses permitted project sources. Estimates are separate from provider billing caps. Actions still require their own approval.")
                 .font(.caption).foregroundStyle(.secondary)
@@ -216,16 +264,18 @@ struct TodayWorkspaceView: View {
 
 @MainActor
 private struct ObjectiveCard: View {
-    let objective: AssistantObjective, busy: Bool, openProject: () -> Void, control: (String) -> Void, answer: (String) async -> Bool
+    let objective: AssistantObjective, busy: Bool, inspect: () -> Void, openProject: () -> Void, control: (String) -> Void, answer: (String) async -> Bool
     @State private var response = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(objective.title).font(.headline)
-                    Text(objective.statusLabel).font(.caption).foregroundStyle(objective.needsAttention ? .orange : .secondary)
+                    Text(objective.statusLabel).font(.caption).foregroundStyle(objective.needsAttention ? Color.orange : Color.secondary)
                 }
-                Spacer(); Button("Open project", action: openProject)
+                Spacer()
+                if objective.attempts.contains(where: { $0.status == "completed" }) { Button("Read result", action: inspect) }
+                Button("Open project", action: openProject)
             }
             Text(objective.goal).lineLimit(3).textSelection(.enabled)
             if let checkpoint = objective.checkpoint { Text(checkpoint.summary).font(.callout).textSelection(.enabled); Text("Checkpoint summary · verify against the outputs").font(.caption).foregroundStyle(.secondary) }

@@ -15,7 +15,7 @@ export async function verifyE5Files(directory: string) {
   const root = await realpath(directory);
   if (root !== path.resolve(directory)) throw new Error("Model directory must be a real absolute directory");
   const manifestFile = path.join(root, "manifest.json"), info = await lstat(manifestFile);
-  if (!info.isFile() || info.isSymbolicLink() || info.size > 16000) throw new Error("Invalid pinned model manifest");
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 16000) throw new Error("Invalid pinned model manifest");
   const manifest = E5ManifestSchema.parse(JSON.parse(await readFile(manifestFile, "utf8")));
   for (const file of files) {
     const location = path.join(root, file), info = await lstat(location);

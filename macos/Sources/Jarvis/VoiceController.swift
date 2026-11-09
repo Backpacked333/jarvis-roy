@@ -345,6 +345,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     }
 
     func beginSpeechStream(_ id: String, context: HarnessVoiceContext) {
+        guard !dictationActive else { error = "Finish or stop dictation before starting spoken playback."; return }
         cancelActive(preserveConnection: continuousConnectionEnabled)
         speechQueue.begin(id: id, context: context)
     }
@@ -427,7 +428,10 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         }
     }
 
-    func stopSpeaking() { interrupt() }
+    func stopSpeaking() {
+        guard turn.mode == .playback || speechQueue.streamID != nil else { return }
+        interrupt()
+    }
 
     private func receive(_ frame: HarnessVoiceServerFrame) {
         guard turn.accepts(frame) else { return }

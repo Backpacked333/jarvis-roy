@@ -9,6 +9,7 @@ import { TelegramIntegration, type TelegramOptions } from "./telegram.ts";
 import { GoogleIntegration, type GoogleOptions } from "./google.ts";
 import { TwilioIntegration, type TwilioOptions } from "./twilio.ts";
 import type { TelephonySpeechAdapter } from "./speech.ts";
+import { OutreachPolicies } from "./outreach.ts";
 
 export * from "./contracts.ts";
 export * from "./google.ts";
@@ -16,6 +17,7 @@ export * from "./telegram.ts";
 export * from "./twilio.ts";
 export * from "./speech.ts";
 export * from "./audio.ts";
+export * from "./outreach.ts";
 export { IntegrationStore } from "./store.ts";
 export interface IntegrationOptions {
   dataDirectory: string; enabled?: boolean; encryptionKey?: Uint8Array; fetch?: typeof fetch; now?: () => Date;
@@ -30,13 +32,17 @@ export class IntegrationService {
   readonly telegram?: TelegramIntegration; readonly google?: GoogleIntegration; readonly twilio?: TwilioIntegration;
   private readonly store?: IntegrationStore;
   private readonly options: IntegrationOptions;
+  private readonly outreach?: OutreachPolicies;
   private readonly sockets = new WebSocketServer({ noServer: true, maxPayload: 16000, perMessageDeflate: false });
   private loop?: Promise<void>; private controller?: AbortController;
   private constructor(options: IntegrationOptions, store?: IntegrationStore) {
     this.options = options; this.enabled = options.enabled ?? process.env.JARVIS_ENABLE_INTEGRATIONS === "1"; this.store = store;
     if (!store) return;
+    this.outreach = new OutreachPolicies(store, options.twilio?.timeZone ?? options.telegram?.timeZone ?? "UTC", options.now ?? (() => new Date()));
     const transport = new IntegrationTransport(store, options.ledger, options.prices, options.fetch, options.now);
-    const hooks: IntegrationHooks = { ...options.hooks, onStop: async () => {
+    const hooks: IntegrationHooks = { ...options.hooks,
+      authorizeCallOutreach: input => this.outreach!.allows(input.projectId, input.category ?? "blocking_deadline") && options.hooks.authorizeCallOutreach?.({ projectId: input.projectId, destinationId: input.destinationId }) === true,
+      onStop: async () => {
       await Promise.allSettled([Promise.resolve().then(() => this.stopLocal()), Promise.resolve().then(() => this.twilio?.cancelCalls()), Promise.resolve().then(() => options.hooks.onStop())]);
     } };
     if (options.telegram) this.telegram = new TelegramIntegration(transport, options.telegram, hooks);
@@ -61,12 +67,22 @@ export class IntegrationService {
   readCursor<T = unknown>(name: string): T | undefined { return this.requireEnabled().get<T>("runtime_cursor", IntegrationId.parse(name)); }
   writeCursor(name: string, value: unknown): void { this.requireEnabled().put("runtime_cursor", IntegrationId.parse(name), value); }
   async readCall(callSid: string) { return this.twilio?.readCall(callSid) ?? null; }
+  async verifiedCall(callSid: string) { return this.twilio?.currentVerifiedCall(callSid) ?? null; }
   async authorizeCall(callSid: string, proof: CallProof): Promise<void> { if (!this.twilio) throw new Error("Calling is not configured"); return this.twilio.authorizeCall(callSid, proof); }
+  readOutreachPolicy(projectId: string) { this.requireEnabled(); return this.outreach!.read(projectId); }
+  updateOutreachPolicy(raw: unknown) { this.requireEnabled(); return this.outreach!.update(raw); }
+  async requestCallWhenReady(raw: unknown) { this.requireEnabled(); return this.outreach!.requestReady(raw, this.options.hooks.readObjective); }
+  async considerObjectiveCall(raw: unknown) {
+    this.requireEnabled(); if (!this.twilio || this.status().stopped) return null;
+    const candidate = this.outreach!.blockingCandidate(raw, this.telegram?.outbox() ?? []);
+    if (candidate && !this.twilio.calls().some(call => call.issueId === candidate.issueId)) return this.twilio.startPriorityCall(candidate);
+    const ready = this.outreach!.consumeReady(raw); return ready ? this.twilio.startReadyCall(ready) : null;
+  }
   private stopLocal(): void {
     if (!this.store) return;
     this.google?.cancelReads();
     for (const socket of this.sockets.clients) socket.close(1000, "Stopped");
-    this.twilio?.stop(); this.store.put("control", "global", { stopped: true }); this.telegram?.stopOutbound();
+    this.twilio?.stop(); this.store.put("control", "global", { stopped: true }); this.telegram?.stopOutbound(); this.outreach?.cancelPending();
   }
   async stop(): Promise<void> { this.stopLocal(); await this.twilio?.cancelCalls(); }
   resume(): void { this.requireEnabled().put("control", "global", { stopped: false }); this.telegram?.resume(); this.twilio?.resume(); }
@@ -101,6 +117,11 @@ export class IntegrationService {
     if (method === "POST" && pathname === "/v1/integrations/google/connect" && this.google) return this.google.beginOAuth(body);
     if (method === "POST" && pathname === "/v1/integrations/google/permissions" && this.google) return this.google.updateConsent(body);
     if (method === "POST" && pathname === "/v1/integrations/twilio/verify-owner" && this.twilio) { await this.twilio.verifyOwnerNumber(ContextSchema.parse(body)); return this.status(); }
+    if (pathname === "/v1/integrations/outreach/policy") {
+      if (method === "GET") return this.readOutreachPolicy(body && typeof body === "object" && "projectId" in body ? IntegrationId.parse(body.projectId) : this.options.telegram?.context.projectId ?? "personal");
+      if (method === "POST") return this.updateOutreachPolicy(body);
+    }
+    if (method === "POST" && pathname === "/v1/integrations/outreach/ready-request") return this.requestCallWhenReady(body);
     throw new Error("Integration setup operation unavailable");
   }
   /** Only authenticated provider ingress is handled here, never owner controls. */

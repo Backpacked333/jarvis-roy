@@ -70,6 +70,35 @@ test("stored wake times, pause and empty plans do not invoke an adapter", async 
   assert.equal(f.service.get(future.id, "project-a").status, "completed");
 });
 
+test("global scheduler Stop survives restart and explicit recovery permits only fresh work", async t => {
+  const f = await fixture(t), prior = await f.service.create(input("before-stop"));
+  await f.service.stop(); assert.equal(f.service.get(prior.id, "project-a").status, "cancelled");
+  await f.reopen(); f.service.startLoop(100);
+  assert.equal(f.service.readiness().stopped, true);
+  const fresh = await f.service.create(input("fresh-work")); assert.equal(await f.service.dispatch(), 0); assert.equal(f.adapter.calls.length, 0);
+  await f.service.resumeScheduler(); await f.service.dispatch(); await f.service.drain();
+  assert.equal(f.adapter.calls.length, 1); assert.equal(f.adapter.calls[0].objectiveId, fresh.id);
+  assert.equal(f.service.get(prior.id, "project-a").status, "cancelled"); assert.equal(f.service.readiness().stopped, false);
+  await f.service.stop(); await f.reopen(); assert.equal(f.service.readiness().stopped, true);
+});
+
+test("cloud Stop preserves paused goals and exact cancelled children without reviving old work", async t => {
+  const f = await fixture(t); f.adapter.status = "running";
+  const active = await f.service.create(input("active-goal")); await f.service.dispatch(); await f.service.drain();
+  const pending = await f.service.create(input("future-goal"));
+  await f.service.pauseAll();
+  const paused = f.service.get(active.id, "project-a");
+  assert.equal(paused.status, "paused"); assert.equal(paused.pauseRequested, true); assert.equal(paused.attempts[0].status, "cancelled");
+  assert.equal(paused.attempts[0].cancelConfirmed, true); assert.equal(paused.goal, active.goal);
+  await f.reopen(); assert.equal(f.service.readiness().stopped, true); assert.equal(f.service.get(active.id, "project-a").status, "paused");
+  await f.service.resumeScheduler();
+  await assert.rejects(f.service.resume(active.id, { expectedRevision: f.service.get(active.id, "project-a").revision }, "project-a"), /fresh objective.*reviewed plan/);
+  await f.service.resume(pending.id, { expectedRevision: f.service.get(pending.id, "project-a").revision }, "project-a");
+  await f.service.dispatch(); await f.service.drain();
+  assert.equal(f.adapter.calls.length, 2); assert.equal(f.adapter.calls[1].objectiveId, pending.id);
+  assert.equal(f.service.get(active.id, "project-a").status, "paused");
+});
+
 test("objective and UTC daily/monthly caps include unknown reservations and immutable settlements", async t => {
   const f = await fixture(t); const objective = await f.service.create(input("budget", []));
   const a = await f.service.reserve({ requestId: "a", objectiveId: objective.id, projectId: "project-a", authority: "research", estimatedUsd: 5 });
@@ -87,6 +116,9 @@ test("objective and UTC daily/monthly caps include unknown reservations and immu
   f.time("2026-01-31T00:00:00.000Z");
   assert.equal(f.service.readiness().monthlyCommittedUsd, 300);
   await assert.rejects(f.service.reserve({ requestId: "over-month", projectId: "project-a", authority: "phone", estimatedUsd: .01 }), /monthly/);
+  const controlPoll = await f.service.reserve({ requestId: "free-control-poll", projectId: "project-a", authority: "integration:telegramRequestUsd", estimatedUsd: 0 });
+  await f.service.settle(controlPoll.id, { accounting: "measured", estimatedUsd: 0 });
+  assert.equal(f.service.readiness().monthlyCommittedUsd, 300, "Verified zero-cost control remains available to receive Stop at exhausted caps");
   f.time("2026-02-01T00:00:00.000Z"); await f.service.reserve({ requestId: "next-month", projectId: "project-a", authority: "phone", estimatedUsd: 1 });
   assert.equal(f.service.readiness().monthlyCommittedUsd, 1);
   await assert.rejects(f.service.reserve({ requestId: "still-old-objective", objectiveId: objective.id, projectId: "project-a", authority: "research", estimatedUsd: .01 }), /objective/);

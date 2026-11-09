@@ -152,6 +152,10 @@ struct GuidedSetupView: View {
                         Text("\(account.labels.joined(separator: ", ")) · \(account.calendars.joined(separator: ", "))").font(.caption)
                         Text(account.consents.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
                         Text(account.retentionAllowed == true ? (account.cloudAllowed == true ? "Retention and cloud reasoning allowed" : "Retained; excluded from cloud reasoning") : "Provider connected; content retention off").font(.caption).foregroundStyle(.secondary)
+                        HStack {
+                            if account.cloudAllowed == true { Button("Stop cloud reasoning") { Task { await reducePermissions(account, retain: account.retentionAllowed == true) } } }
+                            if account.retentionAllowed == true { Button("Stop retention") { Task { await reducePermissions(account, retain: false) } } }
+                        }.disabled(accountBusy || account.revision == nil)
                     }
                 }
                 Picker("Permission", selection: $googleConsent) { Text("Read selected sources").tag("read"); Text("Send reviewed Gmail").tag("gmail_send"); Text("Write reviewed Calendar events").tag("calendar_write") }
@@ -223,6 +227,19 @@ struct GuidedSetupView: View {
                   let expiry = RoomsStateRules.date(result.expiresAt), expiry > Date() else { throw AssistantClientError.invalidResponse }
             NSWorkspace.shared.open(url); notice = "Finish Google's consent screen, then check account readiness again."
         } catch { self.error = error.localizedDescription }
+    }
+    private func reducePermissions(_ account: IntegrationReadiness.Google.Account, retain: Bool) async {
+        guard let revision = account.revision else { return }
+        accountBusy = true
+        do {
+            struct Result: Decodable { let id: String, projectId: String, revision: Int }
+            let data = try await cloud.setupData(path: "/v1/cloud/setup/integrations/google/permissions", method: "POST", body: [
+                "accountId": account.id, "expectedRevision": revision, "retentionAllowed": retain, "cloudAllowed": false,
+                "labels": account.labels, "calendars": account.calendars])
+            let updated = try JSONDecoder().decode(Result.self, from: data)
+            guard updated.id == account.id, updated.projectId == account.projectId, updated.revision > revision else { throw AssistantClientError.invalidResponse }
+            accountBusy = false; await refreshIntegrations()
+        } catch { accountBusy = false; self.error = error.localizedDescription }
     }
     private func pairTelegram() async {
         accountBusy = true; defer { accountBusy = false }

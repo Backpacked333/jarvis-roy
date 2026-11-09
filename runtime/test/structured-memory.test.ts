@@ -300,3 +300,19 @@ test("SQLite v1 migration preserves entries and writes a private pre-migration b
     assert.equal(JSON.parse(String(backup.prepare("SELECT body FROM entries WHERE id=?").get(entry.id)?.body)).text, entry.text); backup.close();
   } finally { await f.cleanup(); }
 });
+
+test("background memory inference does not hold the mutation queue and cancellation bounds ignored-provider shutdown", async () => {
+  let started!: () => void;
+  const running = new Promise<void>(resolve => { started = resolve; });
+  const provider: LocalEmbeddingProvider = { identity: { id: "blocked-background", version: "1", dimensions: 2, local: true },
+    embed(_texts, options) { if (options.purpose === "document") { started(); return new Promise(() => {}); } return Promise.resolve([[1, 0]]); } };
+  const f = await fixture({ embeddingProvider: provider, backgroundIndexing: true });
+  const deadline = async <T>(work: Promise<T>) => { let timer: NodeJS.Timeout; try { return await Promise.race([work, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Background inference blocked memory authority")), 1000); })]); } finally { clearTimeout(timer!); } };
+  try {
+    const entry = await f.service.create(input(), native); await deadline(running);
+    assert.equal((await deadline(f.service.list("project-1", native))).entries.length, 1);
+    const changed = await deadline(f.service.update(entry.id, { expectedRevision: entry.revision, input: input({ cloudAllowed: false }) }, native));
+    assert.equal(changed.cloudAllowed, false); assert.equal(changed.status, "proposed");
+    await deadline(f.service.close());
+  } finally { await f.cleanup(); }
+});

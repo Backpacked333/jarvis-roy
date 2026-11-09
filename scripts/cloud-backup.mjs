@@ -104,7 +104,7 @@ export async function restoreEncryptedBackup({ archive, destination, key }) {
       const bytes = Buffer.alloc(size); const read = await input.read(bytes, 0, size, 4); offset += size;
       if (read.bytesRead !== size) throw failure('Truncated backup manifest.');
       const manifest = JSON.parse(bytes.toString('utf8'));
-      if (manifest.version !== 1 || !Array.isArray(manifest.files) || manifest.files.length > MAX_FILES) throw failure('Unsupported backup manifest.');
+      if (manifest.version !== 1 || !Number.isFinite(Date.parse(manifest.createdAt)) || !Array.isArray(manifest.files) || manifest.files.length > MAX_FILES) throw failure('Unsupported backup manifest.');
       const seen = new Set(); let total = 0;
       for (const item of manifest.files) {
         if (!safeRelative(item.path) || item.path === RESTORE_REVIEW_MARKER || seen.has(item.path) || !Number.isSafeInteger(item.bytes) || item.bytes < 0 || !/^[a-f0-9]{64}$/.test(item.sha256)) throw failure('Invalid backup file record.');

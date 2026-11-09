@@ -8,6 +8,7 @@ import test, { type TestContext } from "node:test";
 const backup = await import(new URL("../../scripts/cloud-backup.mjs", import.meta.url).href);
 const { deploymentFiles, renderDeployment } = await import(new URL("../../scripts/cloud-render.mjs", import.meta.url).href);
 const { cloudEnvironment } = await import(new URL("../../scripts/cloud-runtime.mjs", import.meta.url).href);
+const recovery = await import(new URL("../../scripts/cloud-recovery.mjs", import.meta.url).href);
 const { inspectCloudConfiguration, runCloudReadiness } = await import(new URL("../../scripts/cloud-readiness.mjs", import.meta.url).href);
 async function directory(t: TestContext) {
   const value = await mkdtemp(path.join(tmpdir(), "jarvis-deploy-"));
@@ -52,10 +53,34 @@ test("encrypted backups round-trip immutable sources and SQLite bytes into a pri
   const result = await backup.restoreEncryptedBackup({ archive, destination: restored, key });
   assert.equal(result.authenticated, true); assert.equal(result.activated, false);
   assert.deepEqual(await readFile(path.join(restored, "knowledge.sqlite")), database);
+  assert.equal(result.reviewRequired, true);
+  await assert.rejects(recovery.assertRestoreReviewed(restored), /recovery review/);
   assert.equal((await stat(path.join(restored, "sources", "private.txt"))).mode & 0o777, 0o600);
   assert.equal((await stat(restored)).mode & 0o777, 0o700);
   await assert.rejects(backup.restoreEncryptedBackup({ archive, destination: restored, key }), /must not exist/);
   await assert.rejects(backup.createEncryptedBackup({ source, output: archive, key }), /already exists/);
+});
+
+test("restored state blocks service launch until an exact private stopped-service review is recorded", async (t) => {
+  const root = await directory(t), restored = path.join(root, "restored"), reviewFile = path.join(root, "review.json");
+  await mkdir(restored);
+  const marker = await recovery.markRestoredDirectory(restored, { archiveSha256: "a".repeat(64), backupCreatedAt: "2026-11-09T00:00:00Z" });
+  const launch = spawnSync(process.execPath, [new URL("../../scripts/cloud-runtime.mjs", import.meta.url).pathname, "gateway"], { encoding: "utf8", env: { ...process.env, JARVIS_DATA_DIR: restored } });
+  assert.equal(launch.status, 1); assert.match(launch.stderr, /blocked pending/);
+  const review = { version: 1, restoreId: marker.restoreId, archiveSha256: marker.archiveSha256, reviewer: "Operator",
+    reviewedAt: new Date().toISOString(), pendingActionsReviewed: true, effectsAfterBackupReconciled: true,
+    previouslyScheduledWorkReviewed: true, providerCredentialsReviewed: true, unresolvedEffects: "remain_unknown_do_not_retry" };
+  await writeFile(reviewFile, JSON.stringify({ ...review, restoreId: "another-restore" }), { mode: 0o600 });
+  await assert.rejects(recovery.reviewRestoration({ directory: restored, reviewFile, isActive: async () => false }), /does not match/);
+  await writeFile(reviewFile, JSON.stringify(review));
+  await assert.rejects(recovery.reviewRestoration({ directory: restored, reviewFile, isActive: async () => true }), /Stop every/);
+  await chmod(reviewFile, 0o644);
+  await assert.rejects(recovery.reviewRestoration({ directory: restored, reviewFile, isActive: async () => false }), /private/);
+  await chmod(reviewFile, 0o600);
+  assert.equal((await recovery.reviewRestoration({ directory: restored, reviewFile, isActive: async () => false })).activated, false);
+  await recovery.assertRestoreReviewed(restored);
+  const receipt = JSON.parse(await readFile(path.join(restored, `.jarvis-recovery-${marker.restoreId}.json`), "utf8"));
+  assert.equal(receipt.unresolvedEffects, "remain_unknown_do_not_retry"); assert.equal(receipt.previouslyScheduledWorkReviewed, true);
 });
 
 test("wrong keys, altered archives, symlink sources and failed output leave no activated restore", async (t) => {

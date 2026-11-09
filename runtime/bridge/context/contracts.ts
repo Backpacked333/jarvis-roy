@@ -35,7 +35,7 @@ export const ContextCitationSchema = z.strictObject({ sourceVersionId: ContextId
     lineEnd: z.number().int().positive(), section: z.string().max(1000).optional(), symbol: z.string().max(240).optional(),
     rowStart: z.number().int().positive().optional(), rowEnd: z.number().int().positive().optional() }).nullable().default(null) });
 export const ContextProvenanceSchema = z.strictObject({
-  origin: z.enum(["original_source", "user_approved_memory", "retained_snapshot", "conversation_message", "extractive_checkpoint", "project_checkpoint", "model_summary"]),
+  origin: z.enum(["original_source", "user_approved_memory", "retained_snapshot", "account_context", "conversation_message", "extractive_checkpoint", "project_checkpoint", "model_summary"]),
   referenceId: ContextId, revision: z.number().int().positive(),
   memoryScope: z.enum(["personal", "project"]).optional(),
 });
@@ -48,6 +48,8 @@ export const ContextCandidateSchema = z.strictObject({
   citations: z.array(ContextCitationSchema).max(20).default([]), provenance: ContextProvenanceSchema,
   retention: z.strictObject({ grantId: ContextId, grantRevision: z.number().int().positive(), kind: z.enum(["source", "memory"]), id: ContextId,
     revision: z.number().int().positive(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).optional(),
+  accountContext: z.strictObject({ id: ContextId, sourceRevision: z.string().min(1).max(1000), accountId: ContextId,
+    provider: z.enum(["gmail", "calendar"]), resourceId: z.string().min(1).max(300), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).optional(),
 });
 export type ContextCandidate = z.infer<typeof ContextCandidateSchema>;
 export type ContextCandidateInput = z.input<typeof ContextCandidateSchema>;

@@ -1,5 +1,7 @@
 # Jarvis for Roy
 
+Persistent objectives, project continuity and the private cloud deployment are described in [the persistent partner guide](docs/persistent-partner.md) and [deployment instructions](deploy/README.md). Cloud services remain opt-in until the operator supplies and verifies the host and accounts.
+
 A native macOS assistant for spoken collaboration, project research and explicitly approved actions. Jarvis combines SwiftUI, an authenticated TypeScript bridge, Eve cloud reasoning and isolated local workers. Inspired by the [Awesome Jarvis blueprint](https://github.com/csells/awesome-jarvis/blob/main/blueprint.md).
 
 **Source-build preview. There is no signed installer or notarized consumer download.** The new experience is implemented behind default-off flags; the five implementation stages have not all passed their release gates. The build ad-hoc signs local app/helper bundles. See [implementation status and open acceptance gates](docs/implementation-status.md) and [the 30-task evaluation set](evaluations/README.md).

@@ -61,7 +61,7 @@ final class AppModel: ObservableObject {
         voice.onSpeechDrained = { [weak self] receipt in Task { await self?.assistant.speechDrained(receipt) } }
         rooms.onQuestionAttention = { [weak self] notice in
             guard let self, self.voice.cloudConsentGranted, self.rooms.canSpeak(notice),
-                  self.voice.state == .idle else { return false }
+                  self.voice.state == .idle, !self.voice.dictationActive else { return false }
             self.voice.speak(notice.question.question.prompt, context: notice.context)
             return self.voice.capturedContext == notice.context
         }
@@ -113,7 +113,7 @@ final class AppModel: ObservableObject {
     }
 
     func speakQuestion(_ question: HarnessQuestion) {
-        guard voice.cloudConsentGranted, [.idle, .interrupted].contains(voice.state) else { return }
+        guard voice.cloudConsentGranted, !voice.dictationActive, [.idle, .interrupted].contains(voice.state) else { return }
         voice.speak(question.question.prompt, context: HarnessVoiceContext(roomId: question.target.roomId, conversationId: nil, question: question.binding))
     }
 
@@ -248,7 +248,7 @@ final class AppModel: ObservableObject {
             }
             for task in tasks where task.status == "completed" && !spokenTasks.contains(task.id) {
                 spokenTasks.insert(task.id)
-                if speakReplies, tab == .workspace, voice.cloudConsentGranted,
+                if speakReplies, tab == .workspace, voice.cloudConsentGranted, !voice.dictationActive,
                    [.idle, .interrupted].contains(voice.state), task.conversationId == selectedConversationID {
                     voice.speak(task.reply, context: HarnessVoiceContext(roomId: nil, conversationId: task.conversationId, question: nil))
                 }
@@ -462,5 +462,9 @@ final class AppModel: ObservableObject {
         selectionRevision += 1
         await act(key: "stop-all", path: "v1/stop")
         await rooms.refresh()
+        if AssistantFeatures.enabled("JARVIS_ENABLE_CLOUD", preference: "Jarvis.cloudEnabled"), RuntimeProfiles.shared.cloudProfile != nil {
+            do { try await PairedCloudConnection.shared.stopCloudWork() }
+            catch { self.error = "Local stop was requested. Cloud cancellation is unconfirmed: \(error.localizedDescription)" }
+        }
     }
 }

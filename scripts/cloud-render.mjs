@@ -95,6 +95,9 @@ JARVIS_ENABLE_RESEARCH=0
 JARVIS_ENABLE_OBJECTIVES=0
 JARVIS_ENABLE_CLOUD=1
 JARVIS_ENABLE_INTEGRATIONS=0
+# If integrations are enabled: 32 random bytes encoded as 64 hexadecimal characters.
+# Keep this encryption key stable across restarts and separate from backup keys.
+JARVIS_INTEGRATION_KEY=
 JARVIS_ENABLE_TELEGRAM=0
 JARVIS_ENABLE_GOOGLE=0
 JARVIS_ENABLE_PHONE=0
