@@ -343,7 +343,6 @@ export class JarvisService {
       this.trackBackground(this.observeDelivery(taskId, delivery));
       return publicTask(task);
     } catch (cause) {
-      this.submittingInteractions.delete(submissionKey);
       await this.store.update(taskId, (record) => {
         if (record.cancelConfirmed) return;
         record.responseUnconfirmed = true;
@@ -352,6 +351,7 @@ export class JarvisService {
         record.error = `${UNCONFIRMED_RESPONSE} ${redactText(errorMessage(cause)).slice(0, 2_000)}`;
       });
       this.pendingOptions.get(taskId)?.clear();
+      this.submittingInteractions.delete(submissionKey);
       throw new BridgeError(UNCONFIRMED_RESPONSE, 502);
     }
   }

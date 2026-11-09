@@ -148,6 +148,46 @@ for (const kind of ["approval", "question"] as const) {
   }
 }
 
+test("lost response stays single-submit while the durable quarantine commit is pending", async (t) => {
+  const setup = await makeService();
+  t.after(setup.close);
+  const { service, client } = setup;
+  client.session.initial = new FakeDelivery(approvalEvents(), { status: "awaiting-input" });
+  const task = await service.createTask("Exercise slow durable response recovery.");
+  await waitFor(async () => (await service.state()).tasks[0]?.status === "waiting");
+  await service.waitForObservedDelivery(task.id);
+  let submissions = 0;
+  client.session.respond = async () => {
+    submissions += 1;
+    throw new Error("Synthetic lost receipt");
+  };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let committing = false;
+  const update = TaskStore.prototype.update;
+  t.mock.method(TaskStore.prototype, "update", async function (this: TaskStore, ...args: Parameters<typeof update>) {
+    committing = true;
+    await gate;
+    return update.apply(this, args);
+  });
+  const response = assert.rejects(service.respond(task.id, "interaction-1", "approve"),
+    (error: unknown) => error instanceof BridgeError && error.status === 502);
+  try {
+    await waitFor(async () => committing);
+    assert.equal((await service.state()).tasks[0]?.status, "waiting", "The transaction has not published yet");
+    // Observe admission synchronously; a buggy retry would itself wait on the commit gate.
+    const retry = assert.rejects(service.respond(task.id, "interaction-1", "approve"),
+      (error: unknown) => error instanceof BridgeError && error.status === 409);
+    release();
+    await Promise.all([response, retry]);
+    assert.equal(submissions, 1);
+    assert.equal((await service.state()).tasks[0]?.status, "interrupted");
+  } finally {
+    release();
+    await response;
+  }
+});
+
 test("a response rejection arriving after confirmed Stop does not reopen the cancelled task", async (t) => {
   const setup = await makeService();
   t.after(setup.close);
