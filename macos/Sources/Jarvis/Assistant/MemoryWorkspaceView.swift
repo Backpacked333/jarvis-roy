@@ -221,6 +221,14 @@ private struct MemoryRecordDetail: View {
             }.font(.caption).foregroundStyle(.secondary)
             Label(entry.cloudAllowed ? "Relevant memory text may enter cloud reasoning" : "Local only · excluded from cloud reasoning", systemImage: entry.cloudAllowed ? "cloud" : "lock")
                 .font(.callout)
+            if let assertion = entry.assertion {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("\(assertion.property): \(assertion.value)").font(.headline).textSelection(.enabled)
+                    Text("Entity \(assertion.entityId)").font(.caption.monospaced()).foregroundStyle(.secondary)
+                    Text("Valid from \(assertion.validFrom ?? "unspecified") until \(assertion.validTo ?? "open-ended")").font(.caption).foregroundStyle(.secondary)
+                    Text("Observed \(assertion.observedAt)").font(.caption).foregroundStyle(.secondary)
+                }
+            }
             if let expiry = entry.expiresAt { Text("Expires \(expiry)").font(.caption).foregroundStyle(.secondary) }
             Divider()
             Text("Why this was saved").font(.headline)
@@ -274,7 +282,7 @@ private struct MemoryEditorView: View {
                     let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
                     let input = AssistantMemoryInput(kind: kind, scope: scope, text: text.trimmingCharacters(in: .whitespacesAndNewlines),
                         provenance: original?.provenance ?? AssistantMemoryProvenance(origin: .explicit_user, references: []),
-                        confidence: original?.confidence ?? 1, pinned: pinned, expiresAt: expires ? formatter.string(from: expiry) : nil, cloudAllowed: cloudAllowed)
+                        confidence: original?.confidence ?? 1, pinned: pinned, expiresAt: expires ? formatter.string(from: expiry) : nil, cloudAllowed: cloudAllowed, assertion: original?.assertion)
                     Task { if await model.save(input, editing: original) { dismiss() } }
                 }.disabled(model.busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || text.utf16.count > 4_000 || (expires && expiry <= Date()))
             }

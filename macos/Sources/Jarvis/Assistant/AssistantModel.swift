@@ -13,7 +13,9 @@ final class AssistantModel: ObservableObject {
     @Published private(set) var selectedSessionID: String?
     @Published private var navigation = PresentationNavigation()
     @Published private(set) var visualSelection: AssistantVisualSelection?
-    @Published private(set) var pinned: Set<String> = []
+    @Published private(set) var pinnedPresentations: [AssistantPresentation] = []
+    var pinned: Set<String> { Set(pinnedPresentations.map(\.id)) }
+    var visiblePinnedPresentations: [AssistantPresentation] { pinnedPresentations.filter { $0.sessionId == selectedSessionID } }
     @Published private(set) var connected = false
     @Published private(set) var submitting = false
     @Published var error: String?
@@ -135,7 +137,11 @@ final class AssistantModel: ObservableObject {
     func goBack() { navigation.back(); visualSelection = nil }
     func followPresentations() { navigation.follow(visiblePresentations.last); visualSelection = nil }
     func showPresentationUpdate() { if let id = selectedPresentationID { selectPresentation(id) } }
-    func selectVisual(_ selection: AssistantVisualSelection?) { visualSelection = selection }
+    func holdDisplayedPresentation() { if let displayed = selectedPresentation { navigation.select(displayed) } }
+    func selectVisual(_ selection: AssistantVisualSelection?) {
+        if selection != nil { holdDisplayedPresentation() }
+        visualSelection = selection
+    }
 
     func saveDraft(_ presentation: AssistantPresentation, body: String) async -> Bool {
         guard presentation.content.kind == .draft, body.utf16.count <= 32_000 else { return false }
@@ -152,7 +158,18 @@ final class AssistantModel: ObservableObject {
             return true
         } catch { self.error = error.localizedDescription; return false }
     }
-    func togglePin(_ id: String) { if pinned.contains(id) { pinned.remove(id) } else { pinned.insert(id) } }
+    func togglePin(_ id: String) {
+        if pinned.contains(id) { pinnedPresentations.removeAll { $0.id == id } }
+        else if let displayed = selectedPresentation, displayed.id == id {
+            pinnedPresentations.append(displayed)
+            if pinnedPresentations.count > 50 { pinnedPresentations.removeFirst() }
+            navigation.select(displayed)
+        }
+    }
+    func selectPinnedPresentation(_ id: String) {
+        guard let value = visiblePinnedPresentations.first(where: { $0.id == id }) else { return }
+        navigation.select(value); visualSelection = nil
+    }
 
     func captureStarted(voiceSessionID: String, generation: Int) {
         guard let session = selectedSession else { return }

@@ -13,6 +13,7 @@ import { CloudControlPlane, CloudStore, createCloudGateway, verifyRemoteApproval
   type CloudOptions, type CloudActor, type CloudCommand, type DeviceReceipt } from "../bridge/cloud/index.ts";
 import type { ReviewableAction } from "../bridge/assistant/index.ts";
 import { cloudReviewJs } from "../bridge/cloud/web.ts";
+import { ObjectiveService, type ChildObservation, type ObjectiveAdapter } from "../bridge/objectives/index.ts";
 
 const sha = (text: string | Uint8Array) => createHash("sha256").update(text).digest();
 const bootstrap = randomBytes(32).toString("base64url");
@@ -130,7 +131,8 @@ test("native device offers yield signed commands, not completed effects; receipt
       serverEpoch: command.serverEpoch, commandDigest: command.digest, status: "unknown", code: "unknown" };
     await f.control.receiveDeviceFrame(f.device, result);
     assert.equal(f.control.proposal(proposal.id, f.owner).status, "unknown");
-    assert.equal((await f.control.receiveDeviceFrame(f.device, result)).duplicate, true);
+    const duplicate = await f.control.receiveDeviceFrame(f.device, result);
+    assert.ok("duplicate" in duplicate); assert.equal(duplicate.duplicate, true);
     await f.reconnect(); await assert.rejects(f.control.receiveDeviceFrame(f.device, result), /generation/);
     await f.control.receiveDeviceFrame(f.device, { ...result, type: "reconcile", id: randomUUID(), generation: f.welcome.generation, serverEpoch: f.welcome.serverEpoch,
       originalGeneration: command.generation, originalServerEpoch: command.serverEpoch, status: "completed", code: "ok" });
@@ -242,9 +244,99 @@ test("cloud gateway exposes only narrow authenticated routes and actual outbound
     const [welcomeBytes] = await welcomePromise, welcome = JSON.parse(String(welcomeBytes)); assert.equal(welcome.type, "device.welcome");
     const ack = once(ws, "message"); ws.send(JSON.stringify({ version: 1, type: "heartbeat", deviceId: "mac-1", generation: welcome.generation, serverEpoch: welcome.serverEpoch }));
     assert.equal(JSON.parse(String((await ack)[0])).type, "heartbeat.ack");
+    // Exercise the actual browser-facing HTTP ceremony with real signed data.
+    const enrollmentResponse = await request("/v1/cloud/enrollment/start", { method: "POST", headers: { authorization: `Bearer ${f.pair.deviceToken}` } });
+    const enrollment = await enrollmentResponse.json() as { enrollmentToken: string };
+    const registrationHeaders = { origin, "content-type": "application/json", "x-jarvis-enrollment-token": enrollment.enrollmentToken };
+    const registration = await (await request("/v1/cloud/webauthn/registration/options", { method: "POST", headers: registrationHeaders, body: "{}" })).json() as { challengeId: string; options: { challenge: string } };
+    const mobile = new TestAuthenticator();
+    assert.equal((await request("/v1/cloud/webauthn/registration/verify", { method: "POST", headers: registrationHeaders, body: JSON.stringify({ challengeId: registration.challengeId, response: mobile.registration(registration.options.challenge, origin) }) })).status, 200);
+    const browserHeaders = { origin, "content-type": "application/json" };
+    const login = await (await request("/v1/cloud/webauthn/authentication/options", { method: "POST", headers: browserHeaders, body: "{}" })).json() as { challengeId: string; options: { challenge: string } };
+    const signedIn = await request("/v1/cloud/webauthn/authentication/verify", { method: "POST", headers: browserHeaders, body: JSON.stringify({ challengeId: login.challengeId, response: mobile.assertion(login.options.challenge, origin) }) });
+    assert.equal(signedIn.status, 200); const cookie = signedIn.headers.get("set-cookie")!.split(";")[0];
+    const proposal = await f.propose();
+    assert.equal((await request(`/v1/cloud/actions/${proposal.id}`)).status, 401);
+    assert.equal((await request(`/v1/cloud/actions/${proposal.id}`, { headers: { cookie } })).status, 200);
+    const step = await (await request(`/v1/cloud/actions/${proposal.id}/options`, { method: "POST", headers: { ...browserHeaders, cookie }, body: "{}" })).json() as { challengeId: string; options: { challenge: string } };
+    const approved = await request(`/v1/cloud/actions/${proposal.id}/verify`, { method: "POST", headers: { ...browserHeaders, cookie }, body: JSON.stringify({ challengeId: step.challengeId, response: mobile.assertion(step.options.challenge, origin) }) });
+    assert.equal(approved.status, 200); assert.equal((await approved.json() as { status: string }).status, "completed"); assert.equal(f.executions(), 1);
     const rejection = new WebSocket(`ws://127.0.0.1:${address.port}/v1/cloud/device/connect?deviceId=mac-1`, { headers: { authorization: "Bearer bad-token" } });
     await new Promise<void>(resolve => { rejection.on("error", () => resolve()); });
   } finally { ws?.terminate(); await gateway.close(); await new Promise<void>(resolve => server.close(() => resolve())); await f.cleanup(); }
+});
+
+test("Stop invalidates remote challenges and channel disclosure until explicit resume", async () => {
+  let callsRevoked = 0; const f = await fixture({ async revokeCallAuthorizations() { callsRevoked++; } });
+  try {
+    const proposal = await f.propose(), challenge = await f.control.approvalOptions(proposal.id, f.owner);
+    const disclosure = { projectId: "project-1", channel: "phone" as const, destinationId: "+12025550123", proactive: false };
+    await f.control.createChannelPolicy({ projectId: disclosure.projectId, channel: disclosure.channel, destinationId: disclosure.destinationId,
+      allowDetails: true, allowProactive: true, expiresAt: "2026-11-10T12:00:00Z" }, f.owner);
+    assert.equal(f.control.authorizeDisclosure(disclosure), true);
+    assert.equal((await f.control.stopAll()).callAuthorizationRevoked, true); assert.equal(callsRevoked, 1);
+    assert.equal(f.control.authorizeDisclosure(disclosure), false);
+    await assert.rejects(f.control.finishApproval(proposal.id, challenge.challengeId, f.authenticator.assertion(challenge.options.challenge, f.origin), f.owner), /stale|consumed/);
+    await assert.rejects(f.propose(), /stopped/); await f.restart(); await assert.rejects(f.propose(), /stopped/);
+    await f.control.resume(f.owner); assert.equal(f.control.authorizeDisclosure(disclosure), true);
+    assert.equal(f.control.proposal(proposal.id, f.owner).status, "invalidated"); assert.equal(f.executions(), 0);
+  } finally { await f.cleanup(); }
+});
+
+test("authenticated backup restore preserves grants and budget while fencing pending approvals and uncertain work", async () => {
+  const f = await fixture({ noDirectAuthority: true });
+  const recoveryDirectory = await mkdtemp(join(tmpdir(), "jarvis-cloud-restore-"));
+  let dispatches = 0;
+  const child: ChildObservation = { ref: { authority: "research", projectId: "project-1", runId: "research-restored-1" },
+    status: "running", accounting: "unknown", estimatedUsd: null, cancelConfirmed: false, detail: null };
+  const adapter: ObjectiveAdapter = { async dispatch() { dispatches++; return structuredClone(child); }, async inspect() { return structuredClone(child); },
+    async cancel() { return { ...structuredClone(child), status: "unknown" }; } };
+  const objectiveOptions = { dataDirectory: f.directory, enabled: true, adapters: { research: adapter }, now: () => new Date("2026-11-09T12:00:00Z") };
+  let objectives = await ObjectiveService.open(objectiveOptions), restoredControl: CloudControlPlane | undefined;
+  try {
+    const objective = await objectives.create({ version: 1, requestId: "restore-objective", projectId: "project-1", title: "Restore evidence review", goal: "Inspect existing evidence",
+      steps: [{ id: "review", authority: "research", prompt: "Review selected sources", estimatedUsd: 1, maxWallTimeMs: 60000 }] });
+    await objectives.dispatch(); await objectives.drain(); assert.equal(dispatches, 1);
+    await objectives.reserve({ requestId: "external-reservation", projectId: "project-1", authority: "fixture-provider", estimatedUsd: 2 });
+    const committed = objectives.readiness().monthlyCommittedUsd; assert.equal(committed, 3);
+    const text = "Explicitly retained source survives a verified restore", selected = { kind: "source", id: "retained-version", revision: 1, sha256: sha(text).toString("hex") };
+    const grant = await f.control.createRetentionGrant({ deviceId: "mac-1", projectId: "project-1", selected: [selected], processors: ["context"], maxBytes: 1000, expiresAt: "2026-11-10T12:00:00Z" }, f.device);
+    await f.control.syncSnapshots({ requestId: "retained-sync", grantId: grant.id, grantRevision: grant.revision, snapshots: [{ ...selected, text }] }, f.device);
+    const revoked = await f.control.createRetentionGrant({ deviceId: "mac-1", projectId: "project-1", selected: [{ ...selected, id: "revoked-version" }], processors: ["context"], maxBytes: 1000, expiresAt: "2026-11-10T12:00:00Z" }, f.device);
+    await f.control.syncSnapshots({ requestId: "revoked-sync", grantId: revoked.id, grantRevision: revoked.revision, snapshots: [{ ...selected, id: "revoked-version", text }] }, f.device);
+    await f.control.revokeRetentionGrant(revoked.id, revoked.revision, f.device);
+    const executing = await f.control.offerAction(f.device, { projectId: "project-1", generation: f.welcome.generation, serverEpoch: f.welcome.serverEpoch, action: f.action });
+    const accepted = await f.control.approvalOptions(executing.id, f.owner);
+    await f.control.finishApproval(executing.id, accepted.challengeId, f.authenticator.assertion(accepted.options.challenge, f.origin), f.owner);
+    const pending = await f.control.offerAction(f.device, { projectId: "project-1", generation: f.welcome.generation, serverEpoch: f.welcome.serverEpoch, action: { ...f.action, taskId: "task-pending" } });
+    const pendingChallenge = await f.control.approvalOptions(pending.id, f.owner), oldToken = f.ownerToken;
+    const previousCommands = f.frames.filter(frame => (frame as CloudCommand).type === "command").length; assert.equal(previousCommands, 1);
+    await objectives.close(); await f.control.close();
+    const modulePath = new URL("../../scripts/cloud-backup.mjs", import.meta.url).href;
+    const { createEncryptedBackup, restoreEncryptedBackup } = await import(modulePath);
+    const archive = join(recoveryDirectory, "snapshot.jvb"), restoredDirectory = join(recoveryDirectory, "restored"), key = randomBytes(32);
+    const backup = await createEncryptedBackup({ source: f.directory, output: archive, key }); assert.equal(backup.encrypted, true);
+    assert.equal((await readFile(archive)).includes(Buffer.from(text)), false);
+    const restored = await restoreEncryptedBackup({ archive, destination: restoredDirectory, key });
+    assert.equal(restored.authenticated, true); assert.equal(restored.activated, false);
+    restoredControl = await CloudControlPlane.open({ ...f.config, dataDirectory: restoredDirectory });
+    objectives = await ObjectiveService.open({ ...objectiveOptions, dataDirectory: restoredDirectory });
+    assert.equal(objectives.get(objective.id, "project-1").status, "interrupted");
+    assert.equal(objectives.get(objective.id, "project-1").attempts[0].status, "unknown");
+    assert.equal(objectives.readiness().monthlyCommittedUsd, committed); assert.ok(objectives.readiness().unknownReservations >= 2);
+    assert.equal(await objectives.dispatch(), 0); assert.equal(dispatches, 1);
+    assert.throws(() => restoredControl!.authenticateOwner(oldToken), /sign-in/);
+    const login = await restoredControl.authenticationOptions(); const signedIn = await restoredControl.finishAuthentication(login.challengeId, f.authenticator.assertion(login.options.challenge, f.origin));
+    const owner = restoredControl.authenticateOwner(signedIn.sessionToken);
+    assert.equal(restoredControl.proposal(executing.id, owner).status, "unknown"); assert.equal(restoredControl.proposal(pending.id, owner).status, "invalidated");
+    await assert.rejects(restoredControl.finishApproval(pending.id, pendingChallenge.challengeId, f.authenticator.assertion(pendingChallenge.options.challenge, f.origin), owner), /stale|consumed/);
+    const restoredFrames: unknown[] = [];
+    await restoredControl.connectDevice(restoredControl.authenticateDevice(f.pair.deviceToken), frame => restoredFrames.push(frame), () => {});
+    assert.equal(restoredFrames.filter(frame => (frame as CloudCommand).type === "command").length, 0);
+    assert.deepEqual(restoredControl.readSnapshots("project-1", "context").map(value => value.id), ["retained-version"]);
+    assert.equal(restoredControl.readSnapshots("other-project", "context").length, 0);
+    assert.equal((await stat(join(restoredDirectory, "cloud", "control.sqlite"))).mode & 0o777, 0o600);
+  } finally { await objectives.close(); await restoredControl?.close(); await f.cleanup(); await rm(recoveryDirectory, { recursive: true, force: true }); }
 });
 
 test("pairing, stored credential isolation and schema migration preserve private durable state", async () => {

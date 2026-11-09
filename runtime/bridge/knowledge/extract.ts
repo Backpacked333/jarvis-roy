@@ -59,13 +59,31 @@ export async function extractDocument(bytes: Buffer, filename: string, mediaType
   return { pages: [{ text, page: null }], extraction: text.trim() ? "text" as const : "empty" as const };
 }
 
-export function passageParts(pages: ExtractedPage[]): Pick<EvidencePassage, "text" | "locator">[] {
+export function documentFormat(filename = ""): "pdf" | "markdown" | "csv" | "code" | "text" {
+  if (/\.pdf$/i.test(filename)) return "pdf";
+  if (/\.(md|markdown)$/i.test(filename)) return "markdown";
+  if (/\.(csv|tsv)$/i.test(filename)) return "csv";
+  if (/\.(ts|tsx|js|jsx|py|swift|rs|go|java|c|cpp|h|hpp|sql|sh)$/i.test(filename)) return "code";
+  return "text";
+}
+export function passageParts(pages: ExtractedPage[], options: { filename?: string } = {}): Pick<EvidencePassage, "text" | "locator">[] {
   const output: Pick<EvidencePassage, "text" | "locator">[] = [];
+  const format = documentFormat(options.filename);
   for (const page of pages) {
     const lines = page.text.replace(/\r\n?/g, "\n").split("\n");
-    let buffer = "", start = 1, end = 1;
-    const flush = () => { if (buffer.trim()) output.push({ text: buffer, locator: { page: page.page, lineStart: start, lineEnd: end } }); buffer = ""; };
+    let buffer = "", start = 1, end = 1, section: string | undefined, symbol: string | undefined;
+    const headings: string[] = [];
+    const flush = () => { if (buffer.trim()) output.push({ text: buffer, locator: { page: page.page, lineStart: start, lineEnd: end,
+      ...(section ? { section } : {}), ...(symbol ? { symbol } : {}),
+      ...(format === "csv" ? { rowStart: start, rowEnd: end } : {}),
+    } }); buffer = ""; };
     lines.forEach((line, index) => {
+      const heading = format === "markdown" ? /^(#{1,6})\s+(.+)$/.exec(line) : null;
+      const declaration = format === "code" ? /^\s*(?:export\s+)?(?:async\s+)?(?:function|class|def|func|struct|interface|enum|fn)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(line) : null;
+      if (heading || declaration || !line.trim() && format !== "csv") flush();
+      if (heading) { headings.length = heading[1].length - 1; headings[heading[1].length - 1] = heading[2]; section = headings.filter(Boolean).join(" / ").slice(0, 1000); }
+      if (declaration) symbol = declaration[1].slice(0, 240);
+      if (format === "csv" && index === 0) section = `Columns (original header): ${line}`.slice(0, 1000);
       if (buffer.length + line.length + 1 > 4_000) flush();
       if (!buffer) start = index + 1;
       end = index + 1;

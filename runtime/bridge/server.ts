@@ -186,7 +186,8 @@ async function route(
     (method === "PATCH" && /^\/v1\/grants\/[^/]+$/.test(pathname)));
   const memoryReduction = native && ((method === "PATCH" && /^\/v1\/memory\/entries\/[^/]+$/.test(pathname)) ||
     (method === "POST" && /^\/v1\/memory\/entries\/[^/]+\/(archive|forget|supersede)$/.test(pathname)));
-  const recovery = isCancellation(method, pathname) || revocation || memoryReduction;
+  const nativeObservation = native && method === "POST" && pathname === "/v1/cloud/native-command-result";
+  const recovery = isCancellation(method, pathname) || revocation || memoryReduction || nativeObservation;
   const dispatch = <T>(operation: () => Promise<T>) => control.dispatch(generation, operation, recovery);
   try {
     if (pathname === "/v1/cloud/runtime" && method === "POST") {
@@ -202,10 +203,11 @@ async function route(
       json(response, 200, await (controlOnly ? extensions.cloudBroker(input) : dispatch(() => extensions.cloudBroker!(input)))); return;
     }
     if (control.isStopping() && method !== "GET" && pathname !== "/v1/stop" && !recovery) throw new BridgeError("Stop all is unconfirmed or in progress. Inspect status and explicitly retry Stop all before changing work.", 409);
-    if (["/v1/cloud/native-device", "/v1/cloud/native-command"].includes(pathname) && method === "POST") {
+    if (["/v1/cloud/native-device", "/v1/cloud/native-command", "/v1/cloud/native-command-result"].includes(pathname) && method === "POST") {
       if (!native) throw new BridgeError("Native pairing authority required.", 403);
       if (!extensions.nativeCloud) throw new BridgeError("Cloud pairing is unavailable.", 503);
       const body = await readJson(request, 512 * 1024);
+      if (pathname.endsWith("native-command-result")) { json(response, 200, await extensions.nativeCloud.result(body)); return; }
       json(response, 200, await dispatch<unknown>(() => pathname.endsWith("native-device") ? extensions.nativeCloud!.pair(body) : extensions.nativeCloud!.execute(body))); return;
     }
     if (pathname === "/v1/objectives" || pathname.startsWith("/v1/objectives/")) {
@@ -719,13 +721,13 @@ export async function startJarvisBridge(): Promise<Server> {
         if (room) return (await runtime!.harness.state()).rooms.some(item => item.id === id) ? id : null;
         return service.projectForTask(id);
       },
-      async observeAction(id, room, optionId) {
-        if (room) return "unknown";
-        const task = service.taskSnapshot().find(item => item.id === id);
-        return task?.status === "completed" ? "completed" : ["failed", "cancelled"].includes(task?.status ?? "") ? "failed" : "unknown";
+      async observeAction(_id, room, _optionId, reference) {
+        // Task completion/cancellation does not prove this exact approved effect's
+        // outcome. Only an action-specific durable receipt may refine uncertainty.
+        return room ? "unknown" : service.exactApprovedEffectOutcome(reference);
       },
     });
-    objectives.service.startLoop();
+    if (objectives.service.enabled) objectives.service.startLoop();
   } catch (error) {
     // Release stores/owned services when a later subsystem cannot initialize.
     // Recovery must never leave a half-started runtime holding database locks.

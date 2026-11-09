@@ -4,7 +4,7 @@ import SwiftUI
 struct IntegrationReadiness: Decodable {
     struct Telegram: Decodable { let configured: Bool, paired: Bool, ownerChatId: String? }
     struct Google: Decodable {
-        struct Account: Decodable, Identifiable { let id: String, email: String, projectId: String, labels: [String], calendars: [String], consents: [String] }
+        struct Account: Decodable, Identifiable { let id: String, email: String, projectId: String, labels: [String], calendars: [String], consents: [String]; let retentionAllowed: Bool?, cloudAllowed: Bool?, revision: Int? }
         let configured: Bool, accounts: [Account]
     }
     struct Twilio: Decodable { let configured: Bool, ownerNumber: String?, ownerVerified: Bool }
@@ -40,7 +40,13 @@ struct GuidedSetupView: View {
     @State private var googleConsent = "read"
     @State private var labels = "INBOX"
     @State private var calendars = "primary"
-    private var projectID: String? { app.assistant.selectedSession?.focus.projectID }
+    @State private var retainAccountContent = false
+    @State private var useAccountContentInCloud = false
+    @State private var cloudProjectID: String
+    init(app: AppModel, cloudProjectID: String? = nil) {
+        self.app = app; _cloudProjectID = State(initialValue: cloudProjectID ?? UUID().uuidString)
+    }
+    private var projectID: String? { cloudProjectID.isEmpty ? nil : cloudProjectID }
     private let steps = [("Start on this Mac", "desktopcomputer"), ("Add your cloud", "cloud"), ("Connect accounts", "person.crop.circle"), ("Try a conversation", "waveform")]
 
     var body: some View {
@@ -74,6 +80,7 @@ struct GuidedSetupView: View {
             }
         }.frame(width: 900, height: 690)
             .onDisappear { clearSecrets() }
+            .onChange(of: profiles.cloudProfile?.id) { _, _ in integrations = nil; pairingCode = nil; pairingExpiry = nil; error = nil }
             .onChange(of: step) { _, _ in error = nil; notice = nil; clearSecrets() }
     }
     private var localSetup: some View {
@@ -111,6 +118,9 @@ struct GuidedSetupView: View {
                 HStack {
                     Button("Connect") { Task { await cloud.connect() } }.disabled(!cloudEnabled || [.pairing, .connecting].contains(cloud.state))
                     Button("Disconnect") { cloud.disconnect() }
+                    Button("Set up owner passkey") {
+                        Task { do { let url = try await cloud.beginOwnerEnrollment(); NSWorkspace.shared.open(url) } catch { self.error = error.localizedDescription } }
+                    }
                     Button("Use cloud Today") { do { try profiles.select(.cloud); app.tab = .today } catch { self.error = error.localizedDescription } }
                         .disabled(!cloudEnabled)
                     Button("Use local Today") { do { try profiles.select(.local) } catch { self.error = error.localizedDescription } }
@@ -124,6 +134,7 @@ struct GuidedSetupView: View {
                     Task { await cloud.pair(origin: cloudOrigin, bootstrapCredential: secret, label: deviceLabel) }
                 }.disabled(!cloudEnabled || cloudOrigin.isEmpty || cloudBootstrap.isEmpty || cloud.state == .pairing)
             }
+            Text("Sensitive cloud actions require a fresh, action-specific owner passkey review. Phone and Telegram conversations cannot replace it with a generic yes.").font(.caption).foregroundStyle(.secondary)
             Text("No cloud server yet? Finish local setup now. Deploy the prepared cloud package with your own TLS endpoint before pairing. This screen does not provision a server or buy services.").font(.caption).foregroundStyle(.secondary)
             Button("Next: optional accounts") { step = 2 }
         }
@@ -140,12 +151,17 @@ struct GuidedSetupView: View {
                         Text(account.email).font(.headline)
                         Text("\(account.labels.joined(separator: ", ")) · \(account.calendars.joined(separator: ", "))").font(.caption)
                         Text(account.consents.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                        Text(account.retentionAllowed == true ? (account.cloudAllowed == true ? "Retention and cloud reasoning allowed" : "Retained; excluded from cloud reasoning") : "Provider connected; content retention off").font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Picker("Permission", selection: $googleConsent) { Text("Read selected sources").tag("read"); Text("Send reviewed Gmail").tag("gmail_send"); Text("Write reviewed Calendar events").tag("calendar_write") }
                 TextField("Gmail label IDs, separated by commas", text: $labels)
                 TextField("Calendar IDs, separated by commas", text: $calendars)
-                Text("Project: \(app.assistant.selectedSession?.title ?? "Start or select a conversation first")").font(.caption).foregroundStyle(.secondary)
+                TextField("Cloud project ID", text: $cloudProjectID)
+                Text("Use the cloud project selected in Today, or keep this new project. Local conversations are not copied.").font(.caption).foregroundStyle(.secondary)
+                Toggle("Retain selected account content in the cloud deployment", isOn: $retainAccountContent)
+                    .onChange(of: retainAccountContent) { _, retained in if !retained { useAccountContentInCloud = false } }
+                Toggle("Allow selected content in cloud model reasoning", isOn: $useAccountContentInCloud).disabled(!retainAccountContent)
                 Button("Connect Google in browser") { Task { await connectGoogle() } }.disabled(accountBusy || !state.google.configured || projectID == nil)
                 Divider()
                 setupStatus("Telegram", value: state.telegram.paired ? "Owner paired" : state.telegram.configured ? "Ready to pair" : "Pending deployment setup", detail: "Pair your exact Telegram owner chat using an expiring code.")
@@ -187,7 +203,9 @@ struct GuidedSetupView: View {
     private func refreshIntegrations() async {
         accountBusy = true; defer { accountBusy = false }
         do {
-            let state = try await app.assistant.client.value(IntegrationReadiness.self, path: "/v1/integrations/status")
+            guard profiles.cloudProfile != nil else { throw AssistantClientError.service("Pair your cloud deployment first. Optional Google, Telegram, and phone integrations are configured there.") }
+            let bytes = try await cloud.setupData(path: "/v1/cloud/setup/integrations/status")
+            let state = try JSONDecoder().decode(IntegrationReadiness.self, from: bytes)
             guard state.version == 1 else { throw AssistantClientError.invalidResponse }
             integrations = state; error = nil
         } catch { self.error = error.localizedDescription; integrations = nil }
@@ -197,9 +215,10 @@ struct GuidedSetupView: View {
         accountBusy = true; defer { accountBusy = false }
         do {
             struct Result: Decodable { let url: String, expiresAt: String }
-            let result = try await app.assistant.client.value(Result.self, path: "/v1/integrations/google/connect", method: "POST", body: [
+            let bytes = try await cloud.setupData(path: "/v1/cloud/setup/integrations/google/connect", method: "POST", body: [
                 "accountId": UUID().uuidString, "projectId": projectID, "objectiveId": NSNull(), "consent": googleConsent,
-                "labels": identifiers(labels), "calendars": identifiers(calendars)])
+                "labels": identifiers(labels), "calendars": identifiers(calendars), "retentionAllowed": retainAccountContent, "cloudAllowed": useAccountContentInCloud])
+            let result = try JSONDecoder().decode(Result.self, from: bytes)
             guard let url = URL(string: result.url), url.scheme == "https", url.host == "accounts.google.com", url.user == nil, url.password == nil,
                   let expiry = RoomsStateRules.date(result.expiresAt), expiry > Date() else { throw AssistantClientError.invalidResponse }
             NSWorkspace.shared.open(url); notice = "Finish Google's consent screen, then check account readiness again."
@@ -209,7 +228,8 @@ struct GuidedSetupView: View {
         accountBusy = true; defer { accountBusy = false }
         do {
             struct Result: Decodable { let code: String, expiresAt: String }
-            let result = try await app.assistant.client.value(Result.self, path: "/v1/integrations/telegram/pair", method: "POST", body: [:])
+            let bytes = try await cloud.setupData(path: "/v1/cloud/setup/integrations/telegram/pair", method: "POST", body: [:])
+            let result = try JSONDecoder().decode(Result.self, from: bytes)
             guard result.code.utf16.count <= 128, let expiry = RoomsStateRules.date(result.expiresAt), expiry > Date() else { throw AssistantClientError.invalidResponse }
             pairingCode = result.code; pairingExpiry = result.expiresAt
         } catch { self.error = error.localizedDescription }
@@ -217,7 +237,7 @@ struct GuidedSetupView: View {
     private func verifyPhone() async {
         guard let projectID else { return }
         accountBusy = true
-        do { _ = try await app.assistant.client.data("/v1/integrations/twilio/verify-owner", method: "POST", body: ["projectId": projectID, "objectiveId": NSNull()]); accountBusy = false; await refreshIntegrations() }
+        do { _ = try await cloud.setupData(path: "/v1/cloud/setup/integrations/twilio/verify-owner", method: "POST", body: ["projectId": projectID, "objectiveId": NSNull()]); accountBusy = false; await refreshIntegrations() }
         catch { accountBusy = false; self.error = error.localizedDescription }
     }
     private func identifiers(_ text: String) -> [String] { text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }

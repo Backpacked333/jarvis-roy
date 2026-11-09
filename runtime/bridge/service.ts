@@ -511,6 +511,12 @@ export class JarvisService {
     return task?.projectId ?? task?.conversationId ?? null;
   }
 
+  exactApprovedEffectOutcome(ref: { taskId: string; interactionId: string; revision: number; optionId: string }): "completed" | "failed" | "unknown" {
+    if (ref.optionId !== "approve") return "unknown";
+    const receipt = this.store.get(ref.taskId)?.googleEffects?.find(item => item.interactionId === ref.interactionId && item.revision === ref.revision);
+    return receipt?.status === "succeeded" ? "completed" : "unknown";
+  }
+
   /** Consume an existing exact Eve approval. The supplied callback is the sole
    * trusted bridge-to-gateway dispatch; public callers cannot supply it. */
   async executeGoogleEffect<T>(sessionId: string, callId: string, raw: unknown,

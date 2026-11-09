@@ -8,7 +8,7 @@ import { containsCredentialLikeData } from "../../agent/lib/memory.ts";
 import { BridgeError } from "../errors.ts";
 import { CloudStore } from "./store.ts";
 import {
-  ChannelPolicyInputSchema, CloudId, CommandPayloadSchema, CreateRemoteActionSchema, DeviceFrameSchema, DeviceReceiptSchema,
+  ChannelPolicyInputSchema, CloudId, CloudStateSchema, CommandPayloadSchema, CreateRemoteActionSchema, DeviceFrameSchema, DeviceReceiptSchema,
   PairCompleteSchema, PairStartSchema, RemoteApprovalReceiptSchema, RetentionGrantInputSchema, SyncSnapshotsSchema,
   type CloudCommand, type CloudState, type CommandPayload, type DeviceReceipt, type RemoteActionProposal, type RemoteApprovalReceipt, type RetentionGrant,
 } from "./contracts.ts";
@@ -37,6 +37,7 @@ export function verifyRemoteApprovalReceipt(raw: unknown, publicKey: string, exp
   if (receipt.deviceId !== expected.deviceId || receipt.deviceGeneration !== expected.deviceGeneration || receipt.serverEpoch !== expected.serverEpoch ||
       receipt.actionDigest !== actionDigest(expected.action) || canonicalJson(receipt.actionRef) !== canonicalJson({ taskId: expected.action.taskId, interactionId: expected.action.interactionId, revision: expected.action.revision, optionId: expected.action.optionId }) ||
       Date.parse(receipt.expiresAt) <= (expected.now ?? new Date()).getTime() || Date.parse(receipt.issuedAt) > (expected.now ?? new Date()).getTime() + 5000 ||
+      Date.parse(receipt.expiresAt) - Date.parse(receipt.issuedAt) > 120_000 || Date.parse(receipt.expiresAt) <= Date.parse(receipt.issuedAt) ||
       !verify(null, Buffer.from(canonicalJson(payload)), createPublicKey(publicKey), Buffer.from(signature, "base64url"))) throw new BridgeError("Remote approval receipt is invalid, stale or bound to another action.", 403);
   return receipt;
 }
@@ -94,6 +95,8 @@ export class CloudControlPlane {
     const next = this.queue.then(async () => {
       this.ready(); const state = structuredClone(this.state); this.prune(state);
       const result = await operation(state);
+      // User-visible capacity errors are not database durability failures.
+      if (!CloudStateSchema.safeParse(state).success || Buffer.byteLength(JSON.stringify(state)) > 24 * 1024 * 1024) throw new BridgeError("Cloud history capacity reached; inspect retained state before adding more work.", 413);
       try { this.store.save(state); } catch (error) { this.failed = true; for (const connection of this.connections.values()) connection.close(); this.connections.clear(); throw error; }
       this.state = state; return structuredClone(result);
     });
@@ -247,7 +250,7 @@ export class CloudControlPlane {
       const action = ReviewableActionSchema.parse(current), digest = actionDigest(action);
       if (canonicalJson(input.ref) !== canonicalJson({ taskId: action.taskId, interactionId: action.interactionId, revision: action.revision, optionId: action.optionId })) throw new BridgeError("Pending action reference changed.", 409);
       if (state.proposals.some(proposal => proposal.deviceId === input.deviceId && proposal.digest === digest && ["executing", "completed", "unknown"].includes(proposal.status))) throw new BridgeError("This exact action was already submitted; inspect its existing outcome.", 409);
-      if (containsCredentialLikeData(action.exactArguments)) throw new BridgeError("Credential-bearing actions require local review.", 403);
+      if (containsCredentialLikeData(action.exactArguments) || containsCredentialLikeData(action.reviewText)) throw new BridgeError("Credential-bearing actions require local review.", 403);
       const proposal: RemoteActionProposal = { version: 1, id: randomUUID(), projectId: input.projectId, deviceId: input.deviceId,
         deviceGeneration: device.generation, serverEpoch: state.serverEpoch, revision: 1, action, digest, status: "pending", createdAt: this.time(), expiresAt: this.until(300_000), receiptId: null, commandId: null };
       state.proposals.push(proposal); return proposal;
@@ -311,7 +314,7 @@ export class CloudControlPlane {
   async finishAuthentication(challengeId: string, response: AuthenticationResponseJSON) {
     return this.mutate(async state => {
       const challenge = this.takeChallenge(state, challengeId, "session", null), credential = await this.assertion(state, challenge, response);
-      const sessionToken = secret(), expiresAt = this.until(900_000); state.sessions.push({ tokenHash: hash(sessionToken), credentialId: credential.id, expiresAt });
+      const sessionToken = secret(), expiresAt = this.until(900_000); state.sessions = state.sessions.slice(-29); state.sessions.push({ tokenHash: hash(sessionToken), credentialId: credential.id, expiresAt });
       return { version: 1, authenticated: true, sessionToken, expiresAt };
     });
   }
@@ -361,7 +364,7 @@ export class CloudControlPlane {
     return this.mutate(async state => {
       if (state.stopped) throw new BridgeError("Cloud calls are stopped.", 409);
       this.actor(state, actor); const call = await this.options.readCall!(callSid);
-      if (!call || call.callSid !== callSid) throw new BridgeError("Call is no longer active.", 409);
+      if (!call || call.callSid !== callSid || !["ringing", "in_progress"].includes(call.status)) throw new BridgeError("Call is no longer active.", 409);
       const options = await generateAuthenticationOptions({ rpID: this.rpId, userVerification: "required", allowCredentials: state.credentials.map(credential => ({ id: credential.id })) });
       const challengeId = randomUUID(); state.challenges.push({ id: challengeId, kind: "call", challenge: options.challenge, binding: callSid, sessionHash: actor.sessionHash, expiresAt: this.until(120_000), used: false });
       return { version: 1, challengeId, options, callSid };
@@ -373,7 +376,7 @@ export class CloudControlPlane {
       this.actor(state, actor); const challenge = this.takeChallenge(state, challengeId, "call", actor.sessionHash);
       if (challenge.binding !== callSid || !this.options.readCall || !this.options.authorizeCall) throw new BridgeError("Call challenge identity mismatch.", 403);
       const credential = await this.assertion(state, challenge, response), call = await this.options.readCall(callSid);
-      if (!call || call.callSid !== callSid) throw new BridgeError("Call ended before verification.", 409);
+      if (!call || call.callSid !== callSid || !["ringing", "in_progress"].includes(call.status)) throw new BridgeError("Call ended before verification.", 409);
       return { credentialId: credential.id, verifiedAt: this.time(), expiresAt: this.until(300_000), ownerSessionId: actor.sessionHash };
     });
     await this.options.authorizeCall!(callSid, proof); return { version: 1, authorized: true, callSid, expiresAt: proof.expiresAt };

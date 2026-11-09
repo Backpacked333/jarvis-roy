@@ -619,6 +619,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
                     self.fail("Voice timed out. Start a new turn explicitly. Nothing was replayed."); return
                 }
                 do {
+                    if let dictation = self.dictation, self.isListening, !dictation.mayContinue(at: now) { self.finishCapture() }
                     if self.usingDuplex {
                         try self.monitorDuplex(ticket, now: now)
                         guard self.current(ticket) else { return }
@@ -716,7 +717,9 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     }
     private func checkedProviderStatus() async throws -> HarnessVoiceStatus {
         if continuousConnectionEnabled, providerPreflight.reusable(at: now()), let cachedProviderStatus { return cachedProviderStatus }
+        let ticket = turn.generation
         let result = try await transport.status()
+        guard current(ticket) else { return result }
         if result.status != "unavailable" { providerPreflight.verified(at: now()); cachedProviderStatus = result }
         else { providerPreflight.reset(); cachedProviderStatus = nil }
         return result

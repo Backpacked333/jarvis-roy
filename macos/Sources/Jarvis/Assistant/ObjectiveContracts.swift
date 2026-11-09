@@ -27,7 +27,8 @@ struct AssistantObjective: Decodable, AssistantRevisioned {
 }
 
 struct ObjectiveReadiness: Decodable {
-    let enabled: Bool, ready: Bool, stopped: Bool, activeWorkers: Int, maxWorkers: Int
+    let version: Int, enabled: Bool, ready: Bool, stopped: Bool, activeWorkers: Int, maxWorkers: Int
+    var acceptingWork: Bool { version == 1 && enabled && ready && !stopped }
     let dailyLimitUsd: Double, monthlyLimitUsd: Double, dailyCommittedUsd: Double, monthlyCommittedUsd: Double
     let unknownReservations: Int, nextWakeAt: String?, reason: String?
 }

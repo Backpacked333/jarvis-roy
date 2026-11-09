@@ -3,6 +3,21 @@ import XCTest
 @testable import Jarvis
 
 final class MemoryContextTests: XCTestCase {
+    func testUnrelatedEditPreservesTemporalAssertionAndExplicitOpenBounds() throws {
+        let original = try memory()
+        var json = try original.assistantJSONObject()
+        json["assertion"] = ["entityId": "person-one", "property": "employer", "value": "Acme",
+            "validFrom": "2026-01-01T00:00:00Z", "validTo": NSNull(), "observedAt": "2026-11-09T12:00:00Z"]
+        let entry = try JSONDecoder().decode(AssistantMemoryRecord.self, from: JSONSerialization.data(withJSONObject: json))
+        var edited = entry.input; edited.pinned = !edited.pinned
+        let encoded = try edited.assistantJSONObject()
+        let assertion = try XCTUnwrap(encoded["assertion"] as? [String: Any])
+        XCTAssertEqual(assertion["entityId"] as? String, "person-one")
+        XCTAssertEqual(assertion["value"] as? String, "Acme")
+        XCTAssertTrue(assertion["validTo"] is NSNull)
+        XCTAssertEqual(entry.assertion?.observedAt, "2026-11-09T12:00:00Z")
+    }
+
     private func memory(version: Int = 1, revision: Int = 1, digest: String = String(repeating: "a", count: 64),
                         scope: [String: Any] = ["kind": "global"], status: String = "proposed") throws -> AssistantMemoryRecord {
         let object: [String: Any] = ["version": version, "id": "memory-1", "revision": revision, "digest": digest,

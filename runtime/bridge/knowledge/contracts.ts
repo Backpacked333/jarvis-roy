@@ -36,11 +36,14 @@ export const SourceVersionSchema = z.strictObject({
   visibility: z.enum(["private", "public"]), grantId: KnowledgeId.nullable(), resourceId: z.string().max(1_024).nullable(),
   kind: z.enum(["document", "web", "metadata"]), url: z.string().max(2_000).nullable(), createdAt: z.iso.datetime(),
   extraction: z.enum(["text", "pdf_text", "metadata_only", "empty", "truncated"]), archived: z.boolean(),
+  extractionDetails: z.strictObject({ format: z.enum(["pdf", "markdown", "csv", "code", "text"]),
+    extractor: z.enum(["pdfkit", "pdftotext", "utf8"]), quality: z.enum(["text_only", "structured_text", "mixed", "empty"]), warnings: z.array(z.string().max(300)).max(8) }).optional(),
 });
 export type SourceVersion = z.infer<typeof SourceVersionSchema>;
 export const EvidencePassageSchema = z.strictObject({
   id: KnowledgeId, sourceVersionId: KnowledgeId, projectId: KnowledgeId, ordinal: z.number().int().nonnegative(),
-  text: z.string().max(8_000), locator: z.strictObject({ page: z.number().int().positive().nullable(), lineStart: z.number().int().positive(), lineEnd: z.number().int().positive() }),
+  text: z.string().max(8_000), locator: z.strictObject({ page: z.number().int().positive().nullable(), lineStart: z.number().int().positive(), lineEnd: z.number().int().positive(),
+    section: z.string().max(1000).optional(), symbol: z.string().max(240).optional(), rowStart: z.number().int().positive().optional(), rowEnd: z.number().int().positive().optional() }),
 });
 export type EvidencePassage = z.infer<typeof EvidencePassageSchema>;
 export const SearchInputSchema = z.strictObject({

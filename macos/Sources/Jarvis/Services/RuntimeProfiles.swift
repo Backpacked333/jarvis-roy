@@ -10,6 +10,11 @@ struct PairedCloudProfile: Codable, Identifiable, Equatable {
     let version: Int
     let id: String, origin: String, deviceId: String, label: String
     let generation: Int, receiptPublicKey: String, pairedAt: String
+    func advancing(to generation: Int) throws -> Self {
+        guard generation > self.generation else { throw CloudConnectionFailure.protocolMismatch }
+        return Self(version: version, id: id, origin: origin, deviceId: deviceId, label: label,
+                    generation: generation, receiptPublicKey: receiptPublicKey, pairedAt: pairedAt)
+    }
 }
 
 enum CloudProfilePolicy {
@@ -48,7 +53,7 @@ final class RuntimeProfiles: ObservableObject {
                 let data = try Data(contentsOf: file)
                 guard data.count <= 16_384 else { throw CloudConnectionFailure.storage }
                 let profile = try JSONDecoder().decode(PairedCloudProfile.self, from: data)
-                guard profile.version == 1, profile.generation > 0, CloudProfilePolicy.identifier(profile.id),
+                guard profile.version == 1, profile.generation >= 0, CloudProfilePolicy.identifier(profile.id),
                       CloudProfilePolicy.identifier(profile.deviceId), profile.receiptPublicKey.utf8.count <= 2048,
                       try CloudProfilePolicy.origin(profile.origin).absoluteString == profile.origin else { throw CloudConnectionFailure.storage }
                 cloudProfile = profile

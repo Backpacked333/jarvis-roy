@@ -115,6 +115,14 @@ export async function createCloudApplication(options: { env?: NodeJS.ProcessEnv;
       const parsed = z.strictObject({ projectId: z.string(), processor: z.literal("context"), references: z.array(z.strictObject({ grantId: z.string(), grantRevision: z.number().int().positive(), kind: z.enum(["source", "memory"]), id: z.string(), revision: z.number().int().positive(), sha256: z.string() })).max(64) }).parse(input);
       json(response, 200, { version: 1, authorized: parsed.references.every(ref => control.authorizeSnapshot(ref, parsed.projectId, parsed.processor)) }); return true;
     }
+    if (url.pathname === "/v1/cloud/runtime/google-context") {
+      const parsed = z.strictObject({ projectId: z.string() }).parse(input);
+      json(response, 200, integrations.google?.readGoogleContext(parsed.projectId) ?? { version: 1, entries: [] }); return true;
+    }
+    if (url.pathname === "/v1/cloud/runtime/google-context/authorize") {
+      const parsed = z.strictObject({ projectId: z.string(), references: z.array(z.strictObject({ id: z.string(), sourceRevision: z.string() })).max(64) }).parse(input);
+      json(response, 200, { version: 1, authorized: parsed.references.every(ref => integrations.google?.authorizeGoogleContext(ref, parsed.projectId) === true) }); return true;
+    }
     if (url.pathname === "/v1/cloud/runtime/google/execute") {
       if (!integrations.google) throw new BridgeError("Google is disabled.", 503);
       const parsed = z.strictObject({ input: z.unknown(), approvalId: z.string(), projectId: z.string(), digest: z.string(), exactArguments: z.string() }).parse(input);

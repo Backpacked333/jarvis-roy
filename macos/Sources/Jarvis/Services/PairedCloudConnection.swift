@@ -21,6 +21,9 @@ final class PairedCloudConnection: ObservableObject {
     private var heartbeat: Task<Void, Never>?
     private var connectionGeneration = 0
     private var serverEpoch = 0
+    private var reconciled = Set<String>()
+    private var reconciliationCursor = 0
+    private var reconcilingGeneration: Int?
     private lazy var session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil; configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false
@@ -53,7 +56,7 @@ final class PairedCloudConnection: ObservableObject {
             let paired = try await remoteJSON(url, path: "/v1/cloud/pairing/complete", token: pairingToken,
                                               body: ["pairingId": pairingID, "deviceId": deviceID])
             guard ticket == connectionGeneration, paired["version"] as? Int == 1,
-                  paired["deviceId"] as? String == deviceID, let generation = paired["generation"] as? Int, generation > 0,
+                  paired["deviceId"] as? String == deviceID, let generation = paired["generation"] as? Int, generation >= 0,
                   let token = paired["deviceToken"] as? String, let key = paired["receiptPublicKey"] as? String,
                   key.utf8.count <= 2048, key.contains("BEGIN PUBLIC KEY") else { throw CloudConnectionFailure.protocolMismatch }
             let value = PairedCloudProfile(version: 1, id: UUID().uuidString, origin: url.absoluteString, deviceId: deviceID,
@@ -80,6 +83,7 @@ final class PairedCloudConnection: ObservableObject {
             self.socket = socket; state = .connecting; detail = "Connecting the paired device over TLS…"; socket.resume()
             reader = Task { [weak self] in
                 guard let self else { return }
+                var activeProfile = profile
                 do {
                     while !Task.isCancelled, ticket == self.connectionGeneration {
                         let message = try await socket.receive()
@@ -90,17 +94,24 @@ final class PairedCloudConnection: ObservableObject {
                               frame["version"] as? Int == 1 else { throw CloudConnectionFailure.protocolMismatch }
                         if frame["type"] as? String == "device.welcome" {
                             guard self.serverEpoch == 0, frame["deviceId"] as? String == profile.deviceId,
-                                  frame["generation"] as? Int == profile.generation, let epoch = frame["serverEpoch"] as? Int, epoch > 0,
+                                  let generation = frame["generation"] as? Int, generation > profile.generation, let epoch = frame["serverEpoch"] as? Int, epoch > 0,
                                   frame["receiptPublicKey"] as? String == profile.receiptPublicKey else { throw CloudConnectionFailure.protocolMismatch }
+                            activeProfile = try profile.advancing(to: generation)
+                            try self.profiles.save(activeProfile); self.profile = activeProfile
                             _ = try await self.localJSON("/v1/cloud/native-device", body: ["version": 1, "profileId": profile.id,
-                                "origin": profile.origin, "deviceId": profile.deviceId, "generation": profile.generation,
+                                "origin": profile.origin, "deviceId": profile.deviceId, "generation": activeProfile.generation,
                                 "serverEpoch": epoch, "receiptPublicKey": profile.receiptPublicKey])
                             guard ticket == self.connectionGeneration else { return }
                             self.serverEpoch = epoch; self.state = .connected; self.detail = "Paired cloud connection ready. Selected snapshots require their own retention grants."
-                            self.startHeartbeat(profile, epoch: epoch, socket: socket, ticket: ticket)
+                            self.startHeartbeat(activeProfile, journal: journal, epoch: epoch, socket: socket, ticket: ticket)
+                            try await self.reconcile(journal, profile: activeProfile, epoch: epoch, socket: socket, ticket: ticket)
+                        } else if frame["type"] as? String == "heartbeat.ack" {
+                            guard frame["generation"] as? Int == activeProfile.generation, frame["serverEpoch"] as? Int == self.serverEpoch else { throw CloudConnectionFailure.protocolMismatch }
+                        } else if frame["accepted"] as? Bool == true {
+                            guard self.serverEpoch > 0, frame["duplicate"] is Bool, Set(frame.keys).isSubset(of: ["version", "accepted", "duplicate"]) else { throw CloudConnectionFailure.protocolMismatch }
                         } else {
                             guard self.serverEpoch > 0 else { throw CloudConnectionFailure.protocolMismatch }
-                            let command = try CloudCommandEnvelope(frame, profile: profile, epoch: self.serverEpoch)
+                            let command = try CloudCommandEnvelope(frame, profile: activeProfile, epoch: self.serverEpoch)
                             let prepared = try journal.prepare(command)
                             var receipt = prepared.receipt
                             if prepared.dispatch {
@@ -118,7 +129,7 @@ final class PairedCloudConnection: ObservableObject {
                                 try journal.finish(receipt)
                             }
                             guard ticket == self.connectionGeneration else { return }
-                            try await socket.send(.data(try JSONEncoder().encode(receipt)))
+                            try await socket.send(.string(String(decoding: try JSONEncoder().encode(receipt), as: UTF8.self)))
                         }
                     }
                 } catch {
@@ -129,7 +140,7 @@ final class PairedCloudConnection: ObservableObject {
     }
     func disconnect() {
         connectionGeneration += 1; reader?.cancel(); reader = nil; heartbeat?.cancel(); heartbeat = nil
-        socket?.cancel(with: .goingAway, reason: nil); socket = nil; serverEpoch = 0
+        socket?.cancel(with: .goingAway, reason: nil); socket = nil; serverEpoch = 0; reconciled = []; reconciliationCursor = 0
         state = profile == nil ? .unpaired : .disconnected
         detail = profile == nil ? "Cloud companion is not paired." : "Cloud device disconnected. Unconfirmed commands are not replayed."
     }
@@ -159,14 +170,79 @@ final class PairedCloudConnection: ObservableObject {
         guard profiles.cloudProfile?.id == profile.id else { throw CloudConnectionFailure.configuration }
         return data
     }
-    private func startHeartbeat(_ profile: PairedCloudProfile, epoch: Int, socket: URLSessionWebSocketTask, ticket: Int) {
+    func setupData(path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> Data {
+        try requireEnabled()
+        let allowed = method == "GET" && path == "/v1/cloud/setup/integrations/status" ||
+            method == "POST" && ["/v1/cloud/setup/integrations/telegram/pair", "/v1/cloud/setup/integrations/google/connect", "/v1/cloud/setup/integrations/twilio/verify-owner"].contains(path)
+        guard allowed, let profile = profiles.cloudProfile, let token = try credentials.read(profileID: profile.id) else { throw CloudConnectionFailure.configuration }
+        let origin = try CloudProfilePolicy.origin(profile.origin)
+        guard let endpoint = URL(string: path, relativeTo: origin)?.absoluteURL, endpoint.host == origin.host, endpoint.port == origin.port, endpoint.scheme == "https" else { throw CloudConnectionFailure.configuration }
+        var request = URLRequest(url: endpoint); request.httpMethod = method
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let body { request.setValue("application/json", forHTTPHeaderField: "Content-Type"); request.httpBody = try JSONSerialization.data(withJSONObject: body) }
+        let result = try await json(request)
+        guard profiles.cloudProfile?.id == profile.id else { throw CloudConnectionFailure.configuration }
+        return try JSONSerialization.data(withJSONObject: result)
+    }
+    func beginOwnerEnrollment() async throws -> URL {
+        try requireEnabled()
+        guard let profile = profiles.cloudProfile, let token = try credentials.read(profileID: profile.id) else { throw CloudConnectionFailure.credentials }
+        let origin = try CloudProfilePolicy.origin(profile.origin)
+        let result = try await remoteJSON(origin, path: "/v1/cloud/enrollment/start", token: token, body: [:])
+        guard profiles.cloudProfile?.id == profile.id, result["version"] as? Int == 1,
+              let invitation = result["enrollmentToken"] as? String, invitation.range(of: #"^[A-Za-z0-9_-]{32,8192}$"#, options: .regularExpression) != nil,
+              let expires = result["expiresAt"] as? String, CloudCommandEnvelope.date(expires).map({ $0 > Date() && $0.timeIntervalSinceNow <= 310 }) == true,
+              let raw = result["url"] as? String, let parts = URLComponents(string: raw),
+              parts.scheme == "https", parts.host == origin.host, parts.port == origin.port,
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.path == "/v1/cloud/enroll",
+              parts.fragment == "token=\(invitation)", let url = parts.url else { throw CloudConnectionFailure.protocolMismatch }
+        return url
+    }
+    private func reconcile(_ journal: CloudReceiptJournal, profile: PairedCloudProfile, epoch: Int,
+                           socket: URLSessionWebSocketTask, ticket: Int) async throws {
+        guard ticket == connectionGeneration, reconcilingGeneration != ticket else { return }
+        reconcilingGeneration = ticket
+        defer { if reconcilingGeneration == ticket { reconcilingGeneration = nil } }
+        let candidates = journal.receipts(deviceID: profile.deviceId).filter { $0.status == "unknown" || !reconciled.contains($0.commandId) }
+        guard !candidates.isEmpty else { return }
+        let start = reconciliationCursor % candidates.count, count = min(candidates.count, 16)
+        reconciliationCursor = (start + count) % candidates.count
+        for offset in 0..<count {
+            var receipt = candidates[(start + offset) % candidates.count]
+            guard ticket == connectionGeneration, !Task.isCancelled else { return }
+            if receipt.status == "unknown" {
+                // Observation is separate from dispatch. An absent or uncertain local
+                // receipt never authorizes retry, including after an app crash.
+                let result: [String: Any]
+                do { result = try await localJSON("/v1/cloud/native-command-result", body: ["version": 1, "profileId": profile.id,
+                    "commandId": receipt.commandId, "commandDigest": receipt.commandDigest,
+                    "originalGeneration": receipt.generation, "originalServerEpoch": receipt.serverEpoch]) }
+                catch { continue }
+                guard ticket == connectionGeneration, !Task.isCancelled else { return }
+                guard result["version"] as? Int == 1, let status = result["status"] as? String,
+                      let code = result["code"] as? String else { throw CloudConnectionFailure.protocolMismatch }
+                receipt = try receipt.resolved(status: status, code: code)
+                if receipt.status == "unknown" { continue }
+                try journal.finish(receipt)
+            }
+            let frame: [String: Any] = ["version": 1, "type": "reconcile", "id": UUID().uuidString,
+                "commandId": receipt.commandId, "deviceId": profile.deviceId, "generation": profile.generation,
+                "serverEpoch": epoch, "originalGeneration": receipt.generation, "originalServerEpoch": receipt.serverEpoch,
+                "commandDigest": receipt.commandDigest, "status": receipt.status, "code": receipt.code]
+            try await socket.send(.string(String(decoding: try JSONSerialization.data(withJSONObject: frame), as: UTF8.self)))
+            guard ticket == connectionGeneration else { return }
+            reconciled.insert(receipt.commandId)
+        }
+    }
+    private func startHeartbeat(_ profile: PairedCloudProfile, journal: CloudReceiptJournal, epoch: Int, socket: URLSessionWebSocketTask, ticket: Int) {
         heartbeat = Task { [weak self] in
             while !Task.isCancelled, let self, ticket == self.connectionGeneration {
                 do {
                     try await Task.sleep(for: .seconds(20))
                     guard ticket == self.connectionGeneration else { return }
                     let frame: [String: Any] = ["version": 1, "type": "heartbeat", "deviceId": profile.deviceId, "generation": profile.generation, "serverEpoch": epoch]
-                    try await socket.send(.data(try JSONSerialization.data(withJSONObject: frame)))
+                    try await socket.send(.string(String(decoding: try JSONSerialization.data(withJSONObject: frame), as: UTF8.self)))
+                    try await self.reconcile(journal, profile: profile, epoch: epoch, socket: socket, ticket: ticket)
                 } catch { return }
             }
         }
@@ -180,7 +256,7 @@ final class PairedCloudConnection: ObservableObject {
         return try await json(request)
     }
     private func localJSON(_ path: String, body: [String: Any]) async throws -> [String: Any] {
-        guard ["/v1/cloud/native-device", "/v1/cloud/native-command"].contains(path),
+        guard ["/v1/cloud/native-device", "/v1/cloud/native-command", "/v1/cloud/native-command-result"].contains(path),
               RuntimeConnection.localToken.count >= 32, RuntimeConnection.nativeToken.count >= 32,
               let url = URL(string: path, relativeTo: RuntimeConnection.baseURL)?.absoluteURL else { throw CloudConnectionFailure.configuration }
         var request = URLRequest(url: url); request.httpMethod = "POST"; request.timeoutInterval = 30

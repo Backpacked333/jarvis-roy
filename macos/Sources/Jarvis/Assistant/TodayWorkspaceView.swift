@@ -31,7 +31,7 @@ final class TodayModel: ObservableObject {
             struct Response: Decodable { let version: Int, objectives: [AssistantObjective], readiness: ObjectiveReadiness }
             let result = try await request(Response.self, path: "/v1/objectives", authority: authority)
             guard generation == readGeneration, authority == Self.currentAuthorityID else { return }
-            guard result.version == 1, result.objectives.allSatisfy({ $0.version == 1 && $0.revision > 0 }) else { throw AssistantClientError.invalidResponse }
+            guard result.version == 1, result.readiness.version == 1, result.objectives.allSatisfy({ $0.version == 1 && $0.revision > 0 }) else { throw AssistantClientError.invalidResponse }
             objectives = ObjectiveDisplayPolicy.ordered(result.objectives); readiness = result.readiness; error = nil
         } catch { if generation == readGeneration, authority == Self.currentAuthorityID { self.error = error.localizedDescription } }
     }
@@ -45,12 +45,14 @@ final class TodayModel: ObservableObject {
                 "dependsOn": [], "estimatedUsd": 1, "maxWallTimeMs": 1_800_000]]])
     }
 
-    func control(_ objective: AssistantObjective, action: String) async {
+    func control(_ objective: AssistantObjective, action: String, authority: String) async {
+        guard authority == Self.currentAuthorityID, authority == authorityID else { return }
         guard ["pause", "resume", "stop"].contains(action) else { return }
         _ = await mutate(path: "/v1/objectives/\(objective.id)/\(action)?projectId=\(objective.projectId)",
             body: ["expectedRevision": objective.revision], expected: objective)
     }
-    func answer(_ objective: AssistantObjective, text: String) async -> Bool {
+    func answer(_ objective: AssistantObjective, text: String, authority: String) async -> Bool {
+        guard authority == Self.currentAuthorityID, authority == authorityID else { return false }
         guard let question = objective.question, let expires = RoomsStateRules.date(question.expiresAt), expires > Date(),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.utf16.count <= 4_000 else { return false }
         return await mutate(path: "/v1/objectives/\(objective.id)/answer?projectId=\(objective.projectId)", body: ["expectedRevision": objective.revision,
@@ -92,7 +94,8 @@ struct TodayWorkspaceView: View {
     @State private var ceiling = 5.0
     @State private var setupVisible = false
     @State private var memoryVisible = false
-    @State private var stopTarget: AssistantObjective?
+    @State private var stopTarget: ObjectiveStopTarget?
+    private struct ObjectiveStopTarget { let objective: AssistantObjective, authority: String }
     init(app: AppModel, assistant: AssistantModel) {
         self.app = app; self.assistant = assistant
         _today = StateObject(wrappedValue: TodayModel(client: assistant.client))
@@ -132,7 +135,7 @@ struct TodayWorkspaceView: View {
                     objectiveComposer
                     if let readiness = today.readiness {
                         HStack {
-                            Label(readiness.ready ? "Ready for bounded work" : "Work is paused", systemImage: readiness.ready ? "checkmark.circle" : "pause.circle")
+                            Label(readiness.acceptingWork ? "Ready for bounded work" : "Work is paused", systemImage: readiness.acceptingWork ? "checkmark.circle" : "pause.circle")
                             Spacer()
                             Text("\(readiness.activeWorkers)/\(readiness.maxWorkers) workers · $\(readiness.dailyCommittedUsd, specifier: "%.2f") / $\(readiness.dailyLimitUsd, specifier: "%.0f") today")
                                 .font(.caption).foregroundStyle(.secondary)
@@ -145,12 +148,13 @@ struct TodayWorkspaceView: View {
                         ContentUnavailableView("Room for your next goal", systemImage: "target", description: Text("Describe a research result you want. Review the estimate and start when ready."))
                     }
                     ForEach(today.objectives) { objective in
+                        let authority = TodayModel.currentAuthorityID
                         ObjectiveCard(objective: objective, busy: today.busy,
                             openProject: { if profiles.selected == .cloud { cloudProjectID = objective.projectId } else { Task { await app.openProject(objective.projectId) } } },
                             control: { action in
-                                if action == "stop" { stopTarget = objective }
-                                else { Task { await today.control(objective, action: action) } }
-                            }, answer: { await today.answer(objective, text: $0) })
+                                if action == "stop" { stopTarget = .init(objective: objective, authority: authority) }
+                                else { Task { await today.control(objective, action: action, authority: authority) } }
+                            }, answer: { await today.answer(objective, text: $0, authority: authority) })
                     }
                 }
                 if app.approvalCount > 0 {
@@ -168,13 +172,14 @@ struct TodayWorkspaceView: View {
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
         }
-        .sheet(isPresented: $setupVisible) { GuidedSetupView(app: app) }
+        .onChange(of: TodayModel.currentAuthorityID) { _, _ in stopTarget = nil }
+        .sheet(isPresented: $setupVisible) { GuidedSetupView(app: app, cloudProjectID: profiles.selected == .cloud ? projectID : nil) }
         .sheet(isPresented: $memoryVisible) {
             VStack { HStack { Spacer(); Button("Done") { memoryVisible = false } }.padding(); MemoryWorkspaceView(projectID: assistant.selectedSession?.focus.projectID, client: assistant.client, reviewInbox: true) }
                 .frame(minWidth: 860, minHeight: 620)
         }
         .confirmationDialog("Stop this objective?", isPresented: Binding(get: { stopTarget != nil }, set: { if !$0 { stopTarget = nil } }), titleVisibility: .visible) {
-            if let target = stopTarget { Button("Stop \(String(target.title.prefix(40)))", role: .destructive) { Task { await today.control(target, action: "stop") }; stopTarget = nil } }
+            if let target = stopTarget { Button("Stop \(String(target.objective.title.prefix(40)))", role: .destructive) { Task { await today.control(target.objective, action: "stop", authority: target.authority) }; stopTarget = nil } }
             Button("Keep working", role: .cancel) { stopTarget = nil }
         } message: { Text("Jarvis will request cancellation and report whether the current work actually stopped. Completed effects remain recorded.") }
     }
@@ -201,7 +206,7 @@ struct TodayWorkspaceView: View {
                     guard let projectID else { return }
                     let captured = goal, scope = draftScope, capturedCeiling = ceiling
                     Task { if await today.create(projectID: projectID, goal: captured, ceiling: capturedCeiling), goalDrafts[scope] == captured { goalDrafts[scope] = "" } }
-                }.disabled(today.busy || today.readiness?.ready != true || projectID == nil || goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || goal.utf16.count > 16_000)
+                }.disabled(today.busy || today.readiness?.acceptingWork != true || projectID == nil || goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || goal.utf16.count > 16_000)
             }
             Text("Up to 30 minutes; two workers shared across objectives. Uses permitted project sources. Estimates are separate from provider billing caps. Actions still require their own approval.")
                 .font(.caption).foregroundStyle(.secondary)

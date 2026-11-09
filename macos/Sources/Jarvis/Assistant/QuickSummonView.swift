@@ -68,9 +68,10 @@ private struct QuickSummonView: View {
                         .onSubmit { send() }
                     if let selection = assistant.visualSelection { Text("Referring to: \(selection.label)").font(.caption).foregroundStyle(.secondary) }
                     if let error = assistant.error { Text(error).font(.caption).foregroundStyle(.orange).lineLimit(3) }
-                    if voice.isListening { Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript).font(.caption).lineLimit(3) }
+                    if voice.isListening || voice.dictationActive { Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript).font(.caption).lineLimit(3) }
                     HStack {
-                        if voice.isListening { Button("Finish") { voice.finishListening() } }
+                        if voice.dictationPaused { Button("Continue") { captureStarted(); Task { await voice.continueDictation() } } }
+                        if voice.isListening || voice.dictationActive { Button("Finish") { voice.finishListening() } }
                         else {
                             Button { captureStarted(); app.tab = .assistant; Task { await app.startManualListening() } } label: { Label("Speak", systemImage: "mic") }
                                 .disabled(!voice.cloudConsentGranted)

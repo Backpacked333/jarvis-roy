@@ -43,15 +43,26 @@ enum AssistantMemoryKind: String, Codable, CaseIterable, Identifiable {
     case preference, fact, goal, person, routine, decision
     var id: String { rawValue }
 }
+struct AssistantMemoryAssertion: Codable, Equatable {
+    let entityId: String, property: String, value: String, validFrom: String?, validTo: String?, observedAt: String
+    private enum CodingKeys: CodingKey { case entityId, property, value, validFrom, validTo, observedAt }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(entityId, forKey: .entityId); try c.encode(property, forKey: .property); try c.encode(value, forKey: .value)
+        try c.encode(validFrom, forKey: .validFrom); try c.encode(validTo, forKey: .validTo); try c.encode(observedAt, forKey: .observedAt)
+    }
+}
 struct AssistantMemoryInput: Encodable {
     var kind: AssistantMemoryKind, scope: AssistantMemoryScope, text: String, provenance: AssistantMemoryProvenance
     var confidence: Double, pinned: Bool, expiresAt: String?, cloudAllowed: Bool
-    private enum CodingKeys: CodingKey { case kind, scope, text, provenance, confidence, pinned, expiresAt, cloudAllowed }
+    var assertion: AssistantMemoryAssertion? = nil
+    private enum CodingKeys: CodingKey { case kind, scope, text, provenance, confidence, pinned, expiresAt, cloudAllowed, assertion }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(kind, forKey: .kind); try c.encode(scope, forKey: .scope); try c.encode(text, forKey: .text)
         try c.encode(provenance, forKey: .provenance); try c.encode(confidence, forKey: .confidence)
         try c.encode(pinned, forKey: .pinned); try c.encode(expiresAt, forKey: .expiresAt); try c.encode(cloudAllowed, forKey: .cloudAllowed)
+        try c.encodeIfPresent(assertion, forKey: .assertion)
     }
 }
 struct AssistantMemoryRecord: Codable, AssistantRevisioned {
@@ -60,7 +71,8 @@ struct AssistantMemoryRecord: Codable, AssistantRevisioned {
     let kind: AssistantMemoryKind, scope: AssistantMemoryScope, text: String, provenance: AssistantMemoryProvenance
     let confidence: Double, pinned: Bool, expiresAt: String?, cloudAllowed: Bool, status: Status
     let createdAt: String, updatedAt: String, supersededBy: String?
-    private enum CodingKeys: CodingKey { case version, id, revision, digest, kind, scope, text, provenance, confidence, pinned, expiresAt, cloudAllowed, status, createdAt, updatedAt, supersededBy }
+    let assertion: AssistantMemoryAssertion?
+    private enum CodingKeys: CodingKey { case version, id, revision, digest, kind, scope, text, provenance, confidence, pinned, expiresAt, cloudAllowed, status, createdAt, updatedAt, supersededBy, assertion }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.decode(Int.self, forKey: .version)
@@ -73,6 +85,7 @@ struct AssistantMemoryRecord: Codable, AssistantRevisioned {
         cloudAllowed = try c.decode(Bool.self, forKey: .cloudAllowed); status = try c.decode(Status.self, forKey: .status)
         createdAt = try c.decode(String.self, forKey: .createdAt); updatedAt = try c.decode(String.self, forKey: .updatedAt)
         supersededBy = try c.decodeIfPresent(String.self, forKey: .supersededBy)
+        assertion = try c.decodeIfPresent(AssistantMemoryAssertion.self, forKey: .assertion)
         guard revision > 0, digest.count == 64, RoomsStateRules.isDigest(digest), confidence.isFinite, (0...1).contains(confidence),
               scope.kind != .project || scope.projectId != nil else { throw AssistantClientError.invalidResponse }
     }
@@ -85,7 +98,7 @@ struct AssistantMemoryRecord: Codable, AssistantRevisioned {
     }
     var input: AssistantMemoryInput {
         AssistantMemoryInput(kind: kind, scope: scope, text: text, provenance: provenance,
-            confidence: confidence, pinned: pinned, expiresAt: expiresAt, cloudAllowed: cloudAllowed)
+            confidence: confidence, pinned: pinned, expiresAt: expiresAt, cloudAllowed: cloudAllowed, assertion: assertion)
     }
     var expired: Bool { expiresAt.map { (RoomsStateRules.date($0) ?? .distantPast) <= Date() } ?? false }
     func matchesReview(_ other: AssistantMemoryRecord) -> Bool {

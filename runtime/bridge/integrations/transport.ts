@@ -30,6 +30,7 @@ export class IntegrationTransport {
       if (reader) while (true) { const next = await reader.read(); if (next.done) break; size += next.value.length; if (size > 2_097_152) { await reader.cancel(); throw new Error("Provider response too large"); } parts.push(next.value); }
       await this.ledger.settle(reservation.id, { accounting: "measured", estimatedUsd }); settled = true;
       if (!response.ok) throw new ProviderHttpError(response.status);
+      signal?.throwIfAborted();
       return JSON.parse(Buffer.concat(parts).toString("utf8") || "{}");
     } catch (error) {
       if (!settled) await this.ledger.settle(reservation.id, { accounting: escaped ? "unknown" : "measured", estimatedUsd: escaped ? null : 0 });

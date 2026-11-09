@@ -3,11 +3,11 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { createReadStream, createWriteStream } from 'node:fs';
 import { chmod, link, lstat, mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
+import { markRestoredDirectory, RESTORE_REVIEW_MARKER } from './cloud-recovery.mjs';
 
 const MAGIC = Buffer.from('JARVIS-BACKUP-1\n');
 const MAX_FILES = 100_000, MAX_MANIFEST = 16 * 1024 * 1024, MAX_BYTES = 64 * 1024 ** 3;
@@ -107,7 +107,7 @@ export async function restoreEncryptedBackup({ archive, destination, key }) {
       if (manifest.version !== 1 || !Array.isArray(manifest.files) || manifest.files.length > MAX_FILES) throw failure('Unsupported backup manifest.');
       const seen = new Set(); let total = 0;
       for (const item of manifest.files) {
-        if (!safeRelative(item.path) || seen.has(item.path) || !Number.isSafeInteger(item.bytes) || item.bytes < 0 || !/^[a-f0-9]{64}$/.test(item.sha256)) throw failure('Invalid backup file record.');
+        if (!safeRelative(item.path) || item.path === RESTORE_REVIEW_MARKER || seen.has(item.path) || !Number.isSafeInteger(item.bytes) || item.bytes < 0 || !/^[a-f0-9]{64}$/.test(item.sha256)) throw failure('Invalid backup file record.');
         seen.add(item.path); total += item.bytes;
       }
       if (total > MAX_BYTES || (await stat(payload)).size !== offset + total) throw failure('Backup payload length is invalid.');
@@ -120,8 +120,9 @@ export async function restoreEncryptedBackup({ archive, destination, key }) {
         if (await hashFile(output) !== item.sha256) throw failure('Restored file checksum mismatch.');
         await syncFile(output);
       }
+      const marker = await markRestoredDirectory(staging, { archiveSha256: await hashFile(archive), backupCreatedAt: manifest.createdAt });
       await rename(staging, destination); await syncFile(path.dirname(destination));
-      return { version: 1, fileCount: manifest.files.length, authenticated: true, activated: false };
+      return { version: 1, fileCount: manifest.files.length, authenticated: true, activated: false, reviewRequired: true, restoreId: marker.restoreId };
     } finally { await input.close(); }
   } finally { await rm(scratch, { recursive: true, force: true }); }
 }
@@ -169,16 +170,19 @@ export async function main(argv) {
   if (args.command === 'restore') return restoreEncryptedBackup({ archive: args.archive, destination: args.destination, key });
   if (args.command !== 'create' || !args.source || !args.output || !args.remote) throw failure('Usage: cloud-backup.mjs create --source DIR --output jarvis-TIMESTAMP.jvb --key-file FILE --remote user@host:/backups; or restore --archive FILE --destination NEW_DIR --key-file FILE');
   parseOffhostTarget(args.remote);
+  const source = path.resolve(args.source), keyFile = path.resolve(args['key-file']);
+  if (keyFile === source || keyFile.startsWith(source + path.sep)) throw failure('Backup key must be outside the backed-up state.');
   const active = [];
+  let snapshot;
   try {
     for (const service of SERVICES) if ((await run('systemctl', ['is-active', '--quiet', service])).code === 0) active.push(service);
     if ((await run('systemctl', ['stop', ...SERVICES])).code !== 0) throw failure('Could not quiesce Jarvis services; no backup created.');
     for (const service of SERVICES) if ((await run('systemctl', ['is-active', '--quiet', service])).code === 0) throw failure('Jarvis still has active writers; no backup created.');
-    const snapshot = await createEncryptedBackup({ source: args.source, output: args.output, key });
-    return { ...snapshot, ...await uploadVerifiedBackup(args.output, args.remote) };
+    snapshot = await createEncryptedBackup({ source: args.source, output: args.output, key });
   } finally {
     if (active.length && (await run('systemctl', ['start', ...active.reverse()])).code !== 0) throw failure('Backup operation ended, but Jarvis services could not restart. Inspect systemd status.');
   }
+  return { ...snapshot, ...await uploadVerifiedBackup(args.output, args.remote) };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main(process.argv.slice(2)).then(result => process.stdout.write(JSON.stringify(result) + '\n')).catch(() => {

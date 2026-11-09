@@ -60,7 +60,9 @@ export class TelegramIntegration {
       const updates = response.result.sort((a, b) => a.update_id - b.update_id);
       // /stop is processed ahead of any ordinary message in the received batch.
       const owned = (update: z.infer<typeof updateSchema>) => update.message?.chat.type === "private" && String(update.message.chat.id) === this.options.ownerChatId && String(update.message.from?.id) === this.options.ownerChatId && update.message.from?.is_bot === false;
-      for (const update of updates) if (owned(update) && update.message?.text?.trim() === "/stop" && this.paired()) {
+      const stopHandled = new Set<number>();
+      for (const update of updates) if (update.update_id >= cursor && !this.store.get("inbox", `telegram-${update.update_id}`) && owned(update) && update.message?.text?.trim() === "/stop" && this.paired()) {
+        stopHandled.add(update.update_id);
         this.stopOutbound(); await this.hooks.onStop();
       }
       let received = 0;
@@ -81,7 +83,10 @@ export class TelegramIntegration {
           }
           this.store.put("inbox", id, { id, status: "delivered", update }); continue;
         }
-        if (text === "/stop") { this.store.put("inbox", id, { id, status: "delivered", update }); continue; }
+        if (text === "/stop") {
+          if (!stopHandled.has(update.update_id)) { this.stopOutbound(); await this.hooks.onStop(); }
+          this.store.put("inbox", id, { id, status: "delivered", update }); continue;
+        }
         const binding = message.reply_to_message ? this.store.get<QuestionBinding>("question", String(message.reply_to_message.message_id)) : undefined;
         // A reply to an expired/unknown card never becomes an unbound generic answer.
         if (message.reply_to_message && (!binding || Date.parse(binding.expiresAt) <= this.transport.now().getTime())) { this.store.put("inbox", id, { id, status: "delivered", update }); continue; }

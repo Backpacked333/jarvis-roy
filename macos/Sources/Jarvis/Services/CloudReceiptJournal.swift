@@ -81,9 +81,11 @@ final class CloudReceiptJournal {
     }
     func finish(_ receipt: CloudDeviceReceipt) throws {
         guard let index = state.receipts.firstIndex(where: { $0.id == receipt.id }),
-              state.receipts[index].commandDigest == receipt.commandDigest else { throw CloudConnectionFailure.storage }
+              try state.receipts[index].resolved(status: receipt.status, code: receipt.code) == receipt,
+              state.receipts[index].status == "unknown" || state.receipts[index] == receipt else { throw CloudConnectionFailure.storage }
         var next = state; next.receipts[index] = receipt; try commit(next)
     }
+    func receipts(deviceID: String) -> [CloudDeviceReceipt] { state.receipts.filter { $0.deviceId == deviceID } }
     private func commit(_ next: State) throws {
         try RuntimeProfiles.writePrivate(try JSONEncoder().encode(next), to: file)
         state = next

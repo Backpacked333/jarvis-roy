@@ -32,7 +32,8 @@ export type ContextRequest = z.infer<typeof ContextRequestSchema>;
 export type ContextRequestInput = z.input<typeof ContextRequestSchema>;
 export const ContextCitationSchema = z.strictObject({ sourceVersionId: ContextId, passageId: ContextId,
   locator: z.strictObject({ page: z.number().int().positive().nullable(), lineStart: z.number().int().positive(),
-    lineEnd: z.number().int().positive() }).nullable().default(null) });
+    lineEnd: z.number().int().positive(), section: z.string().max(1000).optional(), symbol: z.string().max(240).optional(),
+    rowStart: z.number().int().positive().optional(), rowEnd: z.number().int().positive().optional() }).nullable().default(null) });
 export const ContextProvenanceSchema = z.strictObject({
   origin: z.enum(["original_source", "user_approved_memory", "retained_snapshot", "conversation_message", "extractive_checkpoint", "project_checkpoint", "model_summary"]),
   referenceId: ContextId, revision: z.number().int().positive(),

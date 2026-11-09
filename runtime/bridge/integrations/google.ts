@@ -99,6 +99,7 @@ export class GoogleIntegration {
     if (response.token_type.toLowerCase() !== "bearer" || !SCOPES[consent].every(scope => scopes.includes(scope))) throw new Error("Google refresh changed consent");
     const next = { accessToken: response.access_token, refreshToken: response.refresh_token ?? tokens.refreshToken, expiresAt: new Date(this.transport.now().getTime() + response.expires_in * 1000).toISOString(), scopes };
     const current = this.account(account.id);
+    if (current.subject !== account.subject || current.revision !== account.revision) throw new Error("Google account changed during token refresh");
     this.store.put("google_account", account.id, { ...current, credentials: { ...current.credentials, [consent]: this.store.seal("google_token", `${account.id}:${consent}`, next) } });
     return next.accessToken;
   }
@@ -131,11 +132,16 @@ export class GoogleIntegration {
   }
   private pruneRetained(account: GoogleAccount): void {
     const allowed = (change: GoogleChange) => account.retentionAllowed && (change.provider === "gmail" ? account.labels : account.calendars).includes(change.resourceId);
-    for (const entry of this.store.list<RetainedGoogleEntry>("google_change")) if (entry.accountId === account.id && !allowed(entry)) this.store.remove("google_change", entry.id);
+    for (const entry of this.store.list<RetainedGoogleEntry>("google_change")) if (entry.accountId === account.id) {
+      if (!allowed(entry)) this.store.remove("google_change", entry.id);
+      else this.store.put("google_change", entry.id, { ...entry, accountRevision: account.revision, cloudAllowed: account.cloudAllowed,
+        sourceRevision: `${account.revision}:${entry.sourceRevision.slice(entry.sourceRevision.indexOf(":") + 1)}` });
+    }
     for (const row of this.store.list<{ id: string; change?: GoogleChange }>("inbox")) if (row.change?.accountId === account.id && !allowed(row.change)) this.store.remove("inbox", row.id);
   }
   authorizeGoogleContext(ref: { id: string; sourceRevision: string }, projectId: string): boolean {
     try {
+      this.store.assertWritable();
       const entry = this.store.get<RetainedGoogleEntry>("google_change", ref.id); if (!entry || entry.sourceRevision !== ref.sourceRevision || entry.projectId !== projectId) return false;
       const account = this.account(entry.accountId);
       return account.projectId === projectId && account.revision === entry.accountRevision && account.retentionAllowed && account.cloudAllowed && (entry.provider === "gmail" ? account.labels : account.calendars).includes(entry.resourceId);
@@ -165,9 +171,10 @@ export class GoogleIntegration {
       for (const old of history.slice(500)) this.store.remove("google_change", old.id);
     });
     if (this.store.get("inbox", id)) return;
-    this.store.put("inbox", id, { id, status: "dispatching", change });
-    try { await this.hooks.onGoogleChange?.(change); this.store.put("inbox", id, { id, status: "delivered", change }); }
-    catch { this.store.put("inbox", id, { id, status: "unknown", change }); throw new Error("Google change handoff is uncertain; inspect before replaying"); }
+    const receipt = { id, change: { ...change, content: null }, sourceRevision: retained.sourceRevision };
+    this.store.put("inbox", id, { ...receipt, status: "dispatching" });
+    try { await this.hooks.onGoogleChange?.(change); this.store.put("inbox", id, { ...receipt, status: "delivered" }); }
+    catch { this.store.put("inbox", id, { ...receipt, status: "unknown" }); throw new Error("Google change handoff is uncertain; inspect before replaying"); }
   }
   async pollOnce(accountId: string, signal?: AbortSignal): Promise<{ skipped: boolean }> {
     if (this.busy.has(accountId)) return { skipped: true };
@@ -188,7 +195,10 @@ export class GoogleIntegration {
     const incremental = !!cursor?.historyId;
     const list = new URL(incremental ? "https://gmail.googleapis.com/gmail/v1/users/me/history" : "https://gmail.googleapis.com/gmail/v1/users/me/messages");
     list.searchParams.set(incremental ? "labelId" : "labelIds", label); list.searchParams.set("maxResults", "100");
-    if (incremental) { list.searchParams.set("startHistoryId", cursor!.historyId!); list.searchParams.set("historyTypes", "messageAdded"); }
+    if (incremental) {
+      list.searchParams.set("startHistoryId", cursor!.historyId!);
+      for (const type of ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"]) list.searchParams.append("historyTypes", type);
+    }
     // Snapshot the history cursor before the initial scan, so messages arriving
     // during pagination are covered by the next incremental read.
     const initialHistoryId = incremental ? undefined : cursor?.initialHistoryId ?? z.object({ historyId: z.string() }).parse(await this.api("https://gmail.googleapis.com/gmail/v1/users/me/profile", account, "read", {}, signal)).historyId;
@@ -199,17 +209,28 @@ export class GoogleIntegration {
       let result: Record<string, unknown>;
       try { result = z.record(z.string(), z.unknown()).parse(await this.api(list.href, account, "read", {}, signal)); }
       catch (error) { if (error instanceof ProviderHttpError && error.status === 404 && incremental) { this.store.remove("google_cursor", key); return; } throw error; }
-      const messages = incremental ? z.array(z.object({ messagesAdded: z.array(z.object({ message: z.object({ id: z.string(), labelIds: z.array(z.string()).optional() }) })).optional() })).parse(result.history ?? []).flatMap(item => item.messagesAdded?.map(item => item.message) ?? []) : z.array(z.object({ id: z.string() })).parse(result.messages ?? []);
+      const historyItem = z.object({ message: z.object({ id: z.string(), labelIds: z.array(z.string()).optional() }) });
+      const messages = incremental ? z.array(z.object({ messagesAdded: z.array(historyItem).optional(), messagesDeleted: z.array(historyItem).optional(), labelsAdded: z.array(historyItem).optional(), labelsRemoved: z.array(historyItem).optional() })).parse(result.history ?? [])
+        .flatMap(item => [item.messagesAdded, item.messagesDeleted, item.labelsAdded, item.labelsRemoved].flatMap(items => items?.map(item => item.message) ?? [])) : z.array(z.object({ id: z.string() })).parse(result.messages ?? []);
       for (const message of messages) ids.add(message.id);
       if (typeof result.historyId === "string") historyId = result.historyId;
       nextPage = typeof result.nextPageToken === "string" ? result.nextPageToken : undefined; if (!nextPage) break;
     }
     for (const id of ids) {
-      const message = z.object({ id: z.string(), historyId: z.string(), labelIds: z.array(z.string()), snippet: z.string().optional(), payload: z.unknown().optional() }).parse(await this.api(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`, account, "read", {}, signal));
-      if (message.labelIds.includes(label)) await this.publish({ provider: "gmail", accountId: account.id, projectId: account.projectId, resourceId: label, externalId: message.id, content: message }, message.historyId);
+      let message: { id: string; historyId: string; labelIds: string[]; snippet?: string; payload?: unknown };
+      try { message = z.object({ id: z.string(), historyId: z.string(), labelIds: z.array(z.string()), snippet: z.string().optional(), payload: z.unknown().optional() }).parse(await this.api(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`, account, "read", {}, signal)); }
+      catch (error) { if (error instanceof ProviderHttpError && error.status === 404) { this.removeRetainedItem(account.id, "gmail", label, id); continue; } throw error; }
+      if (message.labelIds.includes(label)) await this.publish({ provider: "gmail", accountId: account.id, projectId: account.projectId, resourceId: label, externalId: message.id, content: readableMail(message) }, message.historyId);
+      else this.removeRetainedItem(account.id, "gmail", label, id);
     }
     if (nextPage) this.store.put("google_cursor", key, { ...cursor, initialHistoryId, pageToken: nextPage });
     else if (incremental ? historyId : initialHistoryId) this.store.put("google_cursor", key, { historyId: incremental ? historyId : initialHistoryId });
+  }
+  private removeRetainedItem(accountId: string, provider: "gmail" | "calendar", resourceId: string, externalId: string): void {
+    this.store.transaction(() => {
+      this.store.remove("google_change", hash(`${provider}:${accountId}:${resourceId}:${externalId}`));
+      for (const row of this.store.list<{ id: string; change?: GoogleChange }>("inbox")) if (row.change?.accountId === accountId && row.change.provider === provider && row.change.resourceId === resourceId && row.change.externalId === externalId) this.store.remove("inbox", row.id);
+    });
   }
   private async pollCalendar(account: GoogleAccount, calendar: string, signal?: AbortSignal): Promise<void> {
     const key = `${account.id}:calendar:${hash(calendar)}`, cursor = this.store.get<{ syncToken?: string; pageToken?: string; timeMin?: string }>("google_cursor", key);
@@ -223,7 +244,11 @@ export class GoogleIntegration {
       let result: { items: { id: string; etag?: string; updated?: string; [key: string]: unknown }[]; nextPageToken?: string; nextSyncToken?: string };
       try { result = z.object({ items: z.array(z.object({ id: z.string(), etag: z.string().optional(), updated: z.string().optional() }).passthrough()).default([]), nextPageToken: z.string().optional(), nextSyncToken: z.string().optional() }).parse(await this.api(list.href, account, "read", {}, signal)); }
       catch (error) { if (error instanceof ProviderHttpError && error.status === 410 && cursor) { this.store.remove("google_cursor", key); return; } throw error; }
-      for (const event of result.items) await this.publish({ provider: "calendar", accountId: account.id, projectId: account.projectId, resourceId: calendar, externalId: event.id, content: event }, event.etag ?? event.updated ?? hash(canonicalJson(event)));
+      for (const event of result.items) {
+        if (event.status === "cancelled") { this.removeRetainedItem(account.id, "calendar", calendar, event.id); continue; }
+        await this.publish({ provider: "calendar", accountId: account.id, projectId: account.projectId, resourceId: calendar, externalId: event.id,
+          content: { id: event.id, summary: String(event.summary ?? "").slice(0, 500), description: String(event.description ?? "").slice(0, 16000), location: String(event.location ?? "").slice(0, 1000), start: event.start, end: event.end } }, event.etag ?? event.updated ?? hash(canonicalJson(event)));
+      }
       nextPage = result.nextPageToken; syncToken = result.nextSyncToken; if (!nextPage) break;
     }
     if (nextPage) this.store.put("google_cursor", key, { ...cursor, timeMin, pageToken: nextPage });
@@ -263,3 +288,24 @@ export class GoogleIntegration {
   }
 }
 function hashBase64(value: string): string { return createHash("sha256").update(value).digest("base64url"); }
+function readableMail(message: { id: string; snippet?: string; payload?: unknown }): { id: string; snippet: string; headers: { name: string; value: string }[]; text: string; truncated: boolean } {
+  const texts: string[] = [], headers: { name: string; value: string }[] = []; let bytes = 0, truncated = false;
+  const visit = (value: unknown, depth: number) => {
+    if (!value || typeof value !== "object" || depth > 6 || bytes > 12_000) { truncated = true; return; }
+    const part = value as Record<string, unknown>;
+    if (depth === 0 && Array.isArray(part.headers)) for (const raw of part.headers.slice(0, 100)) {
+      const header = z.object({ name: z.string(), value: z.string() }).safeParse(raw);
+      if (header.success && ["from", "to", "subject", "date"].includes(header.data.name.toLowerCase()) && !headers.some(item => item.name.toLowerCase() === header.data.name.toLowerCase())) headers.push({ name: header.data.name, value: header.data.value.slice(0, 1000) });
+    }
+    if (part.mimeType === "text/plain" && part.body && typeof part.body === "object") {
+      const data = (part.body as Record<string, unknown>).data;
+      if (typeof data === "string" && /^[A-Za-z0-9_-]*={0,2}$/.test(data)) {
+        const text = Buffer.from(data.slice(0, 100000), "base64url").toString("utf8"), available = Math.max(0, 12_000 - bytes);
+        texts.push(text.slice(0, available)); bytes += Math.min(text.length, available); if (text.length > available || data.length > 100000) truncated = true;
+      }
+    }
+    if (Array.isArray(part.parts)) { for (const child of part.parts.slice(0, 30)) visit(child, depth + 1); if (part.parts.length > 30) truncated = true; }
+  };
+  if (message.payload) visit(message.payload, 0);
+  return { id: message.id, snippet: (message.snippet ?? "").slice(0, 2000), headers, text: texts.join("\n"), truncated };
+}

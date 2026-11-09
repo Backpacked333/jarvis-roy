@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { environmentFor } from './launch-env.mjs';
+import { assertRestoreReviewed } from './cloud-recovery.mjs';
 
 export function cloudEnvironment(role, source = process.env) {
   if (!['runtime', 'bridge', 'gateway'].includes(role)) throw new Error('Invalid cloud runtime role.');
@@ -29,6 +30,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const role = process.argv[2], entries = { runtime: '.output/server/index.mjs', bridge: 'bridge/server.ts', gateway: 'bridge/cloud-main.ts' };
   if (process.versions.node.split('.')[0] !== '24' || !entries[role]) { process.stderr.write('Cloud runtime requires Node 24 and an explicit service role.\n'); process.exitCode = 1; }
   else {
+    try { await assertRestoreReviewed(process.env.JARVIS_DATA_DIR ?? '/var/lib/jarvis'); }
+    catch { process.stderr.write('Restored state is blocked pending an explicit stopped-service recovery review.\n'); process.exit(1); }
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../runtime');
     const child = spawn(process.execPath, [entries[role]], { cwd: root, env: cloudEnvironment(role), shell: false, stdio: 'inherit' });
     for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal));

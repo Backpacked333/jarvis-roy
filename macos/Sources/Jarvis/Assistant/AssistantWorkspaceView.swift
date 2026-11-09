@@ -43,6 +43,14 @@ struct AssistantWorkspaceView: View {
             HSplitView {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
+                        if !assistant.visiblePinnedPresentations.isEmpty {
+                            Text("Pinned revisions").font(.caption).foregroundStyle(.secondary)
+                            ForEach(assistant.visiblePinnedPresentations) { presentation in
+                                Button { assistant.selectPinnedPresentation(presentation.id) } label: {
+                                    Label("\(presentation.title) · r\(presentation.revision)", systemImage: "pin.fill").lineLimit(2)
+                                }.buttonStyle(.bordered)
+                            }
+                        }
                         if assistant.visibleTurns.isEmpty {
                             ContentUnavailableView("Start with a question", systemImage: "waveform",
                                 description: Text("Discuss a paper, compare evidence, plan work, or prepare an action. Sources and results will appear alongside the conversation."))

@@ -63,8 +63,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - run: ./scripts/build-macos.sh
-      - run: swift test --package-path macos
-      - run: swift test --package-path macos -c release
-      - run: swift test --package-path macos-control
-      - run: swift test --package-path macos-control -c release
+      - run: ./scripts/ci-native.sh ./scripts/build-macos.sh
+      - run: ./scripts/ci-native.sh swift test --package-path macos
+      - run: ./scripts/ci-native.sh swift test --package-path macos -c release
+      - run: ./scripts/ci-native.sh swift test --package-path macos-control
+      - run: ./scripts/ci-native.sh swift test --package-path macos-control -c release

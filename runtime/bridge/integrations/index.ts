@@ -37,8 +37,7 @@ export class IntegrationService {
     if (!store) return;
     const transport = new IntegrationTransport(store, options.ledger, options.prices, options.fetch, options.now);
     const hooks: IntegrationHooks = { ...options.hooks, onStop: async () => {
-      this.stopLocal();
-      await Promise.allSettled([this.twilio?.cancelCalls(), options.hooks.onStop()]);
+      await Promise.allSettled([Promise.resolve().then(() => this.stopLocal()), Promise.resolve().then(() => this.twilio?.cancelCalls()), Promise.resolve().then(() => options.hooks.onStop())]);
     } };
     if (options.telegram) this.telegram = new TelegramIntegration(transport, options.telegram, hooks);
     if (options.google) this.google = new GoogleIntegration(transport, options.google, hooks, options.approvalAuthority);
@@ -65,8 +64,9 @@ export class IntegrationService {
   async authorizeCall(callSid: string, proof: CallProof): Promise<void> { if (!this.twilio) throw new Error("Calling is not configured"); return this.twilio.authorizeCall(callSid, proof); }
   private stopLocal(): void {
     if (!this.store) return;
-    this.store.put("control", "global", { stopped: true }); this.telegram?.stopOutbound(); this.google?.cancelReads(); this.twilio?.stop();
+    this.google?.cancelReads();
     for (const socket of this.sockets.clients) socket.close(1000, "Stopped");
+    this.twilio?.stop(); this.store.put("control", "global", { stopped: true }); this.telegram?.stopOutbound();
   }
   async stop(): Promise<void> { this.stopLocal(); await this.twilio?.cancelCalls(); }
   resume(): void { this.requireEnabled().put("control", "global", { stopped: false }); this.telegram?.resume(); this.twilio?.resume(); }

@@ -15,7 +15,7 @@ struct PresentationDraftEditor: View {
             HStack {
                 Text(presentation.content.title ?? "Draft").font(.headline).textSelection(.enabled)
                 Spacer()
-                if !editing { Button("Edit draft") { bodyText = presentation.content.body ?? ""; editing = true } }
+                if !editing { Button("Edit draft") { assistant.holdDisplayedPresentation(); bodyText = presentation.content.body ?? ""; editing = true } }
             }
             if editing {
                 TextEditor(text: $bodyText).font(.body).frame(minHeight: 240)
@@ -35,7 +35,7 @@ struct PresentationDraftEditor: View {
 }
 
 enum PresentationDiffLine {
-    enum Kind { case addition, removal, header, unchanged }
+    enum Kind: Equatable { case addition, removal, header, unchanged }
     static func kind(_ line: String) -> Kind {
         if line.hasPrefix("+++") || line.hasPrefix("---") || line.hasPrefix("@@") || line.hasPrefix("diff ") { return .header }
         if line.hasPrefix("+") { return .addition }
@@ -131,6 +131,6 @@ struct ArtifactInlineView: View {
 
 private struct ArtifactPDFPreview: NSViewRepresentable {
     let data: Data
-    func makeNSView(context: Context) -> PDFView { let view = PDFView(); view.autoScales = true; return view }
-    func updateNSView(_ view: PDFView, context: Context) { if view.document?.dataRepresentation() != data { view.document = PDFDocument(data: data) } }
+    func makeNSView(context: Context) -> PDFView { let view = PDFView(); view.autoScales = true; view.document = PDFDocument(data: data); return view }
+    func updateNSView(_ view: PDFView, context: Context) {}
 }

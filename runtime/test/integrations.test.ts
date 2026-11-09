@@ -51,7 +51,7 @@ async function fixture(overrides: Partial<IntegrationOptions> = {}) {
   async function pair() { const pairing = service.telegram!.beginPairing(); updates.push([update(1, `/start ${pairing.code}`)]); await service.telegram!.pollOnce(); assert.equal(service.telegram!.paired(), true); }
   async function connect(consent: "read" | "gmail_send" | "calendar_write" = "read") {
     tokenScope = consent === "read" ? readScopes : `openid email https://www.googleapis.com/auth/${consent === "gmail_send" ? "gmail.send" : "calendar.events"}`;
-    const pending = service.google!.beginOAuth({ ...context, accountId: "owner-google", consent, labels: ["Label_A"], calendars: ["primary"] });
+    const pending = service.google!.beginOAuth({ ...context, accountId: "owner-google", consent, labels: ["Label_A"], calendars: ["primary"], retentionAllowed: true, cloudAllowed: true });
     return service.google!.completeOAuth(new URL(pending.url).searchParams.get("state")!, "fixture-authorization-code");
   }
   const sign = (url: string, parameters: Record<string, string>) => createHmac("sha1", "fixture-twilio-token").update(url + Object.keys(parameters).sort().map(key => key + parameters[key]).join("")).digest("base64");
@@ -96,7 +96,7 @@ test("Telegram outbox enforces quiet hours, four routine sends per day and 09/18
 test("uncertain Telegram delivery survives restart without automatic replay; unknown prices never dispatch", async () => {
   const f = await fixture();
   try {
-    await f.pair(); f.setHandler(url => { if (url.pathname.endsWith("sendMessage")) throw new Error("network disappeared after write"); });
+    await f.pair(); f.setHandler(url => { if (url.pathname.endsWith("sendMessage")) throw new Error("network disappeared after write"); return undefined; });
     f.service.telegram!.enqueue({ id: "uncertain-send", ...context, kind: "routine", text: "One update", notBefore: f.now() });
     await assert.rejects(f.service.telegram!.flushOnce(), /network disappeared/);
     assert.equal(f.service.telegram!.outbox()[0].status, "unknown");
@@ -150,11 +150,52 @@ test("Google send requires exact approval callback and durable request identity;
   try {
     await f.connect(); await f.connect("gmail_send");
     const prepared = f.service.google!.prepareGoogleAction({ ...context, accountId: "owner-google", requestId: "send-1", kind: "gmail_send", to: "person@example.com", subject: "Hello", text: "Exact body" });
-    let sends = 0; f.setHandler(url => { if (url.pathname.endsWith("/messages/send")) { sends++; throw new Error("lost receipt"); } });
+    let sends = 0; f.setHandler(url => { if (url.pathname.endsWith("/messages/send")) { sends++; throw new Error("lost receipt"); } return undefined; });
     await assert.rejects(f.service.google!.executeGoogleAction(prepared, "approval-1"), /Existing approval/); assert.equal(sends, 0);
     approved = true; await assert.rejects(f.service.google!.executeGoogleAction(prepared, "approval-1"), /unknown/); assert.equal(sends, 1);
     await f.restart(); await assert.rejects(f.service.google!.executeGoogleAction(prepared, "approval-1"), /uncertain/); assert.equal(sends, 1); assert.equal(approvals, 2);
     await assert.rejects(f.service.google!.executeGoogleAction({ ...prepared, exactArguments: "changed" }, "approval-1"), /Exact existing/);
+  } finally { await f.cleanup(); }
+});
+
+test("Google OAuth alone cannot retain or disclose context; revocation invalidates exact retained references", async () => {
+  const f = await fixture();
+  try {
+    const pending = f.service.google!.beginOAuth({ ...context, accountId: "owner-google", consent: "read", labels: ["Label_A"], calendars: [] });
+    const account = await f.service.google!.completeOAuth(new URL(pending.url).searchParams.get("state")!, "authorization-code");
+    const before = f.requests.length; assert.equal((await f.service.google!.pollOnce(account.id)).skipped, true); assert.equal(f.requests.length, before);
+    f.setHandler(url => {
+      if (url.pathname.endsWith("/profile")) return json({ historyId: "100" });
+      if (url.pathname.endsWith("/messages")) return json({ messages: [{ id: "message-1" }] });
+      if (url.pathname.endsWith("/messages/message-1")) return json({ id: "message-1", historyId: "101", labelIds: ["Label_A"], payload: { mimeType: "text/plain", body: { data: Buffer.from("Selected source text").toString("base64url") } } });
+    });
+    let changed = f.service.google!.updateConsent({ accountId: account.id, expectedRevision: account.revision, labels: account.labels, calendars: [], retentionAllowed: true, cloudAllowed: false });
+    await f.service.google!.pollOnce(account.id); assert.equal(f.changes.length, 1); assert.equal(f.changes[0].cloudAllowed, false); assert.equal(f.service.google!.readGoogleContext(context.projectId).entries.length, 0);
+    changed = f.service.google!.updateConsent({ accountId: account.id, expectedRevision: changed.revision, labels: account.labels, calendars: [], retentionAllowed: true, cloudAllowed: true });
+    f.setHandler(url => {
+      if (url.pathname.endsWith("/history")) return json({ historyId: "102", history: [{ messagesAdded: [{ message: { id: "message-1" } }] }] });
+      if (url.pathname.endsWith("/messages/message-1")) return json({ id: "message-1", historyId: "102", labelIds: ["Label_A"], snippet: "Selected source text" });
+    });
+    await f.service.google!.pollOnce(account.id); const entry = f.service.google!.readGoogleContext(context.projectId).entries[0]; assert.ok(entry);
+    assert.equal(f.service.google!.authorizeGoogleContext(entry, context.projectId), true); assert.equal(f.service.google!.authorizeGoogleContext(entry, "other-project"), false);
+    f.service.google!.updateConsent({ accountId: account.id, expectedRevision: changed.revision, labels: [], calendars: [], retentionAllowed: false, cloudAllowed: false });
+    assert.equal(f.service.google!.authorizeGoogleContext(entry, context.projectId), false); assert.equal(f.service.google!.readGoogleContext(context.projectId).entries.length, 0);
+    await f.restart(); assert.equal(f.service.google!.readGoogleContext(context.projectId).entries.length, 0);
+  } finally { await f.cleanup(); }
+});
+
+test("Google disconnect cancels an in-flight selected-source read before retained publication", async () => {
+  const f = await fixture();
+  try {
+    await f.connect(); let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
+    f.setHandler((url, init) => {
+      if (url.pathname.endsWith("/profile")) return json({ historyId: "100" });
+      if (url.pathname.endsWith("/messages")) return json({ messages: [{ id: "message-1" }] });
+      if (url.pathname.endsWith("/messages/message-1")) { entered(); return new Promise((_resolve, reject) => { init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true }); }); }
+    });
+    const read = f.service.google!.pollOnce("owner-google"), rejected = assert.rejects(read, /disconnected/);
+    await started; f.service.google!.disconnect("owner-google"); await rejected;
+    assert.equal(f.changes.length, 0); assert.equal(f.service.google!.readGoogleContext(context.projectId).entries.length, 0);
   } finally { await f.cleanup(); }
 });
 

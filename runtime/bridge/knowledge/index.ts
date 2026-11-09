@@ -13,7 +13,7 @@ import {
   ContextSearchInputSchema, IndexEmbeddingsInputSchema, MAX_IMPORT_BYTES, PurposeSchema, ReadGrantSchema, RetrieveInputSchema, SearchInputSchema, SourceVersionSchema,
   type EvidencePassage, type GrantInput, type ImportSource, type ReadGrant, type ResearchDeliverable, type SourceVersion,
 } from "./contracts.ts";
-import { extractDocument, extractPdf, passageParts, type PdfExtractor } from "./extract.ts";
+import { documentFormat, extractDocument, extractPdf, passageParts, type PdfExtractor } from "./extract.ts";
 import { extractPublic, retrievePublic, type RetrievalResult } from "./retrieval.ts";
 import { LocalKnowledgeRetrieval } from "./context-retrieval.ts";
 import type { LocalEmbeddingProvider } from "./embeddings.ts";
@@ -350,10 +350,17 @@ export class KnowledgeService {
       const extraction = await extractDocument(bytes, input.filename, input.mediaType, pdf, combined);
       if (containsCredentialLikeData(extraction.pages.map(page => page.text).join("\n"))) throw new BridgeError("Document contains credential-like data. Import a redacted copy.", 400);
       const digest = await this.writeBlob(bytes); combined.throwIfAborted();
+      const format = input.mediaType === "application/pdf" ? "pdf" : documentFormat(input.filename);
+      const emptyPages = extraction.pages.filter(page => !page.text.trim()).length;
+      const warnings = format === "pdf" ? ["PDF text extraction does not verify reading order, equations, tables or image content.", ...(emptyPages ? ["Some PDF pages have no extracted text; scanned or image content may be missing."] : [])] :
+        format === "code" ? ["Code sections use declaration boundaries; they are not a complete syntax-tree analysis."] : format === "csv" ? ["CSV locators identify physical source rows; quoted multiline records can span rows."] : [];
       this.requireGrant({ grantId: input.grantId, projectId: input.projectId, resourceId: input.resourceId, operation: "read_document", purpose: "local" });
       return this.storeSource({ version: 1, projectId: input.projectId, title: input.title, filename: input.filename, mediaType: input.mediaType,
         sha256: digest, bytes: bytes.length, visibility: "private", grantId: input.grantId, resourceId: input.resourceId,
-        kind: "document", url: null, createdAt: this.now().toISOString(), extraction: extraction.extraction, archived: false, sourceId: input.sourceId }, passageParts(extraction.pages));
+        kind: "document", url: null, createdAt: this.now().toISOString(), extraction: extraction.extraction, archived: false, sourceId: input.sourceId,
+        extractionDetails: { format, extractor: format === "pdf" ? input.nativePDFPages ? "pdfkit" : "pdftotext" : "utf8",
+          quality: extraction.extraction === "empty" ? "empty" : emptyPages ? "mixed" : ["markdown", "csv", "code"].includes(format) ? "structured_text" : "text_only", warnings },
+      }, passageParts(extraction.pages, { filename: input.filename }));
     }, signal);
   }
   listSources(projectId: string, purpose: Purpose = "cloud", includeArchived = false): SourceVersion[] {

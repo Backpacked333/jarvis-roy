@@ -125,6 +125,7 @@ export class TwilioIntegration {
     this.store.put("call", call.id, { ...call, verification: proof, verifiedUntil: proof.expiresAt });
   }
   private verified(callSid: string): CallRecord | null {
+    try { this.store.assertWritable(); } catch { return null; }
     const call = this.call(callSid);
     return this.readCall(callSid) && call?.verifiedUntil && Date.parse(call.verifiedUntil) > this.transport.now().getTime() &&
       this.hooks.authorizeDisclosure?.({ projectId: call.projectId, channel: "phone", destinationId: this.options.ownerNumber, proactive: false }) === true ? call : null;
@@ -185,8 +186,8 @@ export class TwilioIntegration {
     for (const session of this.sessions) if (!callSid || (session as { callSid?: () => string | null }).callSid?.() === callSid) session.stop();
   }
   stop(): void {
-    this.store.put("twilio", "control", { stopped: true });
     this.stopSessions();
+    this.store.put("twilio", "control", { stopped: true });
     for (const call of this.store.list<CallRecord>("call")) if (["ringing", "in_progress"].includes(call.status)) this.store.put("call", call.id, { ...call, verifiedUntil: null, verification: null });
   }
   resume(): void { this.store.put("twilio", "control", { stopped: false }); }
