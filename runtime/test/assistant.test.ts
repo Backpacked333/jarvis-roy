@@ -70,7 +70,8 @@ test("assistant captures focus and exact selected presentation without retargeti
     assert.equal(f.dispatched[1].capturedPresentation?.content.kind, "text");
     await f.coordinator.present({ id: card.id, expectedRevision: 1, sessionId: f.session!.id, turnId: first.id, title: "New evidence", content: { kind: "text", markdown: "source B" } });
     assert.deepEqual(f.dispatched[1].capturedPresentation?.content, { kind: "text", markdown: "source A" });
-    await assert.rejects(f.coordinator.submitTurn(f.session!.id, { expectedRevision: 1, text: "Old card", intent: "continue", presentationRef: { presentationId: card.id, revision: 1 } }), /presentation changed/);
+    await f.coordinator.submitTurn(f.session!.id, { expectedRevision: 1, text: "Old card", intent: "continue", presentationRef: { presentationId: card.id, revision: 1 } });
+    assert.deepEqual(f.dispatched.at(-1)?.capturedPresentation?.content, { kind: "text", markdown: "source A" });
     await f.coordinator.updateFocus(f.session!.id, { expectedRevision: 1, focus: { kind: "room", roomId: "room-2" } });
     await assert.rejects(f.coordinator.submitTurn(f.session!.id, { expectedRevision: 1, text: "stale", intent: "continue" }), /focus changed/);
     assert.deepEqual(f.coordinator.state().turns[0].capturedFocus, focus);
@@ -352,5 +353,25 @@ test("room plan accept/start require an exact captured room and separate one-use
     f.action = { ...f.action, taskId: "room-2" };
     await assert.rejects(f.coordinator.proposeAction(f.session!.id, turn.id, { ...ref, taskId: "room-2" }, native), /captured task or room/);
     assert.equal(f.executions(), 1);
+  } finally { await f.cleanup(); }
+});
+
+test("draft edits retain exact old references across restart and reject stale writes or invalid selections", async () => {
+  const f = await fixture();
+  try {
+    const turn = await f.turn();
+    const card = await f.coordinator.present({ sessionId: f.session!.id, turnId: turn.id, title: "Draft", content: { kind: "draft", format: "document", title: "Draft", body: "First 😀 paragraph" } });
+    const edited = await assistantRoute("PATCH", `/v1/assistant/presentations/${card.id}`, { expectedRevision: 1, body: "Replacement" }, f.coordinator, native);
+    assert.equal((edited.body as { revision: number }).revision, 2);
+    await assert.rejects(f.coordinator.editDraft(card.id, { expectedRevision: 1, body: "Stale" }), /changed/);
+    await f.restart();
+    const ref = { presentationId: card.id, revision: 1 };
+    await f.coordinator.submitTurn(f.session!.id, { expectedRevision: 1, text: "Rewrite selection", intent: "continue", presentationRef: ref, selection: { kind: "text_range", start: 6, end: 8 } });
+    assert.equal(f.dispatched.at(-1)?.capturedPresentation?.revision, 1);
+    assert.deepEqual(f.dispatched.at(-1)?.selection, { kind: "text_range", start: 6, end: 8 });
+    for (const selection of [{ kind: "text_range", start: 7, end: 8 }, { kind: "table_cell", row: 0, column: 0 }, { kind: "document_passage", passageId: "invented" }]) {
+      await assert.rejects(f.coordinator.submitTurn(f.session!.id, { expectedRevision: 1, text: "Invalid", intent: "continue", presentationRef: ref, selection }), /Selection/);
+    }
+    await assert.rejects(assistantRoute("PATCH", `/v1/assistant/presentations/${card.id}`, { expectedRevision: 2, body: "Untrusted" }, f.coordinator), /Native/);
   } finally { await f.cleanup(); }
 });

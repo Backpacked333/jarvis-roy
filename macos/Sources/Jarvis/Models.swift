@@ -63,10 +63,11 @@ struct MemoryEntry: Decodable, Identifiable {
 }
 
 enum WorkspaceTab: String, CaseIterable, Identifiable {
-    case assistant = "Assistant", rooms = "Rooms", workspace = "Workspace", capabilities = "Capabilities", memory = "Memory", privacy = "Privacy"
+    case today = "Today", assistant = "Assistant", rooms = "Rooms", workspace = "Workspace", capabilities = "Capabilities", memory = "Memory", privacy = "Privacy"
     var id: String { rawValue }
     var icon: String {
         switch self {
+        case .today: return "sun.max"
         case .assistant: return "waveform"
         case .rooms: return "circle.hexagongrid"
         case .workspace: return "square.stack.3d.up"

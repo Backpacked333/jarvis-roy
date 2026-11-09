@@ -114,7 +114,11 @@ struct MemoryWorkspaceView: View {
     @State private var reviewing: AssistantMemoryRecord?
     @State private var archiving: AssistantMemoryRecord?
     @State private var forgetting: AssistantMemoryRecord?
-    init(projectID: String?, client: AssistantClient) { _model = StateObject(wrappedValue: MemoryWorkspaceModel(projectID: projectID, client: client)) }
+    init(projectID: String?, client: AssistantClient, reviewInbox: Bool = false) {
+        let model = MemoryWorkspaceModel(projectID: projectID, client: client)
+        if reviewInbox { model.filter = "proposed" }
+        _model = StateObject(wrappedValue: model)
+    }
     private var enabled: Bool { ProcessInfo.processInfo.environment["JARVIS_ENABLE_MEMORY"].map { $0 == "1" } ?? memoryPreference }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

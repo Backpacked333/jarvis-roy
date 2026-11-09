@@ -6,15 +6,15 @@ import { AssistantStore } from "./store.ts";
 import {
   ActionRefSchema, AssistantEventSchema, AssistantFocusSchema, AssistantPresentationSchema,
   CreateAssistantSessionSchema, NativeConfirmationEventSchema, ReviewableActionSchema,
-  SubmitAssistantTurnSchema, UpdateAssistantFocusSchema,
+  SubmitAssistantTurnSchema, UpdateAssistantFocusSchema, EditDraftSchema,
   type ActionRef, type AssistantEvent, type AssistantFocus, type AssistantIntent, type AssistantPresentation,
   type AssistantSession, type AssistantSnapshot, type AssistantState, type AssistantTurn,
-  type NativeConfirmationEvent, type PresentationContent, type ReviewableAction, type VoiceProposal,
+  type NativeConfirmationEvent, type PresentationSelection, type PresentationContent, type ReviewableAction, type VoiceProposal,
 } from "./contracts.ts";
 
 export interface AssistantOperation {
   sessionId: string; turnId: string; text: string; intent: AssistantIntent; capturedFocus: AssistantFocus;
-  capturedPresentation: AssistantPresentation | null;
+  capturedPresentation: AssistantPresentation | null; selection?: PresentationSelection | null;
 }
 export interface AssistantAdapters {
   /** Dispatch through JarvisService or the existing harness; do not create another executor. */
@@ -155,7 +155,7 @@ export class AssistantCoordinator {
     }
   }
   state(): AssistantState {
-    this.requireEnabled(); const { events: _events, ...state } = this.current(); return clone(state);
+    this.requireEnabled(); const { events: _events, presentationHistory: _history, ...state } = this.current(); return clone(state);
   }
   eventsAfter(sequence: number): { version: 1; sequence: number; events: AssistantEvent[] } {
     this.requireEnabled(); const state = this.current();
@@ -191,20 +191,21 @@ export class AssistantCoordinator {
       const session = this.session(state, sessionId);
       if (session.revision !== input.expectedRevision) throw new BridgeError("Assistant focus changed; refresh before sending.", 409);
       if (state.turns.some(turn => turn.sessionId === sessionId && turn.status === "dispatching")) throw new BridgeError("A turn is still being dispatched.", 409);
-      const presentation = input.presentationRef ? state.presentations.find(item => item.id === input.presentationRef!.presentationId &&
+      const presentation = input.presentationRef ? [...state.presentations, ...state.presentationHistory].find(item => item.id === input.presentationRef!.presentationId &&
         item.revision === input.presentationRef!.revision && item.sessionId === sessionId) : null;
       if (input.presentationRef && !presentation) throw new BridgeError("The selected presentation changed; refresh before referring to it.", 409);
+      this.validateSelection(presentation ?? null, input.selection ?? null);
       this.pruneTurns(state);
       this.invalidate(state, emit, sessionId);
       const turn: AssistantTurn = { version: 1, id: randomUUID(), sessionId, revision: 1,
         text: input.text, intent: input.intent, capturedFocus: clone(session.focus), sessionRevision: session.revision, presentationRef: input.presentationRef ?? null,
-        capturedPresentation: presentation ? clone(presentation) : null,
+        capturedPresentation: presentation ? clone(presentation) : null, selection: input.selection ?? null,
         status: "dispatching", taskId: null, conversationId: null, error: null, createdAt: this.time(), updatedAt: this.time() };
       state.turns.push(turn); emit("turn.updated", turn); return { turn, presentation: presentation ?? null };
     });
     const { turn } = admitted;
     const operation: AssistantOperation = { sessionId, turnId: turn.id, text: turn.text, intent: turn.intent,
-      capturedFocus: clone(turn.capturedFocus), capturedPresentation: admitted.presentation };
+      capturedFocus: clone(turn.capturedFocus), capturedPresentation: admitted.presentation, selection: turn.selection };
     try {
       if (turn.intent === "stop_work") {
         await this.options.adapters.stopWork(operation);
@@ -238,10 +239,45 @@ export class AssistantCoordinator {
       if (Buffer.byteLength(JSON.stringify(presentation), "utf8") > MAX_ASSISTANT_PRESENTATION_BYTES) {
         throw new BridgeError("Presentation exceeds 384 KiB. Show fewer source passages, rows or chart points.", 413);
       }
-      if (existing) state.presentations[state.presentations.indexOf(existing)] = presentation;
+      if (existing) { this.rememberPresentation(state, existing); state.presentations[state.presentations.indexOf(existing)] = presentation; }
       else { if (state.presentations.length >= 300) state.presentations.shift(); state.presentations.push(presentation); }
       emit("presentation.updated", presentation); return presentation;
     });
+  }
+  private rememberPresentation(state: AssistantSnapshot, item: AssistantPresentation): void {
+    state.presentationHistory.push(clone(item));
+    // Bounded revision storage. Expired references fail explicitly; they never retarget.
+    let bytes = 0;
+    state.presentationHistory = state.presentationHistory.slice(-300).reverse().filter(value => {
+      bytes += Buffer.byteLength(JSON.stringify(value)); return bytes <= 4 * 1024 * 1024;
+    }).reverse();
+  }
+  private validateSelection(presentation: AssistantPresentation | null, selection: PresentationSelection | null): void {
+    if (!selection) return;
+    const content = presentation?.content;
+    let valid = false;
+    if (selection.kind === "document_passage") valid = content?.kind === "document" && content.passages.some(item => item.id === selection.passageId);
+    else if (selection.kind === "table_cell") valid = content?.kind === "table" && selection.column < content.columns.length && selection.column < (content.rows[selection.row]?.length ?? 0);
+    else {
+      const value = content?.kind === "text" ? content.markdown : content?.kind === "draft" ? content.body :
+        content?.kind === "code" ? content.code : content?.kind === "code_diff" ? content.diff : content?.kind === "math" ? content.latex : null;
+      const splitsSurrogate = (index: number) => value !== null && index > 0 && index < value.length && /[\uD800-\uDBFF]/.test(value[index - 1]) && /[\uDC00-\uDFFF]/.test(value[index]);
+      valid = value !== null && selection.start < selection.end && selection.end <= value.length && !splitsSurrogate(selection.start) && !splitsSurrogate(selection.end);
+    }
+    if (!valid) throw new BridgeError("Selection is outside the exact displayed revision.", 409);
+  }
+  async editDraft(id: string, raw: unknown): Promise<AssistantPresentation> {
+    this.requireEnabled(); const input = EditDraftSchema.parse(raw);
+    return this.mutate((state, emit) => {
+      const current = state.presentations.find(item => item.id === id);
+      if (!current || current.revision !== input.expectedRevision || current.content.kind !== "draft") throw new BridgeError("Draft changed; reload before editing.", 409);
+      const updated = AssistantPresentationSchema.parse({ ...current, revision: current.revision + 1, updatedAt: this.time(), content: { ...current.content, body: input.body } });
+      this.rememberPresentation(state, current); state.presentations[state.presentations.indexOf(current)] = updated;
+      this.invalidate(state, emit, current.sessionId); emit("presentation.updated", updated); return updated;
+    });
+  }
+  capturedSelectionForTask(taskId: string): PresentationSelection | null {
+    this.requireEnabled(); return clone(this.current().turns.find(turn => turn.taskId === taskId)?.selection ?? null);
   }
   /** Called from existing service snapshots/events; updates display state only. */
   async updateTask(task: Task): Promise<void> {
@@ -264,7 +300,7 @@ export class AssistantCoordinator {
         const presentation = AssistantPresentationSchema.parse({ version: 1, id, sessionId: turn.sessionId, turnId: turn.id,
           revision: (existing?.revision ?? 0) + 1, title: task.title.slice(0, 300), capturedFocus: turn.capturedFocus, content,
           createdAt: existing?.createdAt ?? this.time(), updatedAt: this.time() });
-        if (existing) state.presentations[state.presentations.indexOf(existing)] = presentation;
+        if (existing) { this.rememberPresentation(state, existing); state.presentations[state.presentations.indexOf(existing)] = presentation; }
         else { if (state.presentations.length >= 300) state.presentations.shift(); state.presentations.push(presentation); }
         emit("presentation.updated", presentation);
         if (turnChanged) emit("turn.updated", turn);
@@ -384,6 +420,7 @@ export class AssistantCoordinator {
     const [turn] = state.turns.splice(removable, 1);
     state.presentations = state.presentations.filter(presentation => presentation.turnId !== turn.id);
     state.proposals = state.proposals.filter(proposal => proposal.turnId !== turn.id);
+    state.presentationHistory = state.presentationHistory.filter(item => item.turnId !== turn.id);
   }
   private validateReferences(state: AssistantSnapshot): void {
     for (const collection of [state.sessions, state.turns, state.presentations, state.proposals]) {
@@ -392,7 +429,7 @@ export class AssistantCoordinator {
     for (const turn of state.turns) {
       this.session(state, turn.sessionId); AssistantFocusSchema.parse(turn.capturedFocus);
     }
-    for (const child of [...state.presentations, ...state.proposals]) {
+    for (const child of [...state.presentations, ...state.presentationHistory, ...state.proposals]) {
       if (!state.turns.some(turn => turn.id === child.turnId && turn.sessionId === child.sessionId)) throw new Error("Invalid assistant record scope");
     }
     for (const proposal of state.proposals) if (actionDigest(proposal.action) !== proposal.digest) throw new Error("Assistant action digest mismatch");

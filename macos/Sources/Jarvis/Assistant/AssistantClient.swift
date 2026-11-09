@@ -17,6 +17,7 @@ enum AssistantFeatures {
         if let value = ProcessInfo.processInfo.environment[name] { return value == "1" }
         return UserDefaults.standard.bool(forKey: preference)
     }
+    static var objectives: Bool { enabled("JARVIS_ENABLE_OBJECTIVES", preference: "Jarvis.objectivesEnabled") }
     static var assistant: Bool { enabled("JARVIS_ENABLE_ASSISTANT", preference: "Jarvis.assistantEnabled") }
     static var knowledge: Bool { enabled("JARVIS_ENABLE_KNOWLEDGE", preference: "Jarvis.knowledgeEnabled") }
     static var research: Bool { enabled("JARVIS_ENABLE_RESEARCH", preference: "Jarvis.researchEnabled") }

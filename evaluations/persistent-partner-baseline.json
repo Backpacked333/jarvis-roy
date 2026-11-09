@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "commit": "0cf0388c11d61aa40bc5f8e48d781eb83b6069e8",
+  "recordedAt": "2026-11-09",
+  "evidence": "https://github.com/Backpacked333/jarvis-roy/actions/runs/42592051306",
+  "automated": {
+    "localPassed": 506,
+    "localSkipped": 21,
+    "localFailed": 0,
+    "typecheck": "passed",
+    "build": "passed_with_model_catalog_unavailable",
+    "builtRuntimeSmoke": "passed",
+    "ciRuntime": "passed",
+    "ciIsolatedWorkers": "passed",
+    "ciMacBuildAndTests": "passed"
+  },
+  "live": {
+    "fixed30TaskStatus": "blocked",
+    "reason": "Provider credentials and physical Mac fixture are not configured. User has not provisioned the cloud VM/domain.",
+    "retrievalQuality": "unmeasured",
+    "interactionLatency": "unmeasured",
+    "sevenDayPilot": "not_started"
+  },
+  "evaluations": [
+    {
+      "id": "paper-disagreement",
+      "status": "unrun"
+    },
+    {
+      "id": "conflicting-evidence",
+      "status": "unrun"
+    },
+    {
+      "id": "missing-fulltext",
+      "status": "unrun"
+    },
+    {
+      "id": "literature-map",
+      "status": "unrun"
+    },
+    {
+      "id": "citation-check",
+      "status": "unrun"
+    },
+    {
+      "id": "source-revision",
+      "status": "unrun"
+    },
+    {
+      "id": "symbolic-derivation",
+      "status": "unrun"
+    },
+    {
+      "id": "numerical-stability",
+      "status": "unrun"
+    },
+    {
+      "id": "statistical-claim",
+      "status": "unrun"
+    },
+    {
+      "id": "units",
+      "status": "unrun"
+    },
+    {
+      "id": "uncertainty",
+      "status": "unrun"
+    },
+    {
+      "id": "counterexample",
+      "status": "unrun"
+    },
+    {
+      "id": "bug-fix",
+      "status": "unrun"
+    },
+    {
+      "id": "artifact-explanation",
+      "status": "unrun"
+    },
+    {
+      "id": "offline-dependency",
+      "status": "unrun"
+    },
+    {
+      "id": "test-quality",
+      "status": "unrun"
+    },
+    {
+      "id": "cancel-code",
+      "status": "unrun"
+    },
+    {
+      "id": "reproduce",
+      "status": "unrun"
+    },
+    {
+      "id": "research-brief",
+      "status": "unrun"
+    },
+    {
+      "id": "technical-edit",
+      "status": "unrun"
+    },
+    {
+      "id": "spoken-revision",
+      "status": "unrun"
+    },
+    {
+      "id": "audience-switch",
+      "status": "unrun"
+    },
+    {
+      "id": "evidence-table",
+      "status": "unrun"
+    },
+    {
+      "id": "unsupported-certainty",
+      "status": "unrun"
+    },
+    {
+      "id": "briefing",
+      "status": "unrun"
+    },
+    {
+      "id": "voice-send",
+      "status": "unrun"
+    },
+    {
+      "id": "interrupt-side",
+      "status": "unrun"
+    },
+    {
+      "id": "visual-reference",
+      "status": "unrun"
+    },
+    {
+      "id": "revoke",
+      "status": "unrun"
+    },
+    {
+      "id": "restart",
+      "status": "unrun"
+    }
+  ]
+}

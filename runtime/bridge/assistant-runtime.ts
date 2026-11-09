@@ -37,7 +37,7 @@ export async function createAssistantRuntime(dataDirectory: string, service: Jar
       // Do not resend cached private passages. The tool reads the frozen object
       // through current project/grant checks immediately before disclosure.
       message += `\n\nCaptured visual reference: ${JSON.stringify({ id: input.capturedPresentation.id,
-        revision: input.capturedPresentation.revision, kind: input.capturedPresentation.content.kind })}. Call assistant_context to inspect this exact object under its current source grants.`;
+        revision: input.capturedPresentation.revision, kind: input.capturedPresentation.content.kind, selection: input.selection ?? null })}. Call assistant_context to inspect this exact object under its current source grants.`;
     }
     const task = await service.createTask(message, conversationId, projectId);
     if (focus.kind === "none") {
@@ -76,6 +76,17 @@ export async function createAssistantRuntime(dataDirectory: string, service: Jar
   };
   coordinator = await AssistantCoordinator.open({ dataDirectory, adapters: {
     dispatchTurn, stopWork,
+    ...createActionAuthority(service, harness),
+  } });
+  const unsubscribe = service.subscribeTasks(tasks => {
+    if (coordinator.enabled) for (const task of tasks) void coordinator.updateTask(task).catch(() => {});
+  });
+  return { coordinator, async close() { unsubscribe(); await coordinator.close(); } };
+}
+
+/** Shared approval authority used by local and verified remote review. */
+export function createActionAuthority(service: JarvisService, harness: HarnessRuntime): Required<Pick<import("./assistant/coordinator.ts").AssistantAdapters, "readAction" | "executeAction">> {
+  return {
     async readAction(ref) {
       if (["accept_plan", "start_plan"].includes(ref.optionId)) {
         const state = await harness.harness.state();
@@ -109,9 +120,5 @@ export async function createAssistantRuntime(dataDirectory: string, service: Jar
         else throw new BridgeError("Unsupported plan action.", 400);
       } else await service.respond(action.taskId, action.interactionId, action.optionId, action.revision);
     },
-  } });
-  const unsubscribe = service.subscribeTasks(tasks => {
-    if (coordinator.enabled) for (const task of tasks) void coordinator.updateTask(task).catch(() => {});
-  });
-  return { coordinator, async close() { unsubscribe(); await coordinator.close(); } };
+  };
 }

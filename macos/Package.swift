@@ -7,7 +7,7 @@ let package = Package(
     products: [.executable(name: "Jarvis", targets: ["Jarvis"])],
     targets: [
         .target(name: "JarvisAudioSafety", linkerSettings: [.linkedFramework("AVFoundation"), .linkedFramework("CoreAudio")]),
-        .executableTarget(name: "Jarvis", dependencies: ["JarvisAudioSafety"], exclude: ["Rooms/README.md"]),
+        .executableTarget(name: "Jarvis", dependencies: ["JarvisAudioSafety"], exclude: ["Rooms/README.md"], resources: [.process("Resources")]),
         .testTarget(name: "JarvisVoiceTests", dependencies: ["Jarvis"])
     ]
 )

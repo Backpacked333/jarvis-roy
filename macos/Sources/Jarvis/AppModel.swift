@@ -45,7 +45,7 @@ final class AppModel: ObservableObject {
         self.voice = injectedVoice ?? VoiceController()
         self.rooms = RoomsModel(client: harnessClient ?? HarnessClient())
         self.assistant = AssistantModel(voice: self.voice)
-        if AssistantFeatures.assistant { self.tab = .assistant }
+        if AssistantFeatures.assistant { self.tab = .today }
         voice.contextProvider = { [weak self] in self?.captureContext ?? HarnessVoiceContext() }
         voice.onUtterance = { [weak self] utterance in Task { await self?.handleUtterance(utterance) } }
         voice.onAudioLevels = { [weak self] levels in self?.rooms.updateAudioLevels(levels) }
@@ -57,6 +57,7 @@ final class AppModel: ObservableObject {
             guard let self, self.tab == .assistant else { return }
             self.assistant.captureStarted(voiceSessionID: session, generation: generation)
         }
+        voice.onDictationRetained = { [weak self] utterance in self?.assistant.retainInterruptedDictation(utterance) }
         voice.onSpeechDrained = { [weak self] receipt in Task { await self?.assistant.speechDrained(receipt) } }
         rooms.onQuestionAttention = { [weak self] notice in
             guard let self, self.voice.cloudConsentGranted, self.rooms.canSpeak(notice),
@@ -408,6 +409,21 @@ final class AppModel: ObservableObject {
         }
         voiceOwner = id
         return true
+    }
+
+    func startNewConversation() async {
+        if AssistantFeatures.assistant { await newAssistantConversation() }
+        else { await newConversation() }
+    }
+
+    func openProject(_ projectID: String) async {
+        if let session = assistant.sessions.last(where: { $0.focus.projectID == projectID }) {
+            assistant.selectSession(session.id); tab = .assistant
+        } else if let room = rooms.state?.rooms.first(where: { $0.id == projectID }) {
+            await assistant.open(focus: AssistantFocus(kind: .room, roomId: room.id), title: room.title); tab = .assistant
+        } else if let conversation = conversations.first(where: { $0.id == projectID }) {
+            await assistant.open(focus: AssistantFocus(kind: .conversation, conversationId: conversation.id, roomId: nil), title: conversation.title); tab = .assistant
+        } else { error = "That project's local conversation is not available. Refresh before opening it." }
     }
 
     func newAssistantConversation() async {

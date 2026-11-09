@@ -8,6 +8,7 @@ struct AssistantWorkspaceView: View {
     @State private var knowledgeVisible = false
     @State private var memoryVisible = false
     @State private var contextVisible = false
+    @State private var contextUsed: ContextUsedTarget?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,6 +55,9 @@ struct AssistantWorkspaceView: View {
                                     if !turn.isSettled { ProgressView().controlSize(.small) }
                                 }.font(.caption).foregroundStyle(.secondary)
                                 if let error = turn.error { Text(error).font(.caption).foregroundStyle(.orange) }
+                                if let taskID = turn.taskId, let project = turn.capturedFocus.projectID, AssistantFeatures.knowledge || AssistantFeatures.memory {
+                                    Button("Context used") { contextUsed = .init(id: taskID, projectID: project) }.font(.caption)
+                                }
                                 ForEach(assistant.visiblePresentations.filter { $0.turnId == turn.id }) { presentation in
                                     Button { assistant.selectPresentation(presentation.id) } label: {
                                         Label(presentation.title.isEmpty ? presentation.content.kind.rawValue.capitalized : presentation.title,
@@ -101,6 +105,10 @@ struct AssistantWorkspaceView: View {
                 VStack(spacing: 0) {
                     HStack {
                         Button { assistant.goBack() } label: { Label("Back", systemImage: "chevron.left") }.disabled(!assistant.canGoBack)
+                        if !assistant.followingPresentation {
+                            Button("Follow Jarvis") { assistant.followPresentations() }.help("Let new results update the working surface")
+                            if assistant.hasPresentationUpdate { Button("Show update") { assistant.showPresentationUpdate() } }
+                        }
                         Spacer()
                         if let selected = assistant.selectedPresentation {
                             if let text = selected.content.markdown {
@@ -115,13 +123,16 @@ struct AssistantWorkspaceView: View {
                     }.padding(12)
                     Divider()
                     ScrollView {
-                        if let selected = assistant.selectedPresentation { AssistantPresentationView(presentation: selected, assistant: assistant).padding(24) }
+                        if let selected = assistant.selectedPresentation { AssistantPresentationView(presentation: selected, assistant: assistant, rooms: model.rooms).id("\(selected.id):\(selected.revision)").padding(24) }
                         else { ContentUnavailableView("Your working surface", systemImage: "rectangle.3.group", description: Text("Ask Jarvis to explain, compare, calculate, or draft. Select a card to explore its evidence and details.")) }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }.frame(minWidth: 330)
             }
             Divider()
             VStack(spacing: 10) {
+                if let selection = assistant.visualSelection {
+                    HStack { Label(selection.label, systemImage: "scope"); Text("Bound to displayed revision").foregroundStyle(.secondary); Spacer(); Button("Clear") { assistant.selectVisual(nil) } }.font(.caption)
+                }
                 HStack {
                     Picker("Next turn", selection: $assistant.intent) {
                         Text("Continue").tag("continue")
@@ -130,14 +141,16 @@ struct AssistantWorkspaceView: View {
                     }.labelsHidden().frame(maxWidth: 230)
                     Picker("Capture", selection: $voice.captureMode) {
                         ForEach(VoiceCaptureMode.allCases) { mode in Text(mode.title).tag(mode) }
-                    }.labelsHidden().frame(maxWidth: 220)
+                    }.labelsHidden().frame(maxWidth: 220).disabled(voice.captureInProgress || voice.dictationActive)
+                    VoicePauseSettingsView(mode: voice.captureMode)
                     Spacer()
+                    if voice.dictationPaused { Button("Continue dictation") { Task { await voice.continueDictation() } } }
                     if voice.isListening {
                         Button("Still thinking") { voice.holdConversationPause() }
-                        Button("Finish") { voice.finishListening() }
                     }
+                    if voice.isListening || voice.dictationActive { Button("Finish") { voice.finishListening() } }
                     Button { Task { await model.startManualListening() } } label: { Label("Speak", systemImage: "mic.fill") }
-                        .disabled(!voice.cloudConsentGranted || assistant.selectedSession == nil)
+                        .disabled(!voice.cloudConsentGranted || assistant.selectedSession == nil || voice.dictationActive)
                     Button("Stop speaking") { assistant.muteNarration(); voice.stopSpeaking(); Task { await assistant.invalidateVoiceReview() } }
                 }
                 HStack(alignment: .bottom) {
@@ -149,7 +162,7 @@ struct AssistantWorkspaceView: View {
                         .buttonStyle(.plain).disabled(assistant.submitting || assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || assistant.selectedSession == nil)
                         .accessibilityLabel("Send assistant request")
                 }
-                if voice.isListening { Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
+                if voice.isListening || voice.dictationActive { Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
             }.padding(18)
         }
         .sheet(isPresented: $knowledgeVisible) {
@@ -163,6 +176,12 @@ struct AssistantWorkspaceView: View {
                 MemoryWorkspaceView(projectID: assistant.selectedSession?.focus.projectID, client: assistant.client)
                     .id(assistant.selectedSession?.focus.projectID ?? "personal")
             }.frame(minWidth: 860, minHeight: 620)
+        }
+        .sheet(item: $contextUsed) { target in
+            VStack(spacing: 0) {
+                HStack { Spacer(); Button("Done") { contextUsed = nil } }.padding()
+                ContextUsedView(projectID: target.projectID, taskID: target.id, client: assistant.client)
+            }.frame(minWidth: 760, minHeight: 620)
         }
         .sheet(isPresented: $contextVisible) {
             if let focus = assistant.selectedSession?.focus, let projectID = focus.projectID {
@@ -184,6 +203,7 @@ struct AssistantWorkspaceView: View {
 private struct AssistantPresentationView: View {
     let presentation: AssistantPresentation
     @ObservedObject var assistant: AssistantModel
+    @ObservedObject var rooms: RoomsModel
     private var content: AssistantPresentationContent { presentation.content }
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -195,7 +215,13 @@ private struct AssistantPresentationView: View {
                 Text("Source version \(content.sourceVersionId ?? "")").font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                 ForEach(content.passages ?? []) { passage in
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(passage.locator.display).font(.caption).foregroundStyle(.secondary)
+                        HStack {
+                            Text(passage.locator.display).font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            Button(assistant.visualSelection?.passageId == passage.id ? "Selected for next turn" : "Refer to this passage") {
+                                assistant.selectVisual(.init(kind: .document_passage, passageId: passage.id))
+                            }.font(.caption)
+                        }
                         Text(passage.text).textSelection(.enabled)
                         Text("Evidence \(passage.id)").font(.caption2.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                     }.padding(14).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
@@ -203,11 +229,10 @@ private struct AssistantPresentationView: View {
             case .draft:
                 Label(content.format == "email" ? "Email draft" : "Document draft", systemImage: content.format == "email" ? "envelope" : "doc.text")
                     .font(.caption).foregroundStyle(.secondary)
-                Text(content.title ?? "").font(.headline).textSelection(.enabled)
-                Text(content.body ?? "").textSelection(.enabled)
+                PresentationDraftEditor(presentation: presentation, assistant: assistant)
             case .code_diff:
                 Text("\(content.language ?? "Code") · Verification: \(content.verification ?? "unverified")").font(.caption).foregroundStyle(.secondary)
-                ScrollView(.horizontal) { Text(content.diff ?? "").font(.system(.body, design: .monospaced)).textSelection(.enabled) }
+                PresentationDiffView(diff: content.diff ?? "")
             case .sources:
                 ForEach(content.sources ?? []) { source in
                     VStack(alignment: .leading, spacing: 8) {
@@ -221,15 +246,20 @@ private struct AssistantPresentationView: View {
                 Text(content.verification == "passed" ? "Checks passed" : "Verification: \(content.verification ?? "unverified")").font(.caption).foregroundStyle(.secondary)
                 ScrollView(.horizontal) { Text(content.code ?? "").font(.system(.body, design: .monospaced)).textSelection(.enabled) }
             case .math:
-                Text(content.latex ?? "").font(.system(.title3, design: .serif)).textSelection(.enabled)
+                EquationPresentationView(latex: content.latex ?? "")
                 Text(content.explanation ?? "").textSelection(.enabled)
                 Text("Verification: \(content.verification ?? "unverified")").font(.caption).foregroundStyle(.secondary)
             case .table:
                 ScrollView(.horizontal) {
                     Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 12) {
                         GridRow { ForEach(Array((content.columns ?? []).enumerated()), id: \.offset) { _, title in Text(title).font(.headline) } }
-                        ForEach(Array((content.rows ?? []).enumerated()), id: \.offset) { _, row in
-                            GridRow { ForEach(Array(row.enumerated()), id: \.offset) { _, cell in Text(cell.display).textSelection(.enabled) } }
+                        ForEach(Array((content.rows ?? []).enumerated()), id: \.offset) { rowIndex, row in
+                            GridRow { ForEach(Array(row.enumerated()), id: \.offset) { column, cell in
+                                Button { assistant.selectVisual(.init(kind: .table_cell, row: rowIndex, column: column)) } label: {
+                                    Text(cell.display).textSelection(.enabled).padding(6)
+                                        .background(assistant.visualSelection == AssistantVisualSelection(kind: .table_cell, row: rowIndex, column: column) ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                                }.buttonStyle(.plain).help("Use this cell as the reference for your next turn")
+                            } }
                         }
                     }
                 }
@@ -252,7 +282,7 @@ private struct AssistantPresentationView: View {
             case .artifact:
                 Label(content.path ?? "Artifact", systemImage: "doc")
                 Text("Verification: \(content.verification ?? "unverified")").foregroundStyle(.secondary)
-                Text("Open the original room's Artifacts view to inspect and save the verified immutable bytes.").font(.callout)
+                ArtifactInlineView(presentation: presentation, rooms: rooms)
                 Text(content.digest ?? "").font(.caption.monospaced()).textSelection(.enabled)
             case .plan:
                 Text(content.status?.capitalized ?? "Plan").font(.caption).foregroundStyle(.secondary)

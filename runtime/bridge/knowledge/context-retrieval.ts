@@ -21,6 +21,7 @@ interface RetrievalDependencies {
   guard<T>(sources: SourceVersion[], purpose: Purpose, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T>;
   audit(projectId: string, operation: string, purpose: Purpose): void;
   now(): Date;
+  nativeVectors(): boolean;
 }
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const CANDIDATE_LIMIT = 256, VECTOR_SCAN_LIMIT = 4096, RRF_OFFSET = 60;
@@ -43,7 +44,7 @@ export class LocalKnowledgeRetrieval {
   private assertModel(): void {
     if (!this.provider || !this.identity || embeddingKey(this.provider.identity) !== this.key) throw new BridgeError("Local embedding model changed or is unavailable. Restart and rebuild its index.", 503);
   }
-  private async embed(texts: string[], signal?: AbortSignal): Promise<number[][]> {
+  private async embed(texts: string[], signal?: AbortSignal, purpose: "query" | "document" = "document"): Promise<number[][]> {
     this.assertModel(); signal?.throwIfAborted();
     if (!texts.length || texts.length > EMBEDDING_BATCH_TEXTS || texts.some(text => Buffer.byteLength(text) > EMBEDDING_TEXT_BYTES) ||
         texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) > EMBEDDING_BATCH_BYTES) throw new BridgeError("Local embedding batch exceeds its bounds.", 413);
@@ -51,7 +52,7 @@ export class LocalKnowledgeRetrieval {
     const vectors = await new Promise<readonly (readonly number[])[]>((resolve, reject) => {
       const abort = () => reject(combined.reason);
       combined.addEventListener("abort", abort, { once: true });
-      Promise.resolve().then(() => { combined.throwIfAborted(); return this.provider!.embed(texts, { signal: combined }); }).then(resolve, reject)
+      Promise.resolve().then(() => { combined.throwIfAborted(); return this.provider!.embed(texts, { signal: combined, purpose }); }).then(resolve, reject)
         .finally(() => combined.removeEventListener("abort", abort));
     });
     combined.throwIfAborted(); this.assertModel();
@@ -145,7 +146,7 @@ export class LocalKnowledgeRetrieval {
     if (this.provider) {
       try {
         if (input.indexBudget) await this.index({ projectId: input.projectId, limit: input.indexBudget }, signal, input.purpose, input.includeArchived);
-        queryVector = (await this.embed([input.query], signal))[0];
+        queryVector = (await this.embed([input.query], signal, "query"))[0];
       } catch {
         signal?.throwIfAborted(); vectorStatus = "failed";
         warnings.push("Local semantic retrieval is unavailable for this request; lexical evidence only. Check the local model and rebuild its index if it changed.");
@@ -157,10 +158,16 @@ export class LocalKnowledgeRetrieval {
     const lexical = this.lexical(input, sources), candidates = new Map(lexical.map(match => [match.passage.id, match]));
     let scannedVectors = 0, vectorScanLimited = false;
     if (queryVector) {
-      const rows = this.dependencies.db().prepare(`SELECT p.record,e.vector,e.text_hash FROM passage_embeddings e JOIN passages p ON p.id=e.passage_id
+      const native = this.dependencies.nativeVectors() && this.coverage(sources).indexedPassages <= 100_000;
+      const rows = native ? this.dependencies.db().prepare(`SELECT p.record,e.vector,e.text_hash,
+        CASE WHEN length(e.vector)=? THEN vec_distance_cosine(e.vector,?) ELSE NULL END AS distance
+        FROM passage_embeddings e JOIN passages p ON p.id=e.passage_id
+        WHERE e.provider_key=? AND e.dimensions=? AND p.source_id IN (SELECT value FROM json_each(?))
+        ORDER BY distance,p.id LIMIT ?`).all(this.identity!.dimensions * 4, encodeVector(queryVector), this.key!, this.identity!.dimensions, JSON.stringify([...sources.keys()]), CANDIDATE_LIMIT) :
+        this.dependencies.db().prepare(`SELECT p.record,e.vector,e.text_hash FROM passage_embeddings e JOIN passages p ON p.id=e.passage_id
         WHERE e.provider_key=? AND e.dimensions=? AND p.source_id IN (SELECT value FROM json_each(?))
         ORDER BY p.source_id,p.id LIMIT ?`).all(this.key!, this.identity!.dimensions, JSON.stringify([...sources.keys()]), VECTOR_SCAN_LIMIT + 1);
-      vectorScanLimited = rows.length > VECTOR_SCAN_LIMIT;
+      vectorScanLimited = !native && rows.length > VECTOR_SCAN_LIMIT;
       const scored: { passage: EvidencePassage; similarity: number }[] = [], invalid: string[] = [];
       for (const row of rows.slice(0, VECTOR_SCAN_LIMIT)) {
         const passage = EvidencePassageSchema.parse(JSON.parse(String(row.record))); scannedVectors++;
@@ -174,6 +181,7 @@ export class LocalKnowledgeRetrieval {
         const remove = this.dependencies.db().prepare("DELETE FROM passage_embeddings WHERE passage_id=? AND provider_key=?");
         for (const id of invalid) remove.run(id, this.key!);
       });
+      if (native) scannedVectors = this.coverage(sources).indexedPassages;
       scored.sort((a, b) => b.similarity - a.similarity || compareID(a.passage.id, b.passage.id));
       scored.slice(0, CANDIDATE_LIMIT).forEach(({ passage, similarity }, index) => {
         const match = candidates.get(passage.id) ?? { source: sources.get(passage.sourceVersionId)!, passage, explanation: emptyExplanation() };
@@ -204,6 +212,7 @@ export class LocalKnowledgeRetrieval {
     this.dependencies.audit(input.projectId, "context_retrieval", input.purpose);
     return { version: 1 as const, matches, contentTrust: "untrusted" as const,
       retrieval: { mode: queryVector ? "hybrid" as const : "lexical" as const, terms, vectorStatus, provider: this.identity,
+        vectorEngine: this.dependencies.nativeVectors() ? "sqlite_vec_exact" as const : "bounded_javascript" as const,
         coverage: { ...coverage, scannedVectors, vectorScanLimited, sourceScanLimited }, diversity: { maxPerSource: input.maxPerSource }, warnings: [...new Set(warnings)] } };
   }
 }

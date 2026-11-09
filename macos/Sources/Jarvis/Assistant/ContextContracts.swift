@@ -1,9 +1,11 @@
 import Foundation
 
 enum AssistantContextKind: String, Codable, CaseIterable, Hashable { case source, memory, history, checkpoint }
-struct AssistantContextPin: Encodable, Hashable {
-    let kind: AssistantContextKind, id: String, revision: Int
+struct AssistantContextPin: Codable, Hashable {
+    let kind: AssistantContextKind, id: String
+    let revision: Int?
 }
+typealias AssistantContextCitation = AssistantContextSelection.Citation
 struct AssistantContextScope: Decodable, Equatable {
     let projectId: String, conversationId: String?, taskId: String?
 }

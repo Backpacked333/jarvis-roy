@@ -161,17 +161,34 @@ export class ResearchService {
       await this.withEvidenceAccess(record, evidence, signal, async guarded => {
         this.progress(record, "synthesizing", "Generating a bounded source-backed draft; citations will be checked against exact passages.");
         const evidencePacket = this.packet(evidence);
-        const draft = ResearchDraftSchema.parse(await this.complete(record, "synthesis", {
+        let draft = ResearchDraftSchema.parse(await this.complete(record, "synthesis", {
           goal: record.input.goal, evidence: evidencePacket,
           schema: { title: "string", markdown: "string", claims: [{ text: "string", status: "supported|inference|unresolved", citations: [{ passageId: "exact supplied id", quote: "exact substring" }] }], unresolved: ["string"], checks: [] },
         }, guarded, key));
         this.validateDraft(record, draft, evidence);
         this.progress(record, "critiquing", "A separate model call is checking the draft against the evidence and identifying unsupported claims.");
-        const critique = ResearchCritiqueSchema.parse(await this.complete(record, "critique", {
+        let critique = ResearchCritiqueSchema.parse(await this.complete(record, "critique", {
           goal: record.input.goal, draft, evidence: evidencePacket,
           schema: { verdict: "supported_with_limits|needs_revision|insufficient_evidence", summary: "string", issues: [{ claimIndex: "zero-based integer or null", severity: "note|unsupported|contradiction", explanation: "string" }] },
         }, guarded, key));
         if (critique.issues.some(issue => issue.claimIndex !== null && issue.claimIndex >= draft.claims.length)) throw new Error("invalid_critique_reference");
+        // A repair always needs a separate fresh critique. Never spend the final
+        // call repairing a result that cannot be reviewed within the same budget.
+        if (critique.verdict === "needs_revision" && record.run.modelCalls + 2 <= record.run.budget.maxModelCalls) {
+          this.progress(record, "synthesizing", "Repairing the draft against the critique within the original evidence and budget.");
+          draft = ResearchDraftSchema.parse(await this.complete(record, "synthesis", {
+            goal: record.input.goal, evidence: evidencePacket, previousDraft: draft, critique,
+            instruction: "Repair unsupported claims. Keep unresolved evidence gaps explicit. Do not invent sources or completed checks.",
+            schema: { title: "string", markdown: "string", claims: [{ text: "string", status: "supported|inference|unresolved", citations: [{ passageId: "exact supplied id", quote: "exact substring" }] }], unresolved: ["string"], checks: [] },
+          }, guarded, key));
+          this.validateDraft(record, draft, evidence);
+          this.progress(record, "critiquing", "Checking the repaired draft against the evidence in a fresh critique.");
+          critique = ResearchCritiqueSchema.parse(await this.complete(record, "critique", {
+            goal: record.input.goal, draft, evidence: evidencePacket,
+            schema: { verdict: "supported_with_limits|needs_revision|insufficient_evidence", summary: "string", issues: [{ claimIndex: "zero-based integer or null", severity: "note|unsupported|contradiction", explanation: "string" }] },
+          }, guarded, key));
+          if (critique.issues.some(issue => issue.claimIndex !== null && issue.claimIndex >= draft.claims.length)) throw new Error("invalid_critique_reference");
+        }
         // A critique may demote a claim; it can never silently promote one to verified.
         for (const issue of critique.issues) if (issue.claimIndex !== null && issue.severity !== "note") draft.claims[issue.claimIndex].status = "unresolved";
         if (critique.verdict !== "supported_with_limits" || critique.issues.some(issue => issue.severity !== "note")) {

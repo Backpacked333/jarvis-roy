@@ -34,7 +34,7 @@ export const ContextCitationSchema = z.strictObject({ sourceVersionId: ContextId
   locator: z.strictObject({ page: z.number().int().positive().nullable(), lineStart: z.number().int().positive(),
     lineEnd: z.number().int().positive() }).nullable().default(null) });
 export const ContextProvenanceSchema = z.strictObject({
-  origin: z.enum(["original_source", "user_approved_memory", "conversation_message", "extractive_checkpoint", "model_summary"]),
+  origin: z.enum(["original_source", "user_approved_memory", "retained_snapshot", "conversation_message", "extractive_checkpoint", "project_checkpoint", "model_summary"]),
   referenceId: ContextId, revision: z.number().int().positive(),
   memoryScope: z.enum(["personal", "project"]).optional(),
 });
@@ -45,6 +45,8 @@ export const ContextCandidateSchema = z.strictObject({
   score: z.number().finite().min(0).max(1).default(0),
   retrievalReasons: z.array(z.string().max(300)).max(8).optional(),
   citations: z.array(ContextCitationSchema).max(20).default([]), provenance: ContextProvenanceSchema,
+  retention: z.strictObject({ grantId: ContextId, grantRevision: z.number().int().positive(), kind: z.enum(["source", "memory"]), id: ContextId,
+    revision: z.number().int().positive(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).optional(),
 });
 export type ContextCandidate = z.infer<typeof ContextCandidateSchema>;
 export type ContextCandidateInput = z.input<typeof ContextCandidateSchema>;
@@ -63,6 +65,7 @@ export const ContextSelectionSchema = ContextCandidateSchema.omit({ score: true 
   contentTrust: z.literal("untrusted_data"), verification: z.literal("not_independently_verified"),
   originalSha256: z.string().regex(/^[a-f0-9]{64}$/), originalBytes: z.number().int().nonnegative(),
   selectedBytes: z.number().int().nonnegative(), truncated: z.boolean(),
+  span: z.strictObject({ start: z.number().int().nonnegative(), end: z.number().int().nonnegative(), unit: z.literal("utf16") }).optional(),
 });
 export type ContextSelection = z.infer<typeof ContextSelectionSchema>;
 export const ContextPacketSchema = z.strictObject({
@@ -96,6 +99,7 @@ export interface ContextCandidateBatch {
 export interface ContextProvider {
   retrieve(input: ContextRetrievalRequest, signal: AbortSignal): Promise<ContextCandidateBatch>;
   authorize(candidate: ContextCandidate | ContextSelection, input: ContextRetrievalRequest): boolean;
+  reauthorize?(candidates: (ContextCandidate | ContextSelection)[], input: ContextRetrievalRequest, signal?: AbortSignal): Promise<boolean>;
 }
 export interface ContextAssemblerOptions {
   providers: Partial<Record<ContextKind, ContextProvider>>;

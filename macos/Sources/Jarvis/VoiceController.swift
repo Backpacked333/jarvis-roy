@@ -18,6 +18,15 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     @Published private(set) var handsFreeStatus = "Hands-free is off"
     @Published private(set) var state: HarnessVoiceState = .idle
     @Published var captureMode: VoiceCaptureMode = .conversation
+    @Published private(set) var dictationActive = false
+    @Published private(set) var dictationPaused = false
+    var onDictationRetained: ((HarnessVoiceUtterance) -> Void)?
+    private var dictation: VoiceDictation?
+    private var finishDictationRequested = false
+    private var continueDictationRequested = false
+    private var activeCaptureMode: VoiceCaptureMode = .conversation
+    private var providerPreflight = VoiceProviderPreflight()
+    private var cachedProviderStatus: HarnessVoiceStatus?
     var continuousConnectionEnabled = false
     var onSpeechDrained: ((String) -> Void)?
     var onCaptureStarted: ((String, Int) -> Void)?
@@ -133,10 +142,20 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         await beginCapture(context: context, fromWake: false)
     }
 
-    private func beginCapture(context: HarnessVoiceContext, fromWake: Bool) async {
+    func startConfirmationListening() async {
+        await beginCapture(context: contextProvider?() ?? HarnessVoiceContext(), fromWake: false, allowDictation: false)
+    }
+
+    func continueDictation() async {
+        guard let current = dictation, dictationPaused, !isListening, !turn.committed else { return }
+        guard current.mayContinue(at: now()) else { finishListening(); return }
+        await beginCapture(context: current.root.context, fromWake: false, continuingDictation: true)
+    }
+
+    private func beginCapture(context: HarnessVoiceContext, fromWake: Bool, continuingDictation: Bool = false, allowDictation: Bool = true) async {
         guard !Task.isCancelled else { return }
         let interruptStarted = isSpeaking ? now() : nil
-        cancelActive(preserveConnection: continuousConnectionEnabled)
+        cancelActive(preserveConnection: continuousConnectionEnabled, clearDictation: !continuingDictation)
         if let interruptStarted { RuntimeDiagnostics.shared.elapsed("voice_interrupt_complete", role: "voice", since: interruptStarted, at: now()) }
         guard audioInputAvailable() else {
             fail("No usable microphone was found. Connect an input device in System Settings → Sound, then explicitly enable listening again. Typing still works.")
@@ -150,13 +169,21 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         let ticket = turn.begin(.capture, context: context, reuseSession: continuousConnectionEnabled)
         captureLatency = RuntimeLatencySpan(generation: ticket, startedAt: now())
         RuntimeDiagnostics.shared.record("voice_capture_requested", role: "voice")
-        onCaptureStarted?(turn.sessionId, ticket)
-        transcript = ""
+        activeCaptureMode = continuingDictation ? .dictation : allowDictation ? captureMode : .conversation
+        if !continuingDictation {
+            onCaptureStarted?(turn.sessionId, ticket)
+            if allowDictation, captureMode == .dictation, !fromWake, context.question == nil {
+                dictation = VoiceDictation(root: .init(text: "", context: context, sessionId: turn.sessionId, generation: ticket), startedAt: now())
+                dictationActive = true
+            }
+        }
+        dictationPaused = false; finishDictationRequested = false; continueDictationRequested = false
+        transcript = dictation?.text ?? ""
         error = nil
         changeState(.connecting)
         wakeStatus = "Connecting · cloud microphone capture not yet active"
         do {
-            let status = try await transport.status()
+            let status = try await checkedProviderStatus()
             guard current(ticket) else { if turn.current(ticket), Task.isCancelled { stopListening() }; return }
             guard status.status != "unavailable" else { fail(status.reason ?? "ElevenLabs is unavailable. Typing still works."); return }
             guard await authorizeMicrophone(ticket), current(ticket) else { if turn.current(ticket), Task.isCancelled { stopListening() }; return }
@@ -219,6 +246,15 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
 
     // Finish is a commit. Stop/mute/interrupt discard partial recognition instead.
     func finishListening() {
+        if dictationActive {
+            finishDictationRequested = true
+            if dictationPaused { publishDictation(); return }
+        }
+        finishCapture()
+    }
+
+    private func finishCapture(continueDictation: Bool = false) {
+        if dictationActive { continueDictationRequested = continueDictation }
         guard turn.mode == .capture, isListening, !turn.committed else { return }
         if usingDuplex {
             do {
@@ -241,7 +277,11 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         isCapturingCommand = false
         do {
             while let input, input.pendingBytes > 0 { try pumpInput() }
-            guard sentInputBytes >= 8_000 else { stopListening(); return }
+            guard sentInputBytes >= 8_000 else {
+                if dictationActive { if finishDictationRequested { publishDictation() } else { pauseDictation() } }
+                else { stopListening() }
+                return
+            }
             input = nil
             try turn.commit()
             try transport.send(turn.frame("commit"))
@@ -365,7 +405,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         monitor = Task { [weak self] in
             guard let self else { return }
             do {
-                let status = try await self.transport.status()
+                let status = try await self.checkedProviderStatus()
                 guard self.current(ticket) else { return }
                 guard status.status != "unavailable" else { self.fail(status.reason ?? "ElevenLabs is unavailable. Read the reply as text."); return }
                 if self.handsFreeEnabled {
@@ -401,8 +441,21 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
                 // Provider idle does not mean the native playback queue has drained.
             case "transcript":
                 let utterance = try turn.transcript(frame)
-                transcript = frame.text ?? ""
-                if let utterance {
+                transcript = dictation?.preview(frame.text ?? "") ?? (frame.text ?? "")
+                if let utterance, dictationActive {
+                    try dictation?.append(utterance)
+                    transcript = dictation?.text ?? ""
+                    if finishDictationRequested { publishDictation() }
+                    else {
+                        let shouldContinue = continueDictationRequested && dictation?.mayContinue(at: now()) == true
+                        let identity = dictation?.id
+                        pauseDictation()
+                        if shouldContinue { Task { [weak self] in
+                            guard let self, self.dictation?.id == identity else { return }
+                            await self.continueDictation()
+                        } }
+                    }
+                } else if let utterance {
                     let legacyWake = fromWake
                     completeTurn()
                     if !utterance.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -499,6 +552,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         isSpeaking = false; isListening = false; isCapturingCommand = false
         transcript = ""
         fromWake = false
+        activeCaptureMode = .conversation
         duplexAnswerWindow = answerWindow
         duplexFinishing = false
         captureStarted = now()
@@ -549,7 +603,8 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
             if signal.speech && !signal.echo { lastDuplexSpeechAt = now }
             try pumpDuplexPCM()
             if duplexAnswerWindow, lastDuplexSpeechAt == nil, now - captureStarted > 8 { completeTurn(); return }
-            if now - captureStarted > captureMode.maximumSeconds || (now >= holdUntil && lastDuplexSpeechAt.map({ now - $0 > captureMode.silenceSeconds }) == true) { finishListening() }
+            if now - captureStarted > activeCaptureMode.maximumSeconds { finishCapture(continueDictation: dictationActive) }
+            else if now >= holdUntil && lastDuplexSpeechAt.map({ now - $0 > VoicePausePolicy.seconds(mode: activeCaptureMode) }) == true { finishCapture() }
         }
     }
 
@@ -573,7 +628,11 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
                         try self.pumpInput()
                         if let input = self.input {
                             let lastVoice = input.voiceActivity
-                            if now - self.captureStarted > self.captureMode.maximumSeconds || (now >= self.holdUntil && lastVoice != nil && now - lastVoice! > self.captureMode.silenceSeconds) || (lastVoice == nil && now - self.captureStarted > 8) { self.finishListening() }
+                            if now - self.captureStarted > self.activeCaptureMode.maximumSeconds {
+                                self.finishCapture(continueDictation: self.dictationActive)
+                            } else if (now >= self.holdUntil && lastVoice != nil && now - lastVoice! > VoicePausePolicy.seconds(mode: self.activeCaptureMode)) || (lastVoice == nil && now - self.captureStarted > 8) {
+                                self.finishCapture()
+                            }
                         }
                     }
                     if self.isSpeaking {
@@ -618,7 +677,9 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         else { wakeStatus = "Voice idle · microphone off" }
     }
 
-    private func cancelActive(preserveConnection: Bool = false, clearSpeech: Bool = true) {
+    private func cancelActive(preserveConnection: Bool = false, clearSpeech: Bool = true, clearDictation: Bool = true) {
+        if clearDictation { dictation = nil; dictationActive = false; dictationPaused = false; finishDictationRequested = false; continueDictationRequested = false }
+        if !preserveConnection { providerPreflight.reset(); cachedProviderStatus = nil }
         speechLatency = nil; captureLatency = nil
         let hadActiveTurn = turn.mode != .idle
         if clearSpeech { speechQueue.cancel(); streamPlaying = false }
@@ -642,6 +703,25 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         emitLevels()
     }
 
+    private func pauseDictation() {
+        cancelActive(preserveConnection: continuousConnectionEnabled, clearDictation: false)
+        dictationPaused = true; transcript = dictation?.text ?? ""
+        changeState(.idle); wakeStatus = "Dictation paused · microphone off · Continue or Finish"
+    }
+    private func publishDictation() {
+        guard let result = dictation?.utterance else { return }
+        cancelActive(preserveConnection: continuousConnectionEnabled)
+        changeState(.idle); transcript = result.text; wakeStatus = "Dictation finished · microphone off"
+        if !result.text.isEmpty { onUtterance?(result) }
+    }
+    private func checkedProviderStatus() async throws -> HarnessVoiceStatus {
+        if continuousConnectionEnabled, providerPreflight.reusable(at: now()), let cachedProviderStatus { return cachedProviderStatus }
+        let result = try await transport.status()
+        if result.status != "unavailable" { providerPreflight.verified(at: now()); cachedProviderStatus = result }
+        else { providerPreflight.reset(); cachedProviderStatus = nil }
+        return result
+    }
+
     private func current(_ ticket: Int) -> Bool { turn.current(ticket) && !Task.isCancelled }
     private func recordCaptureReady(_ ticket: Int) {
         guard let duration = captureLatency?.finish(.captureReady, generation: ticket, at: now()) else { return }
@@ -656,6 +736,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         onAudioLevels?(.init(inputRMS: input, playbackRMS: playback, generation: turn.generation))
     }
     private func fail(_ message: String) {
+        if let retained = dictation?.utterance, !retained.text.isEmpty { onDictationRetained?(retained) }
         stopListening()
         error = String(message.prefix(2_000))
         wakeStatus = "Unavailable · \(error!)"

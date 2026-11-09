@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { chmod, link, lstat, open, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { load as loadVectorExtension } from "sqlite-vec";
 import { z } from "zod";
 import { containsCredentialLikeData, listMemories } from "../../agent/lib/memory.ts";
 import { ensurePrivateDirectory, writeJsonAtomically } from "../../agent/lib/persistence.ts";
@@ -21,7 +22,7 @@ export * from "./contracts.ts";
 export type { LocalEmbeddingProvider, EmbeddingIdentity } from "./embeddings.ts";
 type Purpose = "local" | "cloud";
 type GrantRequest = { grantId: string; projectId: string; resourceId: string; operation: ReadGrant["operations"][number]; purpose: Purpose };
-export interface KnowledgeOptions { dataDirectory: string; enabled?: boolean; fetch?: typeof fetch; extractPdf?: PdfExtractor; now?: () => Date; embeddingProvider?: LocalEmbeddingProvider }
+export interface KnowledgeOptions { dataDirectory: string; enabled?: boolean; fetch?: typeof fetch; extractPdf?: PdfExtractor; now?: () => Date; embeddingProvider?: LocalEmbeddingProvider; backgroundIndexing?: boolean }
 export interface KnowledgeRouteContext { nativeAuthenticated: boolean }
 export interface KnowledgeReply { status: number; body: unknown }
 const sha256 = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
@@ -41,6 +42,11 @@ export class KnowledgeService {
   private preferenceGeneration = 0;
   private readonly localRetrieval: LocalKnowledgeRetrieval;
   private retrievalCancellation = new AbortController();
+  private nativeVectors = false;
+  private backgroundTimer?: NodeJS.Timeout;
+  private backgroundBusy = false;
+  private backgroundClosed = false;
+  private backgroundPaused = false;
 
   private constructor(options: KnowledgeOptions) {
     this.options = options;
@@ -58,6 +64,7 @@ export class KnowledgeService {
         return run(0, signal ?? new AbortController().signal) as ReturnType<typeof operation>;
       },
       audit: (projectId, operation, purpose) => this.audit(projectId, operation, null, purpose), now: this.now,
+      nativeVectors: () => this.nativeVectors,
     }, options.embeddingProvider);
   }
 
@@ -81,11 +88,13 @@ export class KnowledgeService {
       try { const info = await lstat(file + suffix); if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new Error("Unsafe knowledge database file"); await chmod(file + suffix, 0o600); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
-    const db = new DatabaseSync(file); this.connection = db;
+    const db = new DatabaseSync(file, { allowExtension: true }); this.connection = db;
+    try { loadVectorExtension(db); this.nativeVectors = true; } catch { this.nativeVectors = false; }
+    finally { db.enableLoadExtension(false); }
     try {
       db.exec("PRAGMA busy_timeout=0; PRAGMA locking_mode=EXCLUSIVE; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;");
       const version = db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version !== 0 && version !== 1 && version !== 2) throw new Error("Unsupported knowledge database version; restore a compatible backup");
+      if (version !== 0 && version !== 1 && version !== 2 && version !== 3) throw new Error("Unsupported knowledge database version; restore a compatible backup");
       if (version === 1) {
         const backup = path.join(this.directory, "knowledge-v1.before-embeddings.sqlite");
         try {
@@ -119,6 +128,13 @@ export class KnowledgeService {
           CREATE INDEX embedding_model ON passage_embeddings(provider_key,dimensions);
           PRAGMA user_version=2;`);
       });
+      if (version === 0 || version === 1 || version === 2) {
+        if (version === 2) {
+          const backup = path.join(this.directory, `knowledge-v2-${randomUUID()}.backup.sqlite`);
+          db.prepare("VACUUM INTO ?").run(backup); await chmod(backup, 0o600);
+        }
+        this.transaction(() => db.exec(`CREATE TABLE index_jobs(project_id TEXT PRIMARY KEY,state TEXT NOT NULL,updated_at TEXT NOT NULL,error_code TEXT); PRAGMA user_version=3;`));
+      }
       // Acquire lifetime exclusive ownership, like the room kernel.
       db.exec("BEGIN EXCLUSIVE; COMMIT;");
       if (!db.prepare("SELECT name FROM migrations WHERE name='legacy-preferences-v1'").get()) {
@@ -137,6 +153,11 @@ export class KnowledgeService {
         });
       }
       await this.reconcilePreferences();
+      if (this.options.backgroundIndexing && this.localRetrieval.identity) {
+        db.exec("UPDATE index_jobs SET state='pending' WHERE state='running'");
+        db.prepare("INSERT OR IGNORE INTO index_jobs SELECT DISTINCT project_id,'pending',?,NULL FROM sources").run(this.now().toISOString());
+        this.scheduleIndexing();
+      }
     } catch (error) { this.close(); throw error; }
   }
   /** Approved memory files remain authoritative while either feature is disabled.
@@ -161,13 +182,50 @@ export class KnowledgeService {
     return operation;
   }
   close(): void {
+    this.backgroundClosed = true; if (this.backgroundTimer) clearTimeout(this.backgroundTimer);
     this.cancelReads(); this.connection?.close(); this.connection = undefined;
   }
   cancelReads(): void {
+    this.backgroundPaused = true;
     this.retrievalCancellation.abort(new Error("Knowledge retrieval stopped"));
     this.retrievalCancellation = new AbortController();
     for (const controllers of this.activeReads.values()) for (const controller of controllers) controller.abort(new Error("Knowledge read stopped"));
     this.activeReads.clear();
+    // Cancellation must reach active helpers even if persistence is unavailable
+    // or initialization failed before the queue schema existed.
+    try { this.connection?.prepare("UPDATE index_jobs SET state='paused' WHERE state IN ('pending','running')").run(); } catch {}
+  }
+  private scheduleIndexing(): void {
+    if (!this.options.backgroundIndexing || !this.localRetrieval.identity || this.backgroundClosed || this.backgroundPaused || this.backgroundBusy || this.backgroundTimer) return;
+    this.backgroundTimer = setTimeout(() => { this.backgroundTimer = undefined; void this.runIndexJob(); }, 100);
+    this.backgroundTimer.unref();
+  }
+  private async runIndexJob(): Promise<void> {
+    if (this.backgroundClosed || !this.connection) return;
+    const job = this.db().prepare("SELECT project_id FROM index_jobs WHERE state='pending' ORDER BY updated_at,project_id LIMIT 1").get();
+    if (!job) return;
+    const projectId = String(job.project_id); this.backgroundBusy = true;
+    this.db().prepare("UPDATE index_jobs SET state='running',error_code=NULL WHERE project_id=?").run(projectId);
+    try {
+      const result = await this.indexEmbeddings({ projectId, limit: 16 });
+      if (!this.backgroundClosed && this.connection) this.db().prepare("UPDATE index_jobs SET state=?,updated_at=? WHERE project_id=? AND state='running'")
+        .run(result.remaining ? "pending" : "complete", this.now().toISOString(), projectId);
+    } catch {
+      if (!this.backgroundClosed && this.connection) this.db().prepare("UPDATE index_jobs SET state='paused',error_code='local_index_unavailable',updated_at=? WHERE project_id=? AND state='running'").run(this.now().toISOString(), projectId);
+    } finally { this.backgroundBusy = false; this.scheduleIndexing(); }
+  }
+  queueIndexing(projectId: string, action: "resume" | "pause" = "resume") {
+    KnowledgeId.parse(projectId);
+    this.db().prepare("INSERT INTO index_jobs VALUES (?,?,?,NULL) ON CONFLICT(project_id) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at,error_code=NULL")
+      .run(projectId, action === "resume" ? "pending" : "paused", this.now().toISOString());
+    if (action === "resume") { this.backgroundPaused = false; this.scheduleIndexing(); }
+    return this.indexingStatus(projectId);
+  }
+  indexingStatus(projectId: string) {
+    KnowledgeId.parse(projectId);
+    const row = this.db().prepare("SELECT state,updated_at,error_code FROM index_jobs WHERE project_id=?").get(projectId);
+    return { version: 1, projectId, available: this.localRetrieval.identity !== null, backgroundEnabled: this.options.backgroundIndexing === true,
+      state: row ? String(row.state) : "idle", updatedAt: row ? String(row.updated_at) : null, errorCode: row?.error_code ?? null };
   }
   private transaction<T>(operation: () => T): T {
     const db = this.db(); db.exec("BEGIN EXCLUSIVE");
@@ -262,7 +320,7 @@ export class KnowledgeService {
     return digest;
   }
   private storeSource(input: Omit<SourceVersion, "id" | "revision" | "sourceId"> & { sourceId?: string }, parts: ReturnType<typeof passageParts>): { source: SourceVersion; passages: EvidencePassage[] } {
-    return this.transaction(() => {
+    const stored = this.transaction(() => {
       let revision = 1;
       if (input.sourceId) {
         const previous = this.db().prepare("SELECT record,archived FROM sources WHERE project_id=? AND source_id=? ORDER BY revision DESC LIMIT 1").get(input.projectId, input.sourceId);
@@ -279,6 +337,8 @@ export class KnowledgeService {
       for (const item of passages) { passage.run(item.id, source.id, source.projectId, JSON.stringify(item)); search.run(item.id, source.projectId, item.text); }
       this.audit(source.projectId, "source_imported", source.id); return { source, passages };
     });
+    if (this.options.backgroundIndexing) this.queueIndexing(stored.source.projectId);
+    return stored;
   }
   async importSource(raw: ImportSource, signal?: AbortSignal): Promise<{ source: SourceVersion; passages: EvidencePassage[] }> {
     this.db(); const input = ImportSourceSchema.parse(raw);
@@ -500,6 +560,10 @@ export class KnowledgeService {
     }
     if (pathname === "/v1/knowledge/index" && method === "POST") {
       native(); return reply(await this.indexEmbeddings(IndexEmbeddingsInputSchema.parse(body), signal));
+    }
+    if (pathname === "/v1/knowledge/index-status" && method === "GET") { native(); return reply(this.indexingStatus(project())); }
+    if (pathname === "/v1/knowledge/index-queue" && method === "POST") {
+      native(); const input = z.strictObject({ projectId: KnowledgeId, action: z.enum(["resume", "pause"]) }).parse(body); return reply(this.queueIndexing(input.projectId, input.action));
     }
     if (pathname === "/v1/knowledge/retrieve" && method === "POST") return reply(await this.retrieve(RetrieveInputSchema.parse(body), signal), 201);
     if (pathname === "/v1/knowledge/extract" && method === "POST") {

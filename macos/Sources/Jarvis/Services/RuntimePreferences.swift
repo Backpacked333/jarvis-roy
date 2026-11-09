@@ -14,6 +14,11 @@ struct RuntimePreferences {
         "JARVIS_ENABLE_DESKTOP": "Jarvis.desktopEnabled",
         "JARVIS_ENABLE_TERMINAL": "Jarvis.terminalEnabled",
         "JARVIS_ENABLE_APPLE_SERVICES": "Jarvis.appleServicesEnabled",
+        "JARVIS_ENABLE_OBJECTIVES": "Jarvis.objectivesEnabled",
+        "JARVIS_ENABLE_CLOUD": "Jarvis.cloudEnabled",
+        "JARVIS_ENABLE_TELEGRAM": "Jarvis.telegramEnabled",
+        "JARVIS_ENABLE_GOOGLE": "Jarvis.googleEnabled",
+        "JARVIS_ENABLE_PHONE": "Jarvis.phoneEnabled",
     ]
 
     func environment(inherited: [String: String]) -> [String: String] {

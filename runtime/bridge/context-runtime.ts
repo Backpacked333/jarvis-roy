@@ -5,6 +5,8 @@ import { createContextAssembler, ContextId, ContextPinSchema, type ContextCandid
 import type { JarvisService } from "./service.ts";
 import type { KnowledgeService } from "./knowledge/index.ts";
 import type { MemoryEntry, MemoryService } from "./memory/index.ts";
+import type { ContinuityService } from "./continuity/index.ts";
+import { combineContextProviders } from "./retained-context.ts";
 
 export const ContextPreviewSchema = z.strictObject({
   version: z.literal(1), projectId: ContextId, conversationId: ContextId.optional(),
@@ -14,12 +16,12 @@ export const ContextPreviewSchema = z.strictObject({
 });
 export const ContextRecallSchema = z.strictObject({ query: z.string().trim().min(1).max(1000), maxTokens: z.number().int().min(512).max(12_000).default(6000) });
 
-export function createContextRuntime(service: JarvisService, knowledge: KnowledgeService, memory: MemoryService) {
+export function createContextRuntime(service: JarvisService, knowledge: KnowledgeService, memory: MemoryService, continuity?: ContinuityService, retained?: { source: ContextProvider; memory: ContextProvider }) {
   const source: ContextProvider = {
     async retrieve(input, signal) {
       if (!knowledge.enabled) return { candidates: [] };
       const result = await knowledge.retrieveContext({ projectId: input.scope.projectId, query: input.query,
-        purpose: input.purpose, limit: 20, maxPerSource: 2, indexBudget: 8 }, signal);
+        purpose: input.purpose, limit: 20, maxPerSource: 2, indexBudget: 0 }, signal);
       const matches = [...result.matches];
       for (const pin of input.pins) {
         if (matches.some(match => match.passage.id === pin.id)) continue;
@@ -90,10 +92,22 @@ export function createContextRuntime(service: JarvisService, knowledge: Knowledg
         .messages.some(message => message.id === candidate.id && message.text.startsWith(candidate.text));
     },
   };
-  const assembler = createContextAssembler({ providers: { source, memory: memories, history },
+  const checkpoint: ContextProvider = {
+    async retrieve(input) {
+      if (!continuity?.enabled) return { candidates: [] };
+      const value = continuity.checkpoint(input.scope.projectId, input.purpose, input.query);
+      return { candidates: value.text ? [{ id: value.id, kind: "checkpoint", projectId: value.projectId, revision: value.revision,
+        title: "Project continuity", text: value.text, score: 0.7, provenance: { origin: "project_checkpoint", referenceId: value.id, revision: value.revision },
+        retrievalReasons: ["Committed project episodes across conversations; observed task state is not proof of an external effect"],
+      }] : [], retrieval: { mode: "history", warnings: [] } };
+    },
+    authorize: (candidate, input) => continuity?.enabled === true && continuity.authorizeCheckpoint(candidate.id, candidate.revision, input.scope.projectId, input.purpose),
+  };
+  const assembler = createContextAssembler({ providers: { source: retained ? combineContextProviders(source, retained.source) : source,
+    memory: retained ? combineContextProviders(memories, retained.memory) : memories, history, checkpoint },
     authorizeScope(scope) {
       service.contextSnapshot(scope.projectId, scope.conversationId ?? undefined, scope.taskId ?? undefined);
-      if (!knowledge.enabled && !memory.enabled) throw new BridgeError("Enable Knowledge or Personal Memory to use scoped context.", 503);
+      if (!knowledge.enabled && !memory.enabled && !retained) throw new BridgeError("Enable Knowledge or Personal Memory to use scoped context.", 503);
     },
     async activeActions(scope) {
       return service.contextSnapshot(scope.projectId, scope.conversationId ?? undefined, scope.taskId ?? undefined).actions
@@ -120,8 +134,12 @@ export function createContextRuntime(service: JarvisService, knowledge: Knowledg
       const snapshot = service.contextSnapshot(scope.projectId, scope.conversationId, scope.taskId);
       const text = query ?? snapshot.currentTurn.trim().slice(0, 1000);
       if (containsCredentialLikeData(text)) throw new BridgeError("Context queries cannot contain credentials.", 400);
-      return assembler.assemble({ version: 1, scope, purpose: "cloud", query: text || "current conversation", currentTurn: { text: snapshot.currentTurn },
+      const packet = await assembler.assemble({ version: 1, scope, purpose: "cloud", query: text || "current conversation", currentTurn: { text: snapshot.currentTurn },
+        pins: continuity?.enabled ? continuity.getWorkingSet(scope.projectId).pins : [],
         budget: { maxBytes: 32_768, maxTokens, maxItems: 12 } }, signal);
+      await assembler.revalidateAsync(packet, signal);
+      if (continuity?.enabled) continuity.recordContextUse(packet);
+      return packet;
     },
   };
 }

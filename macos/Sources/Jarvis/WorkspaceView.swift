@@ -40,6 +40,7 @@ struct WorkspaceView: View {
                     notice(model.connectionError ?? "Connecting to the local agent service…", icon: "network", color: Palette.amber)
                 }
                 switch model.tab {
+                case .today: TodayWorkspaceView(app: model, assistant: model.assistant)
                 case .assistant: AssistantWorkspaceView(model: model, assistant: model.assistant, voice: voice)
                 case .rooms:
                     RoomsWorkspaceView(model: model.rooms, onVoiceContext: { _ in },
@@ -108,7 +109,7 @@ struct WorkspaceView: View {
                     .background(model.tab == tab ? Palette.cyan.opacity(0.075) : .clear, in: RoundedRectangle(cornerRadius: 8))
                 }.buttonStyle(.plain).padding(.bottom, 6)
             }
-            Button { Task { await model.newConversation() } } label: {
+            Button { Task { await model.startNewConversation() } } label: {
                 Label("New conversation", systemImage: "plus")
             }.buttonStyle(.plain).foregroundStyle(Palette.cyan).padding(.vertical, 14)
                 .disabled(!model.isConnected || model.pendingActions.contains("new-conversation"))
@@ -224,7 +225,7 @@ struct WorkspaceView: View {
                             }
                         } else {
                             welcome
-                            Button("Start a conversation") { Task { await model.newConversation() } }
+                            Button("Start a conversation") { Task { await model.startNewConversation() } }
                                 .disabled(!model.isConnected || model.pendingActions.contains("new-conversation"))
                         }
                     }.padding(32).frame(maxWidth: .infinity, alignment: .leading)

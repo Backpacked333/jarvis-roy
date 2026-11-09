@@ -52,8 +52,10 @@ final class ContextInspectorModel: ObservableObject {
 @MainActor
 struct ContextInspectorView: View {
     @StateObject private var model: ContextInspectorModel
+    @StateObject private var workingSet: WorkingSetModel
     init(projectID: String, conversationID: String? = nil, client: AssistantClient) {
         _model = StateObject(wrappedValue: ContextInspectorModel(projectID: projectID, conversationID: conversationID, client: client))
+        _workingSet = StateObject(wrappedValue: WorkingSetModel(projectID: projectID, client: client))
     }
     var body: some View {
         ScrollView {
@@ -61,6 +63,7 @@ struct ContextInspectorView: View {
                 Text("See what goes into an answer").font(.title2)
                 Text("Preview evidence, approved memories, and available history for this project. Each preview checks current permissions; it does not send a model request.")
                     .font(.callout).foregroundStyle(.secondary)
+                WorkingSetView(model: workingSet)
                 TextField("Question or topic to assemble context for", text: $model.query, axis: .vertical).lineLimit(2...4)
                 HStack {
                     Toggle("Only cloud-eligible material", isOn: $model.cloudEligible)
@@ -77,7 +80,10 @@ struct ContextInspectorView: View {
                 if !model.pins.isEmpty {
                     HStack { Label("\(model.pins.count) pinned for this preview", systemImage: "pin.fill"); Button("Clear pins") { model.clearPins() } }
                         .font(.caption)
-                    Text("Pin changes apply when you preview again.").font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Text("Pin changes apply when you preview again.").font(.caption).foregroundStyle(.secondary)
+                        Button("Save pins for future turns") { Task { await workingSet.save(pins: Array(model.pins)) } }.disabled(workingSet.busy || workingSet.value == nil)
+                    }
                 }
                 if let error = model.error { Text(error).foregroundStyle(.orange).textSelection(.enabled) }
                 if let packet = model.packet {

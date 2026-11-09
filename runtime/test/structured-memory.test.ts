@@ -290,7 +290,7 @@ test("SQLite v1 migration preserves entries and writes a private pre-migration b
   try {
     const entry = await f.service.create(input(), native); await f.service.close();
     const db = new DatabaseSync(join(f.directory, "memory", "memory.sqlite"));
-    db.exec("DROP TABLE memory_vectors; PRAGMA user_version=1;"); db.close();
+    db.exec("DROP TABLE memory_vectors; DROP TABLE entry_history; DROP TABLE entities; DROP TABLE memory_conflicts; PRAGMA user_version=1;"); db.close();
     await f.restart(); assert.equal((await f.service.inspect(entry.id, native)).text, entry.text);
     const backups = (await readdir(join(f.directory, "memory"))).filter(name => name.startsWith("schema-v1-"));
     assert.equal(backups.length, 1);

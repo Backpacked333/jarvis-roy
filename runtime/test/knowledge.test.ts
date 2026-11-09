@@ -241,7 +241,7 @@ test("agent knowledge transport always binds the Eve session and cloud purpose w
     calls++; assert.equal(String(input), "http://127.0.0.1:39202/v1/knowledge/context");
     const headers = new Headers(init?.headers); assert.equal(headers.get("x-jarvis-eve-session"), "eve-current"); assert.equal(headers.get("x-jarvis-native-token"), null);
     assert.equal(JSON.parse(String(init?.body)).purpose, "cloud"); assert.equal(init?.redirect, "error");
-    assert.equal(JSON.parse(String(init?.body)).indexBudget, 8); assert.equal(JSON.parse(String(init?.body)).maxPerSource, 2);
+    assert.equal(JSON.parse(String(init?.body)).indexBudget, 0); assert.equal(JSON.parse(String(init?.body)).maxPerSource, 2);
     return Response.json({ matches: [], contentTrust: "untrusted" });
   }) as typeof fetch;
   const context = { sessionId: "eve-current", delegated: false, signal: new AbortController().signal };

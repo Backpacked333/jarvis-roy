@@ -172,13 +172,13 @@ test("schema migration backs up version one before adding derived embeddings and
   const imported = await importText(service, "Preserved automobile evidence.");
   service.close();
   const database = path.join(directory, "knowledge", "knowledge.sqlite"), backup = path.join(directory, "knowledge", "knowledge-v1.before-embeddings.sqlite");
-  let db = new DatabaseSync(database); db.exec("DROP TABLE passage_embeddings; PRAGMA user_version=1;"); db.close();
+  let db = new DatabaseSync(database); db.exec("DROP TABLE passage_embeddings; DROP TABLE index_jobs; PRAGMA user_version=1;"); db.close();
   const restored = await KnowledgeService.open({ dataDirectory: directory, enabled: true, embeddingProvider: provider() });
   assert.equal(restored.readSource(imported.source.id, "alpha", "cloud").source.id, imported.source.id);
   assert((await readFile(backup)).length > 0);
   db = new DatabaseSync(backup); assert.equal(db.prepare("PRAGMA user_version").get()!.user_version, 1); db.close();
   restored.close();
-  db = new DatabaseSync(database); db.exec("DROP TABLE passage_embeddings; PRAGMA user_version=1;"); db.close();
+  db = new DatabaseSync(database); db.exec("DROP TABLE passage_embeddings; DROP TABLE index_jobs; PRAGMA user_version=1;"); db.close();
   await rm(backup); await symlink(database, backup);
   await assert.rejects(KnowledgeService.open({ dataDirectory: directory, enabled: true }), /Unsafe knowledge migration backup/);
 });

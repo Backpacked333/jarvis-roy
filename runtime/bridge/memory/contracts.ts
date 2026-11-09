@@ -11,6 +11,17 @@ export const MemoryReferenceSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("conversation"), projectId: MemoryIdSchema.nullable(), conversationId: MemoryIdSchema, turnId: MemoryIdSchema.optional() }),
   z.strictObject({ type: z.literal("legacy"), memoryId: MemoryIdSchema }),
 ]);
+export const MemoryAssertionSchema = z.strictObject({
+  entityId: MemoryIdSchema, property: z.string().trim().min(1).max(120), value: z.string().trim().min(1).max(2000),
+  validFrom: z.iso.datetime().nullable(), validTo: z.iso.datetime().nullable(), observedAt: z.iso.datetime(),
+}).superRefine((value, context) => {
+  if (value.validFrom && value.validTo && Date.parse(value.validFrom) >= Date.parse(value.validTo)) context.addIssue({ code: "custom", message: "Assertion validity must be a nonempty interval" });
+});
+export const MemoryEntitySchema = z.strictObject({ version: z.literal(1), id: MemoryIdSchema, scope: MemoryScopeSchema,
+  label: z.string().trim().min(1).max(240), aliases: z.array(z.string().trim().min(1).max(240)).max(30),
+  revision: z.number().int().positive(), updatedAt: z.iso.datetime(),
+});
+export const MemoryEntityInputSchema = MemoryEntitySchema.pick({ scope: true, label: true, aliases: true });
 export const MemoryInputSchema = z.strictObject({
   kind: z.enum(["preference", "fact", "goal", "person", "routine", "decision"]),
   scope: MemoryScopeSchema,
@@ -18,6 +29,7 @@ export const MemoryInputSchema = z.strictObject({
   provenance: z.strictObject({ origin: z.enum(["explicit_user", "inferred"]), references: z.array(MemoryReferenceSchema).max(20) }),
   confidence: z.number().finite().min(0).max(1),
   pinned: z.boolean(), expiresAt: z.iso.datetime().nullable(), cloudAllowed: z.boolean(),
+  assertion: MemoryAssertionSchema.optional(),
 }).superRefine((entry, context) => {
   for (const ref of entry.provenance.references) {
     if (ref.type !== "legacy" && ref.projectId !== null && (entry.scope.kind !== "project" || ref.projectId !== entry.scope.projectId)) {
@@ -38,6 +50,7 @@ export const MemorySupersedeSchema = MemoryRevisionSchema.extend({ replacementId
 export const MemoryRecallSchema = z.strictObject({
   projectId: MemoryIdSchema.nullable(), purpose: z.enum(["local", "cloud"]),
   query: z.string().trim().min(1).max(1000), limit: z.number().int().min(1).max(30).default(10),
+  asOf: z.iso.datetime().optional(),
 });
 export type MemoryInput = z.infer<typeof MemoryInputSchema>;
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;

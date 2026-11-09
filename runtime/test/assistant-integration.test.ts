@@ -270,7 +270,7 @@ test("manual focus changes cannot carry a captured card into another project", a
   assert.equal(f.created.length, 1, "No cloud dispatch occurs with cross-project cached content");
 });
 
-test("HTTP SSE replays escaped frames, streams new cards, and rejects stale visual references", async t => {
+test("HTTP SSE replays escaped frames, streams new cards, and preserves held visual references", async t => {
   const f = await fixture(t);
   const { assistantSession, turn } = await f.start();
   const card = await f.request("/v1/assistant/present", "POST", { title: "Evidence",
@@ -304,8 +304,8 @@ test("HTTP SSE replays escaped frames, streams new cards, and rejects stale visu
     await f.request(`/v1/assistant/sessions/${assistantSession.id}/turns`, "POST", {
       expectedRevision: assistantSession.revision, text: "Use this", intent: "side_question",
       presentationRef: { presentationId: card.id, revision: card.revision },
-    }, 409);
-    assert.equal(f.created.length, 1, "A stale reference never dispatches another model turn");
+    }, 202);
+    assert.equal(f.created.length, 2, "A held revision remains explicitly bound during follow-up");
   } finally { abort.abort(); await reader.cancel().catch(() => {}); }
 });
 

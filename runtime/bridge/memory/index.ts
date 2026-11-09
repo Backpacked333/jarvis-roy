@@ -12,7 +12,7 @@ import { EmbeddingIdentitySchema, cosine, decodeVector, embeddingKey, encodeVect
 import { MemoryStore } from "./store.ts";
 import {
   MemoryApprovalSchema, MemoryEntrySchema, MemoryIdSchema, MemoryInputSchema, MemoryRecallSchema,
-  MemoryRevisionSchema, MemorySupersedeSchema, MemoryUpdateSchema,
+  MemoryRevisionSchema, MemorySupersedeSchema, MemoryUpdateSchema, MemoryEntityInputSchema, MemoryEntitySchema,
   type MemoryContext, type MemoryEntry, type MemoryInput, type MemoryMatch, type MemoryReference,
 } from "./contracts.ts";
 
@@ -24,9 +24,10 @@ export interface MemoryOptions {
   resolveSource?: (reference: Extract<MemoryReference, { type: "knowledge" }>, context: { projectId: string; purpose: "local" | "cloud" }) => boolean;
   onLegacyChanged?: (legacyId: string) => Promise<void> | void;
   embeddingProvider?: LocalEmbeddingProvider;
+  backgroundIndexing?: boolean;
 }
 export interface MemoryReply { status: number; body: unknown }
-type Access = { projectId: string | null; purpose: "local" | "cloud" };
+type Access = { projectId: string | null; purpose: "local" | "cloud"; asOf?: string };
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 export const memoryDigest = (entry: Omit<MemoryEntry, "digest"> | MemoryEntry): string => {
   const { digest: _digest, ...content } = entry as MemoryEntry;
@@ -48,6 +49,9 @@ export class MemoryService {
   private readonly completedLegacyCleanup = new Set<string>();
   private readonly embeddingIdentity: EmbeddingIdentity | null;
   private readonly embeddingModelKey: string | null;
+  private backgroundTimer?: NodeJS.Timeout;
+  private backgroundBusy = false;
+  private backgroundPaused = false;
   private constructor(options: MemoryOptions) {
     this.options = options; this.enabled = options.enabled ?? process.env.JARVIS_ENABLE_MEMORY === "1";
     this.embeddingIdentity = options.embeddingProvider ? Object.freeze(EmbeddingIdentitySchema.parse(options.embeddingProvider.identity)) : null;
@@ -56,12 +60,43 @@ export class MemoryService {
   static async open(options: MemoryOptions): Promise<MemoryService> {
     const service = new MemoryService(options);
     if (service.enabled) {
-      try { await service.store.open(options.dataDirectory); await service.reconcile(); }
+      try { await service.store.open(options.dataDirectory); await service.reconcile(); service.scheduleMemoryIndex(); }
       catch (error) { service.store.close(); throw error; }
     }
     return service;
   }
   private time(): string { return (this.options.now?.() ?? new Date()).toISOString(); }
+  private scheduleMemoryIndex(resume = false): void {
+    if (resume) this.backgroundPaused = false;
+    if (!this.options.backgroundIndexing || !this.options.embeddingProvider || this.backgroundPaused || this.closed || this.backgroundBusy || this.backgroundTimer) return;
+    this.backgroundTimer = setTimeout(() => { this.backgroundTimer = undefined; void this.indexMemoryBatch(); }, 100);
+    this.backgroundTimer.unref();
+  }
+  private async indexMemoryBatch(): Promise<void> {
+    if (this.closed || this.backgroundPaused) return;
+    this.backgroundBusy = true; const controller = new AbortController(); this.activeReads.add(controller);
+    let more = false;
+    try {
+      await this.serialized(async () => {
+        const pending = this.store.all().filter(entry => this.authorize(entry, { projectId: entry.scope.kind === "project" ? entry.scope.projectId : null, purpose: "local" }) &&
+          !this.store.db().prepare("SELECT 1 FROM memory_vectors WHERE entry_id=? AND digest=? AND provider_key=?").get(entry.id, entry.digest, this.embeddingModelKey!));
+        more = pending.length > 16; const batch = pending.slice(0, 16);
+        while (batch.reduce((sum, entry) => sum + Buffer.byteLength(entry.text), 0) > 65536) { batch.pop(); more = true; }
+        if (!batch.length) return;
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]);
+        const values = await this.options.embeddingProvider!.embed(batch.map(entry => entry.text), { signal, purpose: "document" });
+        signal.throwIfAborted();
+        if (embeddingKey(this.options.embeddingProvider!.identity) !== this.embeddingModelKey || values.length !== batch.length) throw new Error("Local memory embedding model changed");
+        this.store.transaction(() => batch.forEach((entry, index) => {
+          if (!this.authorize(entry, { projectId: entry.scope.kind === "project" ? entry.scope.projectId : null, purpose: "local" })) return;
+          this.store.db().prepare("INSERT INTO memory_vectors VALUES (?,?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET digest=excluded.digest,provider_key=excluded.provider_key,dimensions=excluded.dimensions,vector=excluded.vector")
+            .run(entry.id, entry.digest, this.embeddingModelKey!, this.embeddingIdentity!.dimensions, encodeVector(normalizedVector(values[index], this.embeddingIdentity!.dimensions)));
+        }));
+      });
+    } catch { this.backgroundPaused = true; }
+    finally { this.activeReads.delete(controller); this.backgroundBusy = false; if (more) this.scheduleMemoryIndex(); }
+  }
+  private saveEntry(entry: MemoryEntry): void { this.store.save(entry); this.scheduleMemoryIndex(true); }
   private requireEnabled(): void {
     if (!this.enabled) throw new BridgeError("Structured memory is disabled. Enable it explicitly in Settings.", 503);
     if (this.closed) throw new BridgeError("Memory service is closed.", 503);
@@ -72,10 +107,10 @@ export class MemoryService {
   private serialized<T>(operation: () => Promise<T> | T): Promise<T> {
     this.requireEnabled(); const next = this.queue.then(operation); this.queue = next.catch(() => {}); return next;
   }
-  private scopeAllowed(entry: MemoryEntry | MemoryInput, projectId: string | null): boolean {
+  private scopeAllowed(entry: Pick<MemoryInput, "scope">, projectId: string | null): boolean {
     return entry.scope.kind === "global" || entry.scope.projectId === projectId;
   }
-  private checkContext(entry: MemoryEntry | MemoryInput, context: MemoryContext): void {
+  private checkContext(entry: Pick<MemoryInput, "scope">, context: MemoryContext): void {
     if (context.nativeAuthenticated && context.projectId === undefined) return;
     if (context.projectId === undefined || !this.scopeAllowed(entry, context.projectId)) throw new BridgeError("Memory belongs to another project.", 403);
   }
@@ -83,6 +118,10 @@ export class MemoryService {
     const input = MemoryInputSchema.parse(raw);
     if (containsCredentialLikeData(JSON.stringify(input))) throw new BridgeError("Credentials cannot be stored in memory.", 400);
     if (input.expiresAt && Date.parse(input.expiresAt) <= Date.parse(this.time())) throw new BridgeError("Memory expiry must be in the future.", 400);
+    if (input.assertion) {
+      const row = this.store.db().prepare("SELECT body FROM entities WHERE id=?").get(input.assertion.entityId);
+      if (!row || canonicalJson(MemoryEntitySchema.parse(JSON.parse(String(row.body))).scope) !== canonicalJson(input.scope)) throw new BridgeError("Assertion entity must exist in this exact memory scope.", 400);
+    }
     return input;
   }
   private entry(id: string, context: MemoryContext): MemoryEntry {
@@ -156,7 +195,7 @@ export class MemoryService {
         // changes to an existing file are new text and need a fresh native review.
         const entry = current ? this.revised(current, { text: legacy.text, status: "proposed" }) : seal({ ...input,
           version: 1, id: legacy.id, revision: 1, status: "active", createdAt: this.time(), updatedAt: this.time(), supersededBy: null });
-        this.store.save(entry);
+        this.saveEntry(entry);
         db.prepare("INSERT INTO legacy VALUES (?,?,?,0) ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint").run(legacy.id, entry.id, fingerprint);
       }
       for (const row of db.prepare("SELECT id,entry_id FROM legacy WHERE detached=0").all()) {
@@ -182,7 +221,7 @@ export class MemoryService {
     return this.serialized(async () => {
       await this.reconcile();
       const entry = seal({ ...input, version: 1, id: randomUUID(), revision: 1, status, createdAt: this.time(), updatedAt: this.time(), supersededBy: null });
-      this.store.transaction(() => this.store.save(entry)); return entry;
+      this.store.transaction(() => this.saveEntry(entry)); return entry;
     });
   }
   async approve(id: string, raw: unknown, context: MemoryContext): Promise<MemoryEntry> {
@@ -194,7 +233,7 @@ export class MemoryService {
         createdAt: _createdAt, updatedAt: _updatedAt, supersededBy: _supersededBy, ...approvedInput } = current;
       this.validateInput(approvedInput);
       const entry = this.revised(current, { status: "active" }); let legacy: string[] = [];
-      this.store.transaction(() => { this.store.save(entry); legacy = this.detach(id); });
+      this.store.transaction(() => { this.saveEntry(entry); legacy = this.detach(id); });
       for (const legacyId of legacy) await this.cleanupLegacy(legacyId); return entry;
     });
   }
@@ -204,7 +243,7 @@ export class MemoryService {
     return this.serialized(async () => {
       await this.reconcile(); const current = this.entry(id, context); this.revision(current, request.expectedRevision);
       const entry = this.revised(current, { ...input, status: "proposed", supersededBy: null }); let legacy: string[] = [];
-      this.store.transaction(() => { this.store.save(entry); legacy = this.detach(id); });
+      this.store.transaction(() => { this.saveEntry(entry); legacy = this.detach(id); });
       for (const legacyId of legacy) await this.cleanupLegacy(legacyId); return entry;
     });
   }
@@ -214,7 +253,7 @@ export class MemoryService {
     return this.serialized(async () => {
       await this.reconcile(); const current = this.entry(id, context); this.revision(current, input.expectedRevision);
       const entry = this.revised(current, { status: "archived" }); let legacy: string[] = [];
-      this.store.transaction(() => { this.store.save(entry); legacy = this.detach(id); });
+      this.store.transaction(() => { this.saveEntry(entry); legacy = this.detach(id); });
       for (const legacyId of legacy) await this.cleanupLegacy(legacyId); return entry;
     });
   }
@@ -225,8 +264,9 @@ export class MemoryService {
       await this.reconcile(); const current = this.entry(id, context), replacement = this.entry(input.replacementId, context);
       this.revision(current, input.expectedRevision); this.revision(replacement, input.replacementRevision);
       if (id === replacement.id || replacement.status !== "active" || canonicalJson(current.scope) !== canonicalJson(replacement.scope)) throw new BridgeError("Choose an active replacement in the same memory scope.", 409);
-      const entry = this.revised(current, { status: "superseded", supersededBy: replacement.id }); let legacy: string[] = [];
-      this.store.transaction(() => { this.store.save(entry); legacy = this.detach(id); });
+      const entry = this.revised(current, { status: "superseded", supersededBy: replacement.id,
+        ...(current.assertion ? { assertion: { ...current.assertion, validTo: replacement.assertion?.validFrom ?? this.time() } } : {}) }); let legacy: string[] = [];
+      this.store.transaction(() => { this.saveEntry(entry); legacy = this.detach(id); });
       for (const legacyId of legacy) await this.cleanupLegacy(legacyId); return entry;
     });
   }
@@ -265,8 +305,10 @@ export class MemoryService {
   authorize(ref: Pick<MemoryEntry, "id" | "revision">, access: Access): boolean {
     try {
       this.requireEnabled(); const entry = this.store.get(MemoryIdSchema.parse(ref.id));
-      if (!entry || entry.revision !== ref.revision || entry.status !== "active" || !this.scopeAllowed(entry, access.projectId) ||
+      if (!entry || entry.revision !== ref.revision || !(entry.status === "active" || access.asOf && entry.status === "superseded" && entry.assertion) || !this.scopeAllowed(entry, access.projectId) ||
           (access.purpose === "cloud" && !entry.cloudAllowed) || (entry.expiresAt !== null && Date.parse(entry.expiresAt) <= Date.parse(this.time())) || memoryDigest(entry) !== entry.digest) return false;
+      const at = Date.parse(access.asOf ?? this.time());
+      if (entry.assertion && (entry.assertion.validFrom !== null && at < Date.parse(entry.assertion.validFrom) || entry.assertion.validTo !== null && at >= Date.parse(entry.assertion.validTo))) return false;
       // Legacy files remain authoritative until adopted. A synchronous final
       // disclosure check must detect external edits/deletes without waiting for
       // the next asynchronous reconciliation pass.
@@ -297,12 +339,12 @@ export class MemoryService {
       retrieval.warnings.push("No eligible entries or meaningful query terms for semantic recall."); return { similarities, retrieval };
     }
     const localSignal = AbortSignal.any([signal, AbortSignal.timeout(2000)]);
-    const embed = async (texts: string[]): Promise<number[][]> => {
+    const embed = async (texts: string[], purpose: "query" | "document" = "document"): Promise<number[][]> => {
       if (embeddingKey(this.options.embeddingProvider!.identity) !== this.embeddingModelKey) throw new Error("Embedding model changed");
       const values = await new Promise<readonly (readonly number[])[]>((resolve, reject) => {
         const abort = () => reject(localSignal.reason);
         localSignal.addEventListener("abort", abort, { once: true });
-        Promise.resolve().then(() => { localSignal.throwIfAborted(); return this.options.embeddingProvider!.embed(texts, { signal: localSignal }); })
+        Promise.resolve().then(() => { localSignal.throwIfAborted(); return this.options.embeddingProvider!.embed(texts, { signal: localSignal, purpose }); })
           .then(resolve, reject).finally(() => localSignal.removeEventListener("abort", abort));
       });
       localSignal.throwIfAborted();
@@ -319,7 +361,7 @@ export class MemoryService {
         try { if (row) { vectors.set(entry.id, decodeVector(row.vector as Uint8Array, this.embeddingIdentity.dimensions)); continue; } } catch {}
         pending.push(entry);
       }
-      let budget = 32;
+      let budget = this.options.backgroundIndexing ? 0 : 32;
       while (pending.length && budget > 0) {
         const batch: MemoryEntry[] = []; let bytes = 0;
         while (pending.length && batch.length < 16 && budget > 0) {
@@ -340,7 +382,7 @@ export class MemoryService {
           }
         });
       }
-      const queryVector = (await embed([query]))[0]; signal.throwIfAborted();
+      const queryVector = (await embed([query], "query"))[0]; signal.throwIfAborted();
       for (const entry of candidates) {
         const vector = vectors.get(entry.id); if (!vector || !this.authorize(entry, access)) continue;
         retrieval.scannedEntries++;
@@ -348,7 +390,7 @@ export class MemoryService {
         if (similarity >= 0.35) similarities.set(entry.id, similarity);
       }
       retrieval.indexedEntries = vectors.size; retrieval.vectorStatus = vectors.size < entries.length ? "partial" : "ready"; retrieval.mode = "hybrid";
-      if (retrieval.vectorStatus === "partial") retrieval.warnings.push("Local semantic recall is partial: at most 32 new entries are indexed and 512 vectors scanned per request.");
+      if (retrieval.vectorStatus === "partial") retrieval.warnings.push(this.options.backgroundIndexing ? "Local semantic recall is partial while the background index catches up; at most 512 cached entries are scanned." : "Local semantic recall is partial: at most 32 new entries are indexed and 512 vectors scanned per request.");
     } catch {
       signal.throwIfAborted(); retrieval.vectorStatus = "failed";
       retrieval.warnings.push("Local semantic retrieval is busy, invalid, or unavailable; this request uses lexical relevance and standing pinned preferences.");
@@ -385,6 +427,36 @@ export class MemoryService {
     const reply = (body: unknown, status = 200): MemoryReply => ({ status, body });
     if (method === "GET" && url.pathname === "/v1/memory/status") return reply({ version: 1, enabled: this.enabled });
     this.requireEnabled();
+    if (url.pathname === "/v1/memory/entities") {
+      this.requireNative(context);
+      if (method === "GET") {
+        const projectId = url.searchParams.get("projectId");
+        return reply({ version: 1, entities: this.store.db().prepare("SELECT body FROM entities ORDER BY id LIMIT 5000").all().map(row => MemoryEntitySchema.parse(JSON.parse(String(row.body)))).filter(entity => this.scopeAllowed(entity, projectId)) });
+      }
+      if (method === "POST") {
+        const input = MemoryEntityInputSchema.parse(body); this.checkContext(input, context);
+        if (containsCredentialLikeData(JSON.stringify(input))) throw new BridgeError("Entity labels cannot contain credentials.", 400);
+        const entity = MemoryEntitySchema.parse({ ...input, version: 1, id: randomUUID(), revision: 1, updatedAt: this.time() });
+        this.store.transaction(() => this.store.db().prepare("INSERT INTO entities VALUES (?,?)").run(entity.id, JSON.stringify(entity))); return reply(entity, 201);
+      }
+    }
+    const history = /^\/v1\/memory\/entries\/([A-Za-z0-9_-]+)\/history$/.exec(url.pathname);
+    if (history && method === "GET") {
+      this.requireNative(context); this.entry(history[1], context);
+      return reply({ version: 1, revisions: this.store.db().prepare("SELECT body FROM entry_history WHERE entry_id=? ORDER BY revision DESC LIMIT 100").all(history[1]).map(row => MemoryEntrySchema.parse(JSON.parse(String(row.body)))) });
+    }
+    if (url.pathname === "/v1/memory/conflicts" && method === "GET") {
+      this.requireNative(context); const entries = (await this.list(url.searchParams.get("projectId"), context)).entries.filter(entry => entry.status === "active" && entry.assertion);
+      const conflicts: { left: { id: string; revision: number }; right: { id: string; revision: number }; reason: string }[] = [];
+      for (let i = 0; i < entries.length && conflicts.length < 100; i++) for (let j = i + 1; j < entries.length && conflicts.length < 100; j++) {
+        const left = entries[i], right = entries[j], a = left.assertion!, b = right.assertion!;
+        if (a.entityId === b.entityId && a.property === b.property && a.value !== b.value &&
+          Math.max(a.validFrom ? Date.parse(a.validFrom) : -Infinity, b.validFrom ? Date.parse(b.validFrom) : -Infinity) < Math.min(a.validTo ? Date.parse(a.validTo) : Infinity, b.validTo ? Date.parse(b.validTo) : Infinity)) {
+          conflicts.push({ left: { id: left.id, revision: left.revision }, right: { id: right.id, revision: right.revision }, reason: "Different values for the same entity and property have overlapping validity; review before choosing a current fact." });
+        }
+      }
+      return reply({ version: 1, conflicts, resolution: "Review both records and explicitly supersede only if one replaces the other; contradictory evidence may remain unresolved." });
+    }
     if (url.pathname === "/v1/memory/entries") {
       if (method === "GET") return reply(await this.list(url.searchParams.get("projectId"), context));
       if (method === "POST") return reply(await this.create(body, context), 201);
@@ -404,6 +476,6 @@ export class MemoryService {
     }
     throw new BridgeError("Memory route not found.", 404);
   }
-  cancelReads(): void { for (const controller of this.activeReads) controller.abort(new Error("Memory recall stopped")); }
+  cancelReads(): void { this.backgroundPaused = true; if (this.backgroundTimer) { clearTimeout(this.backgroundTimer); this.backgroundTimer = undefined; } for (const controller of this.activeReads) controller.abort(new Error("Memory recall stopped")); }
   async close(): Promise<void> { this.cancelReads(); await this.queue; this.closed = true; this.store.close(); }
 }

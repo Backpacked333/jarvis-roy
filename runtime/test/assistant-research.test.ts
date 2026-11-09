@@ -281,3 +281,23 @@ test("a save failure aborts another active request without publishing its uncomm
     await assert.rejects(f.service.start(f.input()), /persistence failed/);
   } finally { ResearchStore.prototype.save = originalSave; await f.cleanup(); }
 });
+
+test("bounded repair requires room for another independent critique and verifies repaired citations", async () => {
+  const f = await fixture();
+  try {
+    f.alter((stage, packet, response) => {
+      if (stage === 2) response.choices[0].message.content = JSON.stringify({ verdict: "needs_revision", summary: "Narrow the claim.", issues: [{ claimIndex: 0, severity: "unsupported", explanation: "Replication unverified." }] });
+      if (stage === 3) {
+        assert.equal(packet.critique.verdict, "needs_revision");
+        response.choices[0].message.content = JSON.stringify({ ...packet.previousDraft, title: "Repaired brief", unresolved: ["Replication unverified."] });
+      }
+      if (stage === 4) assert.equal(packet.draft.title, "Repaired brief");
+      return response;
+    });
+    const run = await f.service.start({ ...f.input(), budget: { maxModelCalls: 4 } }); await f.service.wait(run.id);
+    const result = f.service.result(run.id, "project-1");
+    assert.equal(result.run.modelCalls, 4); assert.equal(result.deliverable.title, "Repaired brief");
+    assert.equal(result.critique?.verdict, "supported_with_limits");
+    assert.equal(result.deliverable.citationCheck, "locators_and_quotes_verified");
+  } finally { await f.cleanup(); }
+});

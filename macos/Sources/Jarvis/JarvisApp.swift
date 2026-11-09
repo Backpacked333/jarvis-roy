@@ -4,6 +4,11 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var summon: (() -> Void)?
+    private var quickSummon: QuickSummonController?
+    func configureSummon(model: AppModel, openWorkspace: @escaping () -> Void) {
+        if quickSummon == nil { quickSummon = QuickSummonController(model: model, openWorkspace: openWorkspace) }
+        summon = { [weak self] in self?.quickSummon?.show() }
+    }
     var stopObservation: (() -> Void)?
     var muteVoice: (() -> Void)?
     private let shortcut = SummonShortcut()
@@ -20,13 +25,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shortcut.register()
         sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification,
             object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.muteVoice?() }
+                Task { @MainActor in self?.muteVoice?(); PairedCloudConnection.shared.disconnect() }
             }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !quitting else { return .terminateLater }
         quitting = true
+        PairedCloudConnection.shared.disconnect()
         stopObservation?()
         DailyBriefingCoordinator.shared.stop()
         shortcut.unregister()
@@ -52,14 +58,14 @@ struct JarvisApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("New conversation") { Task { await model.newConversation() } }
+                Button("New conversation") { Task { await model.startNewConversation() } }
                     .keyboardShortcut("n", modifiers: .command)
                 Button("Stop all work") { Task { await model.stopAll() } }
                     .keyboardShortcut(".", modifiers: .command)
             }
         }
         MenuBarExtra("Jarvis", systemImage: "waveform.circle") {
-            JarvisMenu(model: model)
+            JarvisMenu(model: model, summon: { delegate.summon?() })
         }
         Settings { JarvisSettingsView(assistant: model.assistant) }
     }
@@ -71,6 +77,8 @@ private struct JarvisSceneHost: View {
     @ObservedObject private var supervisor = RuntimeSupervisor.shared
     @Environment(\.openWindow) private var openWindow
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("Jarvis.onboardingCompleted") private var onboardingCompleted = false
+    @State private var setupVisible = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -93,8 +101,10 @@ private struct JarvisSceneHost: View {
             await supervisor.start()
             if supervisor.state == .ready { model.startObserving() }
         }
+        .sheet(isPresented: $setupVisible) { GuidedSetupView(app: model) }
         .onAppear {
-            delegate.summon = { openWindow(id: "main") }
+            setupVisible = !onboardingCompleted
+            delegate.configureSummon(model: model) { openWindow(id: "main") }
             delegate.stopObservation = { model.shutdown() }
             delegate.muteVoice = { model.muteVoice() }
             DailyBriefingCoordinator.shared.start { projectID in
@@ -112,19 +122,21 @@ private struct JarvisSceneHost: View {
 
 private struct JarvisMenu: View {
     @ObservedObject var model: AppModel
+    let summon: () -> Void
     @ObservedObject private var supervisor = RuntimeSupervisor.shared
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Text("Jarvis · \(supervisor.state.rawValue.capitalized)")
+        Button("Quick conversation", action: summon).keyboardShortcut(" ", modifiers: [.control, .option])
         Button("Open Jarvis") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
-        }.keyboardShortcut(" ", modifiers: [.control, .option])
+        }
         Button("New conversation") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
-            Task { await model.newConversation() }
+            Task { await model.startNewConversation() }
         }
         Button("Mute voice") { model.muteVoice() }
         Button("Stop all work") { Task { await model.stopAll() } }

@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { BridgeError } from "../errors.ts";
+import { queryTerms } from "../knowledge/embeddings.ts";
 import {
   ContextActionSchema, ContextCandidateSchema, ContextPacketSchema, ContextRequestSchema, ContextRetrievalDiagnosticSchema,
-  type ContextAssemblerOptions, type ContextCandidate, type ContextKind, type ContextPacket,
+  type ContextAssemblerOptions, type ContextCandidate, type ContextKind, type ContextPacket, type ContextProvider,
   type ContextRequest, type ContextRetrievalRequest, type ContextSelection,
 } from "./contracts.ts";
 
@@ -21,17 +22,19 @@ function inScope(candidate: ContextCandidate | ContextSelection, input: Pick<Con
   if (candidate.projectId !== input.scope.projectId) return false;
   if (candidate.conversationId && candidate.conversationId !== input.scope.conversationId) return false;
   if (candidate.kind === "history" || candidate.kind === "checkpoint") {
+    if (candidate.kind === "checkpoint" && candidate.provenance.origin === "project_checkpoint") return candidate.conversationId === null;
     return input.scope.conversationId !== null && candidate.conversationId === input.scope.conversationId;
   }
   return candidate.taskId === null || candidate.taskId === input.scope.taskId;
 }
 function correctOrigin(candidate: ContextCandidate): boolean {
   const origin = candidate.provenance.origin;
+  if (origin === "retained_snapshot") return !!candidate.retention && ["source", "memory"].includes(candidate.kind) && candidate.provenance.revision === candidate.revision;
   return candidate.provenance.revision === candidate.revision && (
     candidate.kind === "source" ? origin === "original_source" && candidate.citations.length > 0 :
     candidate.kind === "memory" ? origin === "user_approved_memory" :
     candidate.kind === "history" ? origin === "conversation_message" :
-    origin === "extractive_checkpoint" || origin === "model_summary");
+    origin === "extractive_checkpoint" || origin === "project_checkpoint" || origin === "model_summary");
 }
 function prefix(text: string, maximumBytes: number): string {
   if (bytes(text) <= maximumBytes) return text;
@@ -58,11 +61,22 @@ function fits(packet: ContextPacket): boolean {
   measure(packet);
   return packet.usage.serializedBytes <= packet.usage.maxBytes && packet.usage.estimatedTokens <= packet.usage.maxTokens;
 }
-function selection(candidate: ContextCandidate, reasons: ContextSelection["reasons"], maximumBytes: number): ContextSelection {
+function selection(candidate: ContextCandidate, reasons: ContextSelection["reasons"], maximumBytes: number, terms: string[] = []): ContextSelection {
   const { score: _score, ...data } = candidate;
-  const text = prefix(candidate.text, maximumBytes), originalBytes = bytes(candidate.text);
+  let start = 0;
+  if (candidate.kind === "source" && bytes(candidate.text) > maximumBytes && terms.length) {
+    const lower = candidate.text.toLocaleLowerCase("en-US"); let best = -1;
+    for (const term of terms) {
+      const at = lower.indexOf(term); if (at < 0) continue;
+      const position = Math.max(0, at - 128), window = prefix(candidate.text.slice(position), maximumBytes).toLocaleLowerCase("en-US");
+      const score = terms.filter(value => window.includes(value)).length;
+      if (score > best) { start = position; best = score; }
+    }
+  }
+  const text = prefix(candidate.text.slice(start), maximumBytes), originalBytes = bytes(candidate.text);
   return { ...data, text, reasons, contentTrust: "untrusted_data", verification: "not_independently_verified",
-    originalSha256: sha256(candidate.text), originalBytes, selectedBytes: bytes(text), truncated: text !== candidate.text };
+    originalSha256: sha256(candidate.text), originalBytes, selectedBytes: bytes(text), truncated: text !== candidate.text,
+    ...(start ? { span: { start, end: start + text.length, unit: "utf16" as const } } : {}) };
 }
 
 export function createContextAssembler(options: ContextAssemblerOptions) {
@@ -92,6 +106,15 @@ export function createContextAssembler(options: ContextAssemblerOptions) {
       if (options.authorizeAction?.(action, packet.scope) !== true) throw new BridgeError("Active action changed before context disclosure.", 409);
     }
   }
+  async function revalidateAsync(packet: ContextPacket, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted(); revalidate(packet);
+    const request: ContextRetrievalRequest = { scope: packet.scope, purpose: packet.purpose, query: packet.query, limit: 32, pins: [] };
+    for (const kind of kinds) {
+      const selected = packet.selections.filter(selection => selection.kind === kind), provider = options.providers[kind];
+      if (selected.length && provider?.reauthorize && !await provider.reauthorize(selected, request, signal)) throw new BridgeError("Retained context permission changed before disclosure.", 403);
+    }
+    signal?.throwIfAborted(); revalidate(packet);
+  }
 
   async function assemble(raw: unknown, outerSignal?: AbortSignal): Promise<ContextPacket> {
     const input = ContextRequestSchema.parse(raw);
@@ -101,7 +124,19 @@ export function createContextAssembler(options: ContextAssemblerOptions) {
     const results = await Promise.all(kinds.map(async kind => {
       const provider = options.providers[kind];
       if (!provider) return { kind, candidates: [] as ContextCandidate[], diagnostic: undefined };
-      const batch = await provider.retrieve(retrieval(input, kind), signal);
+      let batch;
+      try {
+        const deadline = AbortSignal.any([signal, AbortSignal.timeout(2500)]);
+        batch = await new Promise<Awaited<ReturnType<ContextProvider["retrieve"]>>>((resolve, reject) => {
+          const abort = () => reject(deadline.reason);
+          deadline.addEventListener("abort", abort, { once: true });
+          provider.retrieve(retrieval(input, kind), deadline).then(resolve, reject).finally(() => deadline.removeEventListener("abort", abort));
+        });
+      } catch (error) {
+        signal.throwIfAborted();
+        if (error instanceof BridgeError && [401, 403, 409].includes(error.status)) throw error;
+        return { kind, candidates: [] as ContextCandidate[], diagnostic: ContextRetrievalDiagnosticSchema.parse({ mode: "unavailable", warnings: ["This context channel did not respond within its budget; other currently authorized context may still be available."] }) };
+      }
       signal.throwIfAborted();
       if (!Array.isArray(batch.candidates) || batch.candidates.length > 64 ||
           !Number.isSafeInteger(batch.availableBeyondLimit ?? 0) || (batch.availableBeyondLimit ?? 0) < 0) {
@@ -143,7 +178,7 @@ export function createContextAssembler(options: ContextAssemblerOptions) {
     const pinOrder = new Map(input.pins.map((pin, index) => [key(pin), index]));
     const pinMatches = (item: ContextCandidate) => input.pins.some(pin => key(pin) === key(item) && (pin.revision === undefined || pin.revision === item.revision));
     omissions.pinsMissing = input.pins.filter(pin => !candidates.some(item => key(pin) === key(item) && (pin.revision === undefined || pin.revision === item.revision))).length;
-    const terms = [...new Set(input.query.toLocaleLowerCase("en-US").match(/[\p{L}\p{N}]+/gu) ?? [])].filter(term => term.length > 1);
+    const terms = queryTerms(input.query);
     const queryMatch = (item: ContextCandidate) => terms.filter(term => `${item.title}\n${item.text}`.toLocaleLowerCase("en-US").includes(term)).length;
     const rank = (item: ContextCandidate) => item.score * .75 + (terms.length ? queryMatch(item) / terms.length : 0) * .25;
     const sorted = candidates.sort((a, b) => Number(pinMatches(b)) - Number(pinMatches(a)) ||
@@ -165,7 +200,7 @@ export function createContextAssembler(options: ContextAssemblerOptions) {
       reasons.push(candidate.kind === "history" ? "recent_history" : candidate.kind === "checkpoint" ? "checkpoint_continuity" : "retrieval_rank");
       let lower = 0, upper = Math.min(bytes(candidate.text), firstRound.has(key(candidate)) ? 2_048 : 8_000), best: ContextSelection | undefined;
       while (lower <= upper) {
-        const midpoint = Math.floor((lower + upper) / 2), item = selection(candidate, reasons, midpoint);
+        const midpoint = Math.floor((lower + upper) / 2), item = selection(candidate, reasons, midpoint, terms);
         packet.selections.push(item); omissions.budget--;
         const accepted = fits(packet);
         packet.selections.pop(); omissions.budget++;
@@ -181,9 +216,9 @@ export function createContextAssembler(options: ContextAssemblerOptions) {
     packet.id = sha256(JSON.stringify({ ...packet, id: "0".repeat(64) }));
     if (!fits(packet)) throw new BridgeError("Context exceeded its serialized budget.", 413);
     const validated = ContextPacketSchema.parse(packet);
-    signal.throwIfAborted(); revalidate(validated);
+    signal.throwIfAborted(); await revalidateAsync(validated, signal);
     return validated;
   }
-  return { assemble, revalidate };
+  return { assemble, revalidate, revalidateAsync };
 }
 export type ContextAssembler = ReturnType<typeof createContextAssembler>;

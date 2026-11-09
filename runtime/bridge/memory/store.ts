@@ -22,7 +22,7 @@ export class MemoryStore {
     try {
       db.exec("PRAGMA busy_timeout=0; PRAGMA locking_mode=EXCLUSIVE; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON;");
       const version = db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version !== 0 && version !== 1 && version !== 2) throw new Error("Unsupported memory database version; use a compatible migration and backup");
+      if (version !== 0 && version !== 1 && version !== 2 && version !== 3) throw new Error("Unsupported memory database version; use a compatible migration and backup");
       if (version === 0) {
         if (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").get()) throw new Error("Unversioned memory database is not empty");
         db.exec(`BEGIN EXCLUSIVE;
@@ -42,6 +42,18 @@ export class MemoryStore {
         db.exec(`BEGIN EXCLUSIVE;
           CREATE TABLE memory_vectors (entry_id TEXT PRIMARY KEY, digest TEXT NOT NULL, provider_key TEXT NOT NULL, dimensions INTEGER NOT NULL, vector BLOB NOT NULL);
           PRAGMA user_version=2; COMMIT;`);
+      }
+      if (version === 0 || version === 1 || version === 2) {
+        if (version === 2) {
+          const destination = join(directory, `schema-v2-${randomUUID()}.backup.sqlite`);
+          db.prepare("VACUUM INTO ?").run(destination); await chmod(destination, 0o600);
+        }
+        db.exec(`BEGIN EXCLUSIVE;
+          CREATE TABLE entry_history(entry_id TEXT NOT NULL,revision INTEGER NOT NULL,body TEXT NOT NULL,PRIMARY KEY(entry_id,revision));
+          INSERT INTO entry_history SELECT id,json_extract(body,'$.revision'),body FROM entries;
+          CREATE TABLE entities(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+          CREATE TABLE memory_conflicts(id TEXT PRIMARY KEY,left_id TEXT NOT NULL,right_id TEXT NOT NULL,body TEXT NOT NULL);
+          PRAGMA user_version=3; COMMIT;`);
       }
       db.exec("BEGIN EXCLUSIVE; COMMIT;");
       this.all();
@@ -70,6 +82,9 @@ export class MemoryStore {
     if (Buffer.byteLength(body) > 32000) throw new Error("Memory record limit exceeded");
     if (!this.get(value.id) && Number(this.db().prepare("SELECT COUNT(*) AS count FROM entries").get()?.count) >= 5000) throw new Error("Memory storage limit exceeded");
     this.db().prepare("INSERT INTO entries VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body").run(value.id, body);
+    const previous = this.db().prepare("SELECT body FROM entry_history WHERE entry_id=? AND revision=?").get(value.id, value.revision);
+    if (previous && previous.body !== body) throw new Error("Memory revision history is immutable");
+    this.db().prepare("INSERT OR IGNORE INTO entry_history VALUES (?,?,?)").run(value.id, value.revision, body);
     this.db().prepare("DELETE FROM memory_vectors WHERE entry_id=? AND digest!=?").run(value.id, value.digest);
     this.db().prepare("DELETE FROM memory_search WHERE entry_id=?").run(value.id);
     if (value.status === "active") this.db().prepare("INSERT INTO memory_search(entry_id,text) VALUES (?,?)").run(value.id, value.text);
@@ -78,6 +93,8 @@ export class MemoryStore {
     this.db().prepare("DELETE FROM memory_vectors WHERE entry_id=?").run(id);
     this.db().prepare("DELETE FROM memory_search WHERE entry_id=?").run(id);
     this.db().prepare("DELETE FROM entries WHERE id=?").run(id);
+    this.db().prepare("DELETE FROM entry_history WHERE entry_id=?").run(id);
+    this.db().prepare("DELETE FROM memory_conflicts WHERE left_id=? OR right_id=?").run(id, id);
   }
   close(): void { this.connection?.close(); this.connection = undefined; }
 }

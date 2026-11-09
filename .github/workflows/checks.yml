@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # CPU inference uses the binaries bundled with onnxruntime-node.
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   runtime:
     runs-on: ubuntu-latest

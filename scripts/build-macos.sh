@@ -14,6 +14,13 @@ BIN="$(swift build --package-path "$ROOT/macos" -c release --show-bin-path)"
 APP="$ROOT/dist/Jarvis.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/Jarvis" "$APP/Contents/MacOS/Jarvis"
+RESOURCE_BUNDLE="$BIN/JarvisRoy_Jarvis.bundle"
+if [[ ! -d "$RESOURCE_BUNDLE" ]]; then
+  echo "The SwiftPM Jarvis resource bundle is missing. Inspect the generated Bundle.module accessor and rebuild before packaging." >&2
+  exit 1
+fi
+rm -rf "$APP/Contents/Resources/JarvisRoy_Jarvis.bundle"
+cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/JarvisRoy_Jarvis.bundle"
 cp "$ROOT/macos/Info.plist" "$APP/Contents/Info.plist"
 # Eve's generated manifest contains absolute source paths. This source-build
 # bundle launches the prepared checkout rather than claiming a portable runtime.

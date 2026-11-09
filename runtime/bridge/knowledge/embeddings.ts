@@ -11,7 +11,53 @@ export type EmbeddingIdentity = z.infer<typeof EmbeddingIdentitySchema>;
  * silently change its model identity; callers pass private source text. */
 export interface LocalEmbeddingProvider {
   readonly identity: EmbeddingIdentity;
-  embed(texts: readonly string[], options: { signal?: AbortSignal }): Promise<readonly (readonly number[])[]>;
+  embed(texts: readonly string[], options: { signal?: AbortSignal; purpose?: "query" | "document" }): Promise<readonly (readonly number[])[]>;
+}
+/** Share query work across source and memory recall without persisting queries.
+ * Cancellation of one caller never cancels another authorized caller's request. */
+export function sharedEmbeddingProvider(provider: LocalEmbeddingProvider): LocalEmbeddingProvider {
+  const cache = new Map<string, { at: number; vector: readonly number[] }>();
+  const pending = new Map<string, Promise<readonly (readonly number[])[]>>();
+  type Job = { texts: readonly string[]; options: Parameters<LocalEmbeddingProvider["embed"]>[1]; resolve: (value: readonly (readonly number[])[]) => void; reject: (reason: unknown) => void; abort: () => void };
+  const jobs: Job[] = []; let active = false;
+  const drain = () => {
+    if (active) return;
+    jobs.sort((a, b) => Number(b.options.purpose === "query") - Number(a.options.purpose === "query"));
+    const job = jobs.shift(); if (!job) return;
+    job.options.signal?.removeEventListener("abort", job.abort);
+    if (job.options.signal?.aborted) { job.reject(job.options.signal.reason); drain(); return; }
+    active = true;
+    provider.embed(job.texts, job.options).then(job.resolve, job.reject).finally(() => { active = false; drain(); });
+  };
+  const scheduled = (texts: readonly string[], options: Parameters<LocalEmbeddingProvider["embed"]>[1]) => new Promise<readonly (readonly number[])[]>((resolve, reject) => {
+    if (jobs.length >= 64) { reject(new Error("Local embedding queue is full")); return; }
+    const job: Job = { texts, options, resolve, reject, abort: () => { const index = jobs.indexOf(job); if (index >= 0) jobs.splice(index, 1); reject(options.signal?.reason); } };
+    options.signal?.throwIfAborted(); options.signal?.addEventListener("abort", job.abort, { once: true }); jobs.push(job); drain();
+  });
+  return { identity: provider.identity, async embed(texts, options) {
+    options.signal?.throwIfAborted();
+    if (options.purpose !== "query" || texts.length !== 1) return scheduled(texts, options);
+    const key = createHash("sha256").update(`${embeddingKey(provider.identity)}\0${texts[0]}`).digest("hex");
+    const cached = cache.get(key);
+    if (cached && Date.now() - cached.at < 60_000) return [[...cached.vector]];
+    let request = pending.get(key);
+    if (!request) {
+      request = scheduled(texts, { purpose: "query", signal: AbortSignal.timeout(2000) }).then(vectors => {
+        if (vectors.length !== 1) throw new Error("Invalid query embedding batch");
+        const vector = normalizedVector(vectors[0], provider.identity.dimensions);
+        cache.set(key, { at: Date.now(), vector });
+        if (cache.size > 64) cache.delete(cache.keys().next().value!);
+        return [vector];
+      }).finally(() => pending.delete(key));
+      pending.set(key, request);
+    }
+    if (!options.signal) return request;
+    return new Promise((resolve, reject) => {
+      const abort = () => reject(options.signal!.reason);
+      options.signal!.addEventListener("abort", abort, { once: true });
+      request!.then(resolve, reject).finally(() => options.signal!.removeEventListener("abort", abort));
+    });
+  } };
 }
 export const EMBEDDING_BATCH_TEXTS = 16;
 export const EMBEDDING_TEXT_BYTES = 16 * 1024;
