@@ -179,6 +179,9 @@ struct AssistantThreadView: View {
                     Label("YOUR APPROVAL", systemImage: "hand.raised").font(.system(size: 10, weight: .semibold)).tracking(1.5).foregroundStyle(RoomsPalette.amber)
                     Text(approval.title).font(.headline)
                     Text(approval.detail).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                    Button { model.openDecisionID = approval.id } label: { Label("Review full screen", systemImage: "lock.shield") }
+                        .buttonStyle(.plain).font(.caption.weight(.medium)).foregroundStyle(RoomsPalette.amber)
+                        .help("Open this decision on the authorization lock, with its impact and fingerprint")
                     HStack {
                         ForEach(approval.options) { option in
                             Button(option.label) {
