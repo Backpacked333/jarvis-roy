@@ -1,0 +1,26 @@
+Jarvis presence (particle face)
+===============================
+
+presence-data.js and presence-engine.js are derived from the "AURA" standalone
+demo supplied by the project owner.
+
+Kept unchanged from that demo: the facial motion director and the WebGL 2
+particle renderer. Removed: its voice engine, which loaded an ElevenLabs
+client from the network and held its own conversation, and its page
+interface. Changed: the canvas is transparent so the face can sit inside the
+HUD core. Added: a small driver that only follows the voice state and the
+measured audio levels pushed in by the app. Nothing in these files can open a
+microphone, a socket or a URL, and the page that hosts them forbids all
+network access.
+
+Face geometry
+-------------
+The demo's manifest records the geometry as derived from
+  https://github.com/mrdoob/three.js/blob/r184/examples/models/gltf/facecap.glb
+which three.js credits as "model by Face Cap" (https://www.bannaflak.com/face-cap).
+The manifest refers to THIRD_PARTY_NOTICES.md and FaceCap-LICENSE.txt, which
+were NOT included with the demo that was supplied.
+
+The licence terms of that model have therefore not been verified here.
+Confirm them, and add the missing notices, before distributing a build of
+Jarvis that contains these files to anyone else.

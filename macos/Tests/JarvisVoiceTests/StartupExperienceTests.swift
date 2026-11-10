@@ -185,6 +185,55 @@ final class StartupExperienceTests: XCTestCase {
         XCTAssertEqual(CoreView.Mode(.listening, wakeArmed: false, decisionOnScreen: true), .authorization)
     }
 
+    func testThePresenceIsOnlyToldRealStateInFixedWords() {
+        // The face's vocabulary: live voice states pass through, everything else reads as idle.
+        XCTAssertEqual(PresenceState(mode: .listening).faceMode, "listening")
+        XCTAssertEqual(PresenceState(mode: .speaking).faceMode, "speaking")
+        XCTAssertEqual(PresenceState(mode: .thinking).faceMode, "thinking")
+        XCTAssertEqual(PresenceState(mode: .connecting).faceMode, "connecting")
+        for mode in [CoreView.Mode.standby, .armed, .stopped, .unavailable, .authorization] {
+            XCTAssertEqual(PresenceState(mode: mode).faceMode, "idle")
+        }
+        // Levels are clamped and non-finite values become silence, so the call is always well formed.
+        let script = PresenceState(mode: .speaking, inputRMS: .nan, playbackRMS: 7, still: false).script
+        XCTAssertTrue(script.contains("mode:'speaking'"))
+        XCTAssertTrue(script.contains("input:0.000"))
+        XCTAssertTrue(script.contains("output:1.000"))
+        XCTAssertTrue(script.contains("still:false"))
+        // A stopped or unavailable voice freezes the face, as does Reduce Motion or an inactive window.
+        XCTAssertTrue(PresenceState(mode: .stopped).script.contains("still:true"))
+        XCTAssertTrue(PresenceState(mode: .standby, still: true).script.contains("still:true"))
+        // A decision tints the face amber, like the rest of the core.
+        XCTAssertEqual(PresenceState(mode: .authorization).tint, [1.0, 0.76, 0.43])
+    }
+
+    func testThePresencePageForbidsNetworkAndRefusesScriptsThatCouldEscape() throws {
+        let page = try XCTUnwrap(PresenceDocument.document(data: "var a=1;", engine: "var b=2;", nonce: "abc123"))
+        XCTAssertTrue(page.contains("default-src 'none'"))
+        XCTAssertTrue(page.contains("script-src 'nonce-abc123'"))
+        XCTAssertFalse(page.contains("unsafe-inline"))
+        XCTAssertFalse(page.contains("http"))
+        XCTAssertNil(PresenceDocument.document(data: "x</script><script>alert(1)", engine: "", nonce: "abc123"))
+        XCTAssertNil(PresenceDocument.document(data: "", engine: "y</SCRIPT>", nonce: "abc123"))
+        XCTAssertNil(PresenceDocument.document(data: "", engine: "", nonce: "a b'"))
+        // The shipped engine has no way to reach a network, a microphone or another module.
+        let bundle = PresenceDocument.resources
+        let engine = try String(contentsOf: try XCTUnwrap(bundle.url(forResource: "presence-engine", withExtension: "js")), encoding: .utf8)
+        for forbidden in ["esm.sh", "import(", "WebSocket", "getUserMedia", "XMLHttpRequest", "sendBeacon"] {
+            XCTAssertFalse(engine.contains(forbidden), forbidden)
+        }
+        XCTAssertNotNil(PresenceDocument.html)
+    }
+
+    func testCoreWordsFollowTheHandoffTable() {
+        XCTAssertEqual(CoreView.words(for: .standby).title, "READY")
+        XCTAssertEqual(CoreView.words(for: .standby).kicker, "STANDING BY")
+        XCTAssertEqual(CoreView.words(for: .listening).title, "LISTENING")
+        XCTAssertEqual(CoreView.words(for: .authorization).title, "DECISION")
+        XCTAssertEqual(CoreView.words(for: .unavailable).title, "VOICE UNAVAILABLE")
+        XCTAssertEqual(CoreView.words(for: .stopped).title, "STOPPED")
+    }
+
     func testBridgeStateDecodesWithAndWithoutProviderStatus() throws {
         let older = Data(#"{"ready":true,"model":"m","tasks":[],"conversations":[],"memories":[]}"#.utf8)
         XCTAssertNil(try JSONDecoder().decode(RuntimeState.self, from: older).providerConfigured)
