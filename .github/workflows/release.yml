@@ -1,0 +1,178 @@
+name: Release
+
+# Pushing a tag such as v0.1.0 builds a disk image for each Mac architecture and
+# attaches them to a DRAFT release. Nothing is published until a person does so.
+# The images are signed and notarized only when the signing secrets exist;
+# otherwise they are ad-hoc signed and the release notes say so.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            label: apple-silicon
+          - runner: macos-15-intel
+            label: intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      # Only booleans are derived here; secret values are exposed solely to the steps that need them.
+      HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' }}
+      HAS_NOTARY: ${{ secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
+    outputs:
+      notarized: ${{ steps.state.outputs.notarized }}
+      signed: ${{ steps.state.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+
+      - name: Check the tag matches the app version
+        run: |
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' macos/Info.plist)"
+          if [[ "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match CFBundleShortVersionString $VERSION."
+            exit 1
+          fi
+
+      - name: Import the Developer ID certificate into a temporary keychain
+        if: env.HAS_SIGNING == 'true'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEYCHAIN="$RUNNER_TEMP/jarvis-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          CERT="$RUNNER_TEMP/jarvis-signing.p12"
+          trap 'rm -f "$CERT"' EXIT
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$CERT"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT" -k "$KEYCHAIN" -f pkcs12 -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          # Prepend the temporary keychain to the user search list.
+          OLD_KEYCHAINS=()
+          while IFS= read -r line; do
+            line="${line#"${line%%[![:space:]]*}"}"; line="${line#\"}"; line="${line%\"}"
+            [[ -n "$line" ]] && OLD_KEYCHAINS+=("$line")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$KEYCHAIN" ${OLD_KEYCHAINS[@]+"${OLD_KEYCHAINS[@]}"}
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application/ { print $2; exit }')"
+          if [[ -z "$IDENTITY" ]]; then
+            echo "::error::No Developer ID Application identity found in the imported certificate."
+            exit 1
+          fi
+          {
+            echo "JARVIS_CODESIGN_IDENTITY=$IDENTITY"
+            echo "JARVIS_SIGNING_KEYCHAIN=$KEYCHAIN"
+          } >> "$GITHUB_ENV"
+
+      - name: Store notarization credentials in the temporary keychain
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          xcrun notarytool store-credentials jarvis-notary \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" \
+            --keychain "$JARVIS_SIGNING_KEYCHAIN" >/dev/null
+          {
+            echo "JARVIS_NOTARY_PROFILE=jarvis-notary"
+            echo "JARVIS_NOTARY_KEYCHAIN=$JARVIS_SIGNING_KEYCHAIN"
+          } >> "$GITHUB_ENV"
+
+      - name: Warn about an unsigned build
+        if: env.HAS_SIGNING != 'true' || env.HAS_NOTARY != 'true'
+        run: echo "::warning::Signing or notarization secrets are missing; this release will not be notarized."
+
+      - name: Build, sign and check the disk image
+        run: ./scripts/ci-native.sh ./scripts/package-macos.sh
+
+      - name: Record how this image was signed
+        id: state
+        run: |
+          echo "signed=$([[ -n "${JARVIS_CODESIGN_IDENTITY:-}" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "notarized=$([[ -n "${JARVIS_NOTARY_PROFILE:-}" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-macos-${{ matrix.label }}
+          path: |
+            dist/*.dmg
+            dist/*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Delete the temporary keychain
+        if: always() && env.JARVIS_SIGNING_KEYCHAIN != ''
+        run: security delete-keychain "$JARVIS_SIGNING_KEYCHAIN" || true
+
+  draft-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: jarvis-macos-*
+          merge-multiple: true
+      - name: Write release notes
+        env:
+          SIGNED: ${{ needs.build.outputs.signed }}
+          NOTARIZED: ${{ needs.build.outputs.notarized }}
+        run: |
+          set -euo pipefail
+          {
+            echo "Jarvis ${GITHUB_REF_NAME#v} for macOS 14 or later."
+            echo
+            echo "- **Apple-Silicon** image: Macs with an M-series chip."
+            echo "- **Intel** image: Macs with an Intel processor."
+            echo
+            if [[ "$NOTARIZED" == true ]]; then
+              echo "Signed with Developer ID, notarized and stapled."
+            elif [[ "$SIGNED" == true ]]; then
+              echo "> [!WARNING]"
+              echo "> Signed with Developer ID but **not notarized**. macOS will ask once before opening it."
+            else
+              echo "> [!WARNING]"
+              echo "> These images are **ad-hoc signed and not notarized**. macOS will ask once before"
+              echo "> opening the app; the disk image includes \`Read me first.txt\` with the steps."
+            fi
+            echo
+            echo "Verify a download with \`shasum -a 256 -c\` against the matching \`.sha256\` file."
+          } > release-notes.md
+      - name: Create a draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          ASSETS=(dist/*.dmg dist/*.dmg.sha256)
+          if (( ${#ASSETS[@]} < 4 )); then echo "::error::Release assets are missing."; exit 1; fi
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "Jarvis ${GITHUB_REF_NAME#v}" --notes-file release-notes.md "${ASSETS[@]}"

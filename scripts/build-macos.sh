@@ -22,8 +22,9 @@ fi
 rm -rf "$APP/Contents/Resources/JarvisRoy_Jarvis.bundle"
 cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/JarvisRoy_Jarvis.bundle"
 cp "$ROOT/macos/Info.plist" "$APP/Contents/Info.plist"
-# Eve's generated manifest contains absolute source paths. This source-build
-# bundle launches the prepared checkout rather than claiming a portable runtime.
+# A source build runs the runtime in this checkout. Remove any runtime a previous
+# packaging run left inside the bundle, which the app would otherwise prefer.
+rm -rf "$APP/Contents/Resources/runtime" "$APP/Contents/Resources/node"
 if command -v node >/dev/null; then
   node - "$ROOT/runtime" "$(command -v node)" "$APP/Contents/Resources/runtime-location.json" <<'JS'
 const fs = require('node:fs');
@@ -45,5 +46,6 @@ if [[ -f "$ROOT/runtime/.output/server/index.mjs" && -f "$APP/Contents/Resources
   echo "Open the app to start its prepared local services; configure provider credentials in Settings."
   echo "This source-build app requires this checkout and its Node 24 installation to remain available."
 else
-  echo "Native bundle only. Run scripts/setup-macos.sh to prepare double-click startup."
+  echo "Native bundle only. Run scripts/setup-macos.sh to prepare double-click startup,"
+  echo "or scripts/package-macos.sh for a self-contained app and disk image."
 fi

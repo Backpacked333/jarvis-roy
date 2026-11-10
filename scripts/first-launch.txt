@@ -1,0 +1,36 @@
+Opening Jarvis for the first time
+=================================
+
+1. Drag Jarvis into the Applications folder shown beside it, then open
+   Applications and double-click Jarvis.
+
+2. macOS will say it cannot verify the app. That is expected: this copy was
+   built for personal use and is not signed with an Apple Developer ID.
+
+   macOS 15 or later:
+     Click Done on the warning. Open System Settings > Privacy & Security,
+     scroll to "Jarvis was blocked", click Open Anyway, and confirm.
+
+   macOS 14:
+     Right-click (or Control-click) Jarvis in Applications, choose Open,
+     then click Open in the dialog.
+
+   You only do this once.
+
+3. Jarvis opens a short setup. It needs one thing to start answering: a
+   Vercel AI Gateway key. Create one at https://vercel.com/ai-gateway and
+   paste it into the setup screen. The key is stored in your Keychain.
+
+Good to know
+------------
+- Jarvis includes everything it needs. There is nothing else to install.
+- Your conversations, memory and settings stay in
+  ~/Library/Application Support/JarvisRoy on this Mac.
+- After you replace Jarvis with a newer copy, macOS may ask again for
+  Keychain, microphone or other permissions. That is a side effect of the
+  app not being signed with a Developer ID.
+- If Jarvis cannot start, the banner at the top of its window says why and
+  has a "Copy diagnostics" button.
+
+Only open a copy of Jarvis that you built or downloaded from your own
+repository, and check it against the .sha256 file published beside it.

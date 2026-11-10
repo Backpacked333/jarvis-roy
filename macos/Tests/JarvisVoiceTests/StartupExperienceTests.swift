@@ -93,6 +93,41 @@ final class StartupExperienceTests: XCTestCase {
         XCTAssertEqual(RuntimePreferences(defaults: defaults).environment(inherited: ["JARVIS_ENABLE_ASSISTANT": "0"])["JARVIS_ENABLE_ASSISTANT"], "0")
     }
 
+    @MainActor
+    func testPackagedAppPrefersItsOwnRuntimeAndSettingsCanStillOverride() throws {
+        let resources = FileManager.default.temporaryDirectory.appendingPathComponent("jarvis-resources-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: resources) }
+        XCTAssertNil(RuntimeSupervisor.bundledLocation(resources: nil))
+        XCTAssertNil(RuntimeSupervisor.bundledLocation(resources: resources))
+        let server = resources.appendingPathComponent("runtime/.output/server"), bin = resources.appendingPathComponent("node/bin")
+        try FileManager.default.createDirectory(at: server, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try Data().write(to: server.appendingPathComponent("index.mjs"))
+        // A runtime without its Node is not a usable bundle.
+        XCTAssertNil(RuntimeSupervisor.bundledLocation(resources: resources))
+        let node = bin.appendingPathComponent("node")
+        try Data("#!/bin/sh\n".utf8).write(to: node)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: node.path)
+        let bundled = try XCTUnwrap(RuntimeSupervisor.bundledLocation(resources: resources))
+        XCTAssertEqual(bundled.runtimeDirectory, resources.appendingPathComponent("runtime").path)
+        XCTAssertEqual(bundled.nodeExecutable, node.path)
+
+        let manifest = RuntimeLocation(runtimeDirectory: "/checkout/runtime", nodeExecutable: "/usr/local/bin/node")
+        let packaged = RuntimeSupervisor.chooseLocation(overrideDirectory: " ", overrideNode: nil, bundled: bundled, manifest: manifest)
+        XCTAssertTrue(packaged.bundled)
+        XCTAssertEqual(packaged.location.runtimeDirectory, bundled.runtimeDirectory)
+        XCTAssertEqual(packaged.location.nodeExecutable, bundled.nodeExecutable)
+        let source = RuntimeSupervisor.chooseLocation(overrideDirectory: nil, overrideNode: nil, bundled: nil, manifest: manifest)
+        XCTAssertFalse(source.bundled)
+        XCTAssertEqual(source.location.runtimeDirectory, "/checkout/runtime")
+        let overridden = RuntimeSupervisor.chooseLocation(overrideDirectory: "/dev/runtime", overrideNode: "/dev/node", bundled: bundled, manifest: manifest)
+        XCTAssertFalse(overridden.bundled)
+        XCTAssertEqual(overridden.location.runtimeDirectory, "/dev/runtime")
+        XCTAssertEqual(overridden.location.nodeExecutable, "/dev/node")
+        let nothing = RuntimeSupervisor.chooseLocation(overrideDirectory: nil, overrideNode: nil, bundled: nil, manifest: nil)
+        XCTAssertEqual(nothing.location.runtimeDirectory, "")
+    }
+
     func testBridgeStateDecodesWithAndWithoutProviderStatus() throws {
         let older = Data(#"{"ready":true,"model":"m","tasks":[],"conversations":[],"memories":[]}"#.utf8)
         XCTAssertNil(try JSONDecoder().decode(RuntimeState.self, from: older).providerConfigured)

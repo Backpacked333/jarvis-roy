@@ -30,6 +30,11 @@ jobs:
       - run: npm run build
       - run: node ../scripts/smoke-runtime.mjs
       - run: node ../scripts/smoke-runtime.mjs --assistant
+      - name: Stage the runtime as the app bundles it and start it away from the checkout
+        run: |
+          OUT="$RUNNER_TEMP/jarvis-bundle/Resources"
+          node ../scripts/stage-runtime.mjs --runtime . --out "$OUT" --node "$(command -v node)"
+          cd "$RUNNER_TEMP" && node "$GITHUB_WORKSPACE/scripts/smoke-bundle.mjs" "$OUT"
   isolated-workers:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -78,3 +83,35 @@ jobs:
       - run: ./scripts/ci-native.sh swift test --package-path macos -c release
       - run: ./scripts/ci-native.sh swift test --package-path macos-control
       - run: ./scripts/ci-native.sh swift test --package-path macos-control -c release
+  package-macos:
+    # Builds the self-contained app and disk image for each Mac architecture, starts the
+    # bundled services from it, and keeps the result as a downloadable artifact.
+    # Pull requests already get this from their branch push.
+    if: github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            label: apple-silicon
+          - runner: macos-15-intel
+            label: intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+      # Ad-hoc signed, not notarized.
+      - run: ./scripts/ci-native.sh ./scripts/package-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-macos-${{ matrix.label }}
+          path: |
+            dist/*.dmg
+            dist/*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14

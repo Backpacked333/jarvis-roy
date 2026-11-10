@@ -27,6 +27,8 @@ final class RuntimeSupervisor: ObservableObject {
     @Published private(set) var failureLog: [String] = []
     /// Where the services' redacted output is kept; nil until the app has started them once.
     @Published private(set) var logDirectory: URL?
+    /// True when the app runs the Node and runtime shipped inside it, with no checkout or system Node involved.
+    @Published private(set) var usesBundledRuntime = false
     let externallyManaged = RuntimeConnection.externallyManaged
 
     private var children: [String: Process] = [:]
@@ -96,8 +98,12 @@ final class RuntimeSupervisor: ObservableObject {
                 try FileManager.default.createDirectory(atPath: data, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                 try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: data)
                 let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/JarvisControl.app/Contents/MacOS/JarvisControl").path
-                let venv = URL(fileURLWithPath: location.runtimeDirectory).appendingPathComponent("workers/.venv/bin/python").path
-                if source["JARVIS_WORKER_PYTHON"] == nil && FileManager.default.isExecutableFile(atPath: venv) { source["JARVIS_WORKER_PYTHON"] = venv }
+                // A packaged app cannot hold a virtual environment inside its signed bundle; it lives with the other private data.
+                let venvs = [URL(fileURLWithPath: data).appendingPathComponent("workers-venv/bin/python").path,
+                             URL(fileURLWithPath: location.runtimeDirectory).appendingPathComponent("workers/.venv/bin/python").path]
+                if source["JARVIS_WORKER_PYTHON"] == nil, let venv = venvs.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+                    source["JARVIS_WORKER_PYTHON"] = venv
+                }
                 if source["JARVIS_DOCKER_BINARY"] == nil {
                     source["JARVIS_DOCKER_BINARY"] = ["/usr/local/bin/docker", "/opt/homebrew/bin/docker"].first(where: { FileManager.default.isExecutableFile(atPath: $0) })
                 }
@@ -105,6 +111,12 @@ final class RuntimeSupervisor: ObservableObject {
                 logs = store
                 logDirectory = store.directory
                 let runtimeURL = URL(fileURLWithPath: location.runtimeDirectory)
+                // The agent runtime keeps its working state in its current directory. A signed bundle must never be
+                // written to, so the packaged app gives it a private directory; a source build keeps using the checkout.
+                let stateURL = URL(fileURLWithPath: data).appendingPathComponent("runtime-state")
+                if usesBundledRuntime {
+                    try FileManager.default.createDirectory(at: stateURL, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                }
                 let guardScript = runtimeURL.appendingPathComponent("service-guard.mjs").path
                 let guarded = FileManager.default.fileExists(atPath: guardScript)
                 for (role, entry) in [("runtime", ".output/server/index.mjs"), ("bridge", "bridge/server.ts")] {
@@ -112,7 +124,7 @@ final class RuntimeSupervisor: ObservableObject {
                     let entryPath = runtimeURL.appendingPathComponent(entry).path
                     process.executableURL = URL(fileURLWithPath: location.nodeExecutable)
                     process.arguments = guarded ? [guardScript, entryPath] : [entryPath]
-                    process.currentDirectoryURL = runtimeURL
+                    process.currentDirectoryURL = role == "runtime" && usesBundledRuntime ? stateURL : runtimeURL
                     var environment = RuntimePreferences.childEnvironment(role: role, source: source,
                         localToken: RuntimeConnection.localToken, nativeToken: RuntimeConnection.nativeToken,
                         dataDirectory: data, helper: FileManager.default.isExecutableFile(atPath: helper) ? helper : nil)
@@ -289,13 +301,34 @@ final class RuntimeSupervisor: ObservableObject {
         return (try? await session.data(for: request)) != nil
     }
 
+    /// The runtime and Node shipped inside a packaged app, when both are present.
+    static func bundledLocation(resources: URL?, fileManager: FileManager = .default) -> RuntimeLocation? {
+        guard let resources else { return nil }
+        let runtime = resources.appendingPathComponent("runtime"), node = resources.appendingPathComponent("node/bin/node")
+        guard fileManager.fileExists(atPath: runtime.appendingPathComponent(".output/server/index.mjs").path),
+              fileManager.isExecutableFile(atPath: node.path) else { return nil }
+        return RuntimeLocation(runtimeDirectory: runtime.path, nodeExecutable: node.path)
+    }
+
+    /// A deliberate override in Settings wins, then the runtime inside the app, then the checkout a source build recorded.
+    static func chooseLocation(overrideDirectory: String?, overrideNode: String?, bundled: RuntimeLocation?,
+                               manifest: RuntimeLocation?) -> (location: RuntimeLocation, bundled: Bool) {
+        let directory = nonempty(overrideDirectory) ?? bundled?.runtimeDirectory ?? manifest?.runtimeDirectory ?? ""
+        let node = nonempty(overrideNode) ?? bundled?.nodeExecutable ?? manifest?.nodeExecutable ?? ""
+        return (RuntimeLocation(runtimeDirectory: directory, nodeExecutable: node),
+                bundled != nil && directory == bundled?.runtimeDirectory)
+    }
+
     private func runtimeLocation() throws -> RuntimeLocation {
         let preferences = UserDefaults.standard
         let manifest = Bundle.main.url(forResource: "runtime-location", withExtension: "json")
             .flatMap { try? Data(contentsOf: $0) }
             .flatMap { try? JSONDecoder().decode(RuntimeLocation.self, from: $0) }
-        let directory = Self.nonempty(preferences.string(forKey: "Jarvis.runtimeDirectory")) ?? manifest?.runtimeDirectory ?? ""
-        let node = Self.nonempty(preferences.string(forKey: "Jarvis.nodeExecutable")) ?? manifest?.nodeExecutable ?? ""
+        let choice = Self.chooseLocation(overrideDirectory: preferences.string(forKey: "Jarvis.runtimeDirectory"),
+                                         overrideNode: preferences.string(forKey: "Jarvis.nodeExecutable"),
+                                         bundled: Self.bundledLocation(resources: Bundle.main.resourceURL), manifest: manifest)
+        usesBundledRuntime = choice.bundled
+        let directory = choice.location.runtimeDirectory, node = choice.location.nodeExecutable
         guard directory.hasPrefix("/"), node.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: node),
               FileManager.default.fileExists(atPath: directory + "/.output/server/index.mjs"),
               FileManager.default.fileExists(atPath: directory + "/bridge/server.ts"),
@@ -337,7 +370,7 @@ final class RuntimeSupervisor: ObservableObject {
         case installation, node, portInUse, processExited, readiness, stillRunning
         var errorDescription: String? {
             switch self {
-            case .installation: return "The prepared runtime or Node executable is missing. Run scripts/setup-macos.sh from your checkout, or update the trusted paths in Settings. This source-build app keeps its runtime in the checkout."
+            case .installation: return "Jarvis's runtime is missing or incomplete. If you installed Jarvis from a disk image, download it again and replace the app. If you built it yourself, run scripts/setup-macos.sh from your checkout or correct the paths in Settings."
             case .node: return "The configured executable must be a working Node.js 24 installation. Update its path in Settings."
             case .portInUse: return "Ports 39201 or 39202 are already in use. Quit any other copy of Jarvis or its developer launcher, then retry."
             case .processExited: return "A local service stopped while starting. Its last output is shown below."

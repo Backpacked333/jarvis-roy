@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct JarvisSettingsView: View {
@@ -109,17 +110,31 @@ struct JarvisSettingsView: View {
                 }
             }.formStyle(.grouped).tabItem { Label("Providers", systemImage: "key") }
             Form {
-                Section("Source-build runtime") {
-                    Text("The app starts the prepared runtime recorded when it was built. Only change these paths to trusted local code. A moved checkout must be rebuilt or selected here.")
+                Section(supervisor.usesBundledRuntime ? "Runtime" : "Source-build runtime") {
+                    Text(supervisor.usesBundledRuntime
+                         ? "This app runs the runtime and Node.js shipped inside it. Leave these empty unless you are developing Jarvis; only ever point them at code you trust."
+                         : "The app starts the prepared runtime recorded when it was built. Only change these paths to trusted local code. A moved checkout must be rebuilt or selected here.")
                         .font(.callout).foregroundStyle(.secondary)
                     TextField("Runtime directory override", text: $runtimeDirectory)
                     TextField("Node 24 executable override", text: $nodeExecutable)
+                }
+                Section("Service logs") {
+                    Text("Each local service's recent output is kept on this Mac only, with credential-shaped text removed, so a failed start can be explained. Files are private to your account and capped in size.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Show logs in Finder") { if let url = supervisor.logDirectory { NSWorkspace.shared.open(url) } }
+                            .disabled(supervisor.logDirectory == nil)
+                        Button("Copy diagnostics") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(supervisor.diagnosticsReport(), forType: .string)
+                        }
+                    }
                 }
                 Section("Isolated analysis workers") {
                     WorkerImagePreferenceView()
                 }
                 Section("Runtime diagnostics") {
-                    Text("Only fixed event codes, service roles and bounded durations are recorded; no transcripts, source IDs, provider responses, or credentials.")
+                    Text("These events hold only fixed codes, service roles and bounded durations; no transcripts, source IDs, provider responses, or credentials.")
                         .font(.caption).foregroundStyle(.secondary)
                     Text("Voice timings measure local stop, first received PCM and first non-silent render callback. Session feedback measures published state, not a displayed frame. Physical audio latency and full-turn performance require Mac testing.")
                         .font(.caption).foregroundStyle(.secondary)
