@@ -57,8 +57,7 @@ struct ReadinessBanner: View {
                 }
                 Spacer(minLength: 12)
                 if notice.kind == .needsKey {
-                    Button(action: addKey) { Text("Add key…").foregroundStyle(.black) }
-                        .buttonStyle(.borderedProminent).tint(RoomsPalette.cyan)
+                    Button("Add key…", action: addKey).buttonStyle(.jarvis(.primary))
                 }
                 if notice.kind == .failed {
                     if !notice.log.isEmpty {
@@ -70,8 +69,7 @@ struct ReadinessBanner: View {
                         copied = true
                     }
                     SettingsLink { Text("Settings…") }
-                    Button(action: retry) { Text("Retry").foregroundStyle(.black) }
-                        .buttonStyle(.borderedProminent).tint(RoomsPalette.cyan)
+                    Button("Retry", action: retry).buttonStyle(.jarvis(.primary))
                 }
             }
             if showingOutput && !notice.log.isEmpty {
@@ -86,6 +84,7 @@ struct ReadinessBanner: View {
                 .accessibilityLabel("Last output from the service that failed")
             }
         }
+        .buttonStyle(.jarvis)
         .padding(.horizontal, 18).padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(tint.opacity(0.08))

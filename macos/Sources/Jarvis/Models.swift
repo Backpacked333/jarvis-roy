@@ -67,6 +67,12 @@ struct MemoryEntry: Decodable, Identifiable {
 enum WorkspaceTab: String, CaseIterable, Identifiable {
     case today = "Today", assistant = "Assistant", rooms = "Rooms", workspace = "Workspace", capabilities = "Capabilities", memory = "Memory", privacy = "Privacy"
     var id: String { rawValue }
+    /// What the person sees. The older task-thread view is kept for existing threads, under a name that says so.
+    var title: String { self == .workspace ? "Classic threads" : rawValue }
+    /// Sidebar and ⌘1–⌘7 order: the conversation first, the older thread view last.
+    static let ordered: [WorkspaceTab] = [.assistant, .today, .rooms, .memory, .capabilities, .privacy, .workspace]
+    /// The tabs offered, in order. The Assistant tab exists only while that experience is on.
+    static func available(assistant: Bool) -> [WorkspaceTab] { ordered.filter { $0 != .assistant || assistant } }
     var icon: String {
         switch self {
         case .today: return "sun.max"

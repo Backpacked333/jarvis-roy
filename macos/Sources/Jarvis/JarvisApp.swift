@@ -56,7 +56,8 @@ struct JarvisApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Jarvis", id: "main") {
+        // One window. A group would open a second copy from the menu bar and run its start-up work again.
+        Window("Jarvis", id: "main") {
             JarvisSceneHost(model: model, delegate: delegate)
         }
         .defaultSize(width: 1280, height: 840)
@@ -67,6 +68,12 @@ struct JarvisApp: App {
                     .keyboardShortcut("n", modifiers: .command)
                 Button("Stop all work") { Task { await model.stopAll() } }
                     .keyboardShortcut(".", modifiers: .command)
+            }
+            CommandMenu("Go") {
+                ForEach(Array(WorkspaceTab.available(assistant: AssistantFeatures.assistant).enumerated()), id: \.element) { index, tab in
+                    Button(tab.title) { model.tab = tab }
+                        .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                }
             }
         }
         MenuBarExtra("Jarvis", systemImage: "waveform.circle") {

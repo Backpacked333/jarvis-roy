@@ -1,18 +1,20 @@
 import SwiftUI
 import AppKit
 
+/// The shell's colour names, all taken from the shared theme.
 private enum Palette {
-    static let background = Color(red: 0.035, green: 0.047, blue: 0.063)
-    static let panel = Color(red: 0.061, green: 0.075, blue: 0.094)
-    static let line = Color.white.opacity(0.075)
-    static let cyan = Color(red: 0.40, green: 0.88, blue: 0.91)
-    static let muted = Color(red: 0.52, green: 0.59, blue: 0.65)
-    static let amber = Color(red: 0.97, green: 0.73, blue: 0.39)
+    static let background = JarvisTheme.Colors.background
+    static let panel = JarvisTheme.Colors.panel
+    static let line = JarvisTheme.Colors.line
+    static let cyan = JarvisTheme.Colors.accent
+    static let muted = JarvisTheme.Colors.muted
+    static let amber = JarvisTheme.Colors.warning
 }
 
 struct WorkspaceView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var voice: VoiceController
+    @ObservedObject private var supervisor = RuntimeSupervisor.shared
     @State private var memoryToDelete: MemoryEntry?
     @State private var questionAnswers: [String: String] = [:]
     @AppStorage("Jarvis.assistantEnabled") private var assistantPreference = false
@@ -34,7 +36,8 @@ struct WorkspaceView: View {
                 if let error = voice.error {
                     notice(error, icon: "mic.badge.xmark", color: Palette.amber)
                 }
-                if !model.isConnected {
+                // While services are starting or have failed, the banner above the workspace already says so.
+                if !model.isConnected && (supervisor.state == .ready || supervisor.externallyManaged) {
                     notice(model.connectionError ?? "Connecting to the local agent service…", icon: "network", color: Palette.amber)
                 }
                 switch model.tab {
@@ -78,13 +81,13 @@ struct WorkspaceView: View {
                 Image(systemName: "waveform.circle.fill").font(.system(size: 29)).foregroundStyle(Palette.cyan)
                 Text("JARVIS").font(.system(size: 19, weight: .semibold)).tracking(4)
             }.padding(.top, 45).padding(.bottom, 8)
-            Text("A PERSONAL ASSISTANT").font(.system(size: 9, weight: .medium)).tracking(2).foregroundStyle(Palette.muted)
+            Text("A PERSONAL ASSISTANT").font(.system(size: 10, weight: .medium)).tracking(2).foregroundStyle(Palette.muted)
             Text("YOUR SPACE").font(.system(size: 10, weight: .medium)).tracking(1.8).foregroundStyle(Palette.muted).padding(.top, 50).padding(.bottom, 15)
-            ForEach(WorkspaceTab.allCases.filter { $0 != .assistant || assistantAvailable }) { tab in
+            ForEach(WorkspaceTab.available(assistant: assistantAvailable)) { tab in
                 Button { model.tab = tab } label: {
                     HStack(spacing: 12) {
                         Image(systemName: tab.icon).frame(width: 18)
-                        Text(tab.rawValue).font(.system(size: 13, weight: .medium))
+                        Text(tab.title).font(.system(size: 13, weight: .medium))
                         Spacer()
                         if tab == .workspace && model.approvalCount > 0 {
                             Text("\(model.approvalCount)").font(.caption2).foregroundStyle(Palette.amber)
@@ -93,7 +96,9 @@ struct WorkspaceView: View {
                     .foregroundStyle(model.tab == tab ? Palette.cyan : Palette.muted)
                     .padding(12)
                     .background(model.tab == tab ? Palette.cyan.opacity(0.075) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                    .contentShape(RoundedRectangle(cornerRadius: 8))
                 }.buttonStyle(.plain).padding(.bottom, 6)
+                    .accessibilityLabel(tab.title).accessibilityAddTraits(model.tab == tab ? .isSelected : [])
             }
             Button { Task { await model.startNewConversation() } } label: {
                 Label("New conversation", systemImage: "plus")
@@ -120,7 +125,7 @@ struct WorkspaceView: View {
                 Label("You stay in control", systemImage: "lock.shield").font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.8))
                 Text("Desktop actions wait for your approval. Always.").font(.system(size: 11)).foregroundStyle(Palette.muted).lineSpacing(4)
                 Rectangle().fill(Palette.line).frame(height: 1).padding(.vertical, 6)
-                Text("LOCAL CONTROL\nCLOUD REASONING").font(.system(size: 9, weight: .medium)).tracking(1.5).foregroundStyle(Palette.muted).lineSpacing(5)
+                Text("LOCAL CONTROL\nCLOUD REASONING").font(.system(size: 10, weight: .medium)).tracking(1.5).foregroundStyle(Palette.muted).lineSpacing(5)
             }.padding(.bottom, 28)
         }.padding(.horizontal, 22).frame(width: 205).background(Palette.panel.opacity(0.5))
     }
@@ -128,7 +133,7 @@ struct WorkspaceView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 14) {
-                Text(model.tab.rawValue).font(.system(size: 14, weight: .medium))
+                Text(model.tab.title).font(.system(size: 14, weight: .medium))
                 Spacer()
                 if model.tab == .rooms, AssistantFeatures.assistant, model.rooms.selectedRoom != nil {
                     Button("Discuss this room") { Task { await model.discussSelectedRoom() } }.font(.caption)
@@ -283,7 +288,7 @@ struct WorkspaceView: View {
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(voice.isListening ? Palette.cyan.opacity(0.5) : Palette.line))
             HStack {
                 Text(model.sendBlockReason ?? "Follow-up in this conversation · approvals require buttons · ⌘. stops all work")
-                    .font(.system(size: 9)).foregroundStyle(model.draft.count > 8000 ? Palette.amber : Palette.muted)
+                    .font(.system(size: 10)).foregroundStyle(model.draft.count > 8000 ? Palette.amber : Palette.muted)
                 Spacer()
                 Button {
                     model.speakReplies.toggle()
@@ -322,7 +327,7 @@ struct WorkspaceView: View {
                             VStack(alignment: .leading, spacing: 9) {
                                 HStack(spacing: 6) {
                                     Circle().fill(statusColor(task)).frame(width: 5, height: 5)
-                                    Text(task.statusLabel).font(.system(size: 9, weight: .medium)).foregroundStyle(statusColor(task))
+                                    Text(task.statusLabel).font(.system(size: 10, weight: .medium)).foregroundStyle(statusColor(task))
                                 }
                                 Text(task.title).font(.system(size: 12)).lineLimit(3).multilineTextAlignment(.leading).foregroundStyle(.white.opacity(0.85))
                             }.padding(13).frame(maxWidth: .infinity, alignment: .leading)
@@ -332,7 +337,7 @@ struct WorkspaceView: View {
                     }
                 }
             }
-            Text("\(model.modelName)\nApproval-gated tools").font(.system(size: 9)).foregroundStyle(Palette.muted).lineSpacing(5)
+            Text("\(model.modelName)\nApproval-gated tools").font(.system(size: 10)).foregroundStyle(Palette.muted).lineSpacing(5)
         }.padding(20).background(Palette.panel.opacity(0.25))
     }
 
