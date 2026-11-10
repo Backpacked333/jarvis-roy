@@ -89,6 +89,8 @@ export interface Memory {
 export interface BridgeState {
   ready: boolean;
   model: string;
+  /** Presence of a reasoning credential in this process only; never proof that the provider accepts it. */
+  providerConfigured: boolean;
   tasks: Task[];
   conversations: Conversation[];
   memories: Memory[];

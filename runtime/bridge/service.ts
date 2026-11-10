@@ -29,6 +29,20 @@ const MAX_ACTIVE_TASKS = 4;
 const MAX_EVENTS_PER_TASK = 100;
 const MAX_MESSAGE_LENGTH = 20_000;
 const CANCEL_TIMEOUT_MS = 15_000;
+// The native app polls state to decide readiness; a hung runtime must read as not ready, not as a hung bridge.
+const HEALTH_DEADLINE_MS = 5_000;
+
+async function withDeadline<T>(operation: Promise<T>, milliseconds: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), milliseconds); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const BLOCKED_QUESTION_TITLE = "Question blocked";
 const BLOCKED_QUESTION_DETAIL = "This question cannot be answered here. Stop the task and request a non-sensitive clarification.";
 const BLOCKED_QUESTION_REASON = "This question was blocked by the clarification safety policy.";
@@ -159,7 +173,7 @@ export class JarvisService {
     let ready = false;
     let error: string | undefined;
     try {
-      const health = asRecord(await this.client.health());
+      const health = asRecord(await withDeadline(this.client.health(), HEALTH_DEADLINE_MS, "The eve runtime did not answer its health check in time."));
       ready = health.status === "ready" || health.ok === true;
       if (!ready) error = "The eve runtime is not ready.";
     } catch (cause) {
@@ -177,6 +191,7 @@ export class JarvisService {
     return {
       ready,
       model: this.model,
+      providerConfigured: Boolean(process.env.AI_GATEWAY_API_KEY?.trim()),
       tasks: this.store.values()
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
         .map(publicTask),

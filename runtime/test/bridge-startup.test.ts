@@ -28,3 +28,24 @@ test("actual bridge startup honors the objectives feature flag without provider 
     } finally { await shutdownBridge(server); }
   }
 });
+
+test("a bridge that cannot bind its port says why and exits non-zero", async t => {
+  const { createServer } = await import("node:http");
+  const { spawn } = await import("node:child_process");
+  const directory = await mkdtemp(join(tmpdir(), "jarvis-port-conflict-"));
+  const occupied = createServer(); occupied.listen(0, "127.0.0.1"); await once(occupied, "listening");
+  t.after(async () => { occupied.close(); await rm(directory, { recursive: true, force: true }); });
+  const port = (occupied.address() as { port: number }).port;
+  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, JARVIS_DATA_DIR: directory,
+    JARVIS_LOCAL_TOKEN: "port-conflict-local-fixture-token-32-characters", JARVIS_NATIVE_TOKEN: "port-conflict-native-fixture-token-32-characters",
+    JARVIS_DOCKER_BINARY: "jarvis-fixture-no-docker", JARVIS_PORT_FIXTURE: String(port) };
+  const child = spawn(process.execPath, ["--input-type=module", "-e",
+    `import { startJarvisBridge } from "./bridge/server.ts"; await startJarvisBridge({ port: Number(process.env.JARVIS_PORT_FIXTURE) });`],
+    { cwd: new URL("../", import.meta.url), env, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = ""; child.stderr.setEncoding("utf8"); child.stderr.on("data", chunk => { stderr += chunk; });
+  const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
+  const [code] = await once(child, "exit"); clearTimeout(timer);
+  assert.equal(code, 1, stderr);
+  assert.match(stderr, new RegExp(`port ${port} is already in use`));
+  assert.doesNotMatch(stderr, /fixture-token/);
+});

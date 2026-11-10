@@ -2,12 +2,40 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { DEFAULT_MODEL, configuredModel } from "../agent/lib/model.ts";
+import { DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_MODEL, configuredContextWindowTokens, configuredModel, selectModel } from "../agent/lib/model.ts";
 
 test("model selection defaults to GPT-6 Sol Fast and preserves explicit overrides", () => {
   assert.equal(DEFAULT_MODEL, "openai/gpt-6-sol-fast");
   assert.equal(configuredModel(""), DEFAULT_MODEL);
   assert.equal(configuredModel("anthropic/custom-model"), "anthropic/custom-model");
+});
+
+test("local model selection never depends on the build-time gateway catalog", () => {
+  const previous = { profile: process.env.JARVIS_RUNTIME_PROFILE, model: process.env.JARVIS_MODEL, window: process.env.JARVIS_CONTEXT_WINDOW_TOKENS };
+  try {
+    delete process.env.JARVIS_RUNTIME_PROFILE;
+    delete process.env.JARVIS_CONTEXT_WINDOW_TOKENS;
+    process.env.JARVIS_MODEL = "vendor/published-after-build";
+    // Eve only consults its baked catalog when a selection omits the window.
+    assert.deepEqual(selectModel({} as never), { model: "vendor/published-after-build", modelContextWindowTokens: DEFAULT_CONTEXT_WINDOW_TOKENS });
+    process.env.JARVIS_CONTEXT_WINDOW_TOKENS = "64000";
+    assert.deepEqual(selectModel({} as never), { model: "vendor/published-after-build", modelContextWindowTokens: 64_000 });
+  } finally {
+    for (const [name, value] of [["JARVIS_RUNTIME_PROFILE", previous.profile], ["JARVIS_MODEL", previous.model], ["JARVIS_CONTEXT_WINDOW_TOKENS", previous.window]] as const) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+  }
+});
+
+test("the context window override accepts only a bounded whole number", () => {
+  assert.equal(DEFAULT_CONTEXT_WINDOW_TOKENS, 200_000);
+  assert.equal(configuredContextWindowTokens(undefined), 200_000);
+  assert.equal(configuredContextWindowTokens(""), 200_000);
+  assert.equal(configuredContextWindowTokens(" 128000 "), 128_000);
+  assert.equal(configuredContextWindowTokens("16384"), 16_384);
+  for (const invalid of ["16383", "2000001", "0", "-5", "1e6", "128000.5", "abc", "0128000", "9999999999"]) {
+    assert.equal(configuredContextWindowTokens(invalid), 200_000, invalid);
+  }
 });
 
 for (const override of [undefined, "", "openai/custom-model"]) {

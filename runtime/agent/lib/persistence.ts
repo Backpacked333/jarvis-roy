@@ -14,7 +14,12 @@ import path from "node:path";
 
 export function getDataDirectory(): string {
   const configured = process.env.JARVIS_DATA_DIR;
-  if (!configured) return path.join(homedir(), "Library", "Application Support", "JarvisRoy");
+  if (!configured) {
+    if (process.platform === "darwin") return path.join(homedir(), "Library", "Application Support", "JarvisRoy");
+    // Elsewhere (Linux development, the cloud host) follow the XDG data convention instead of inventing a macOS path.
+    const xdg = process.env.XDG_DATA_HOME;
+    return path.join(xdg && path.isAbsolute(xdg) ? xdg : path.join(homedir(), ".local", "share"), "jarvis-roy");
+  }
   if (configured === "~") return homedir();
   if (configured.startsWith("~/")) return path.resolve(homedir(), configured.slice(2));
   return path.resolve(configured);

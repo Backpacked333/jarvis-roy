@@ -7,15 +7,19 @@ export function environmentFor(target, source = process.env) {
   const names = ['HOME', 'TMPDIR', 'USER', 'LOGNAME', 'JARVIS_LOCAL_TOKEN'];
   if (target !== 'runtime') names.push('JARVIS_NATIVE_TOKEN');
   names.push('JARVIS_ENABLE_ASSISTANT', 'JARVIS_ENABLE_KNOWLEDGE', 'JARVIS_ENABLE_MEMORY',
-    'JARVIS_ENABLE_SEMANTIC_RETRIEVAL', 'JARVIS_ENABLE_RESEARCH', 'JARVIS_ENABLE_VOICE_APPROVAL');
+    'JARVIS_ENABLE_SEMANTIC_RETRIEVAL', 'JARVIS_ENABLE_RESEARCH', 'JARVIS_ENABLE_VOICE_APPROVAL',
+    'JARVIS_ENABLE_OBJECTIVES', 'JARVIS_ENABLE_CLOUD');
+  // Backend-only configuration the services read; without these the launcher silently ignored them.
+  if (target !== 'ui') names.push('JARVIS_CONTEXT_WINDOW_TOKENS', 'XDG_DATA_HOME');
   if (target !== 'ui') names.push('JARVIS_DATA_DIR', 'JARVIS_MODEL', 'JARVIS_NATIVE_HELPER',
     'JARVIS_ENABLE_DESKTOP', 'JARVIS_ENABLE_TERMINAL', 'JARVIS_ENABLE_APPLE_SERVICES',
     'TAVILY_API_KEY', 'HOME_ASSISTANT_URL', 'HOME_ASSISTANT_TOKEN', 'JARVIS_ALLOW_HOME_ASSISTANT_HTTP');
   if (target !== 'ui') names.push('AI_GATEWAY_API_KEY');
   if (target !== 'ui') names.push('JARVIS_DEEP_MODEL', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
     'http_proxy', 'https_proxy', 'no_proxy', 'NODE_USE_ENV_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR');
+  // Retrieval models are loaded by the bridge only; the agent runtime never needs their location.
   if (target === 'bridge') names.push('ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID',
-    'JARVIS_WORKER_PYTHON', 'JARVIS_WORKER_IMAGE', 'JARVIS_DOCKER_BINARY');
+    'JARVIS_WORKER_PYTHON', 'JARVIS_WORKER_IMAGE', 'JARVIS_DOCKER_BINARY', 'JARVIS_E5_MODEL_DIR');
   for (const name of names) if (typeof source[name] === 'string') result[name] = source[name];
   if (target === 'runtime') Object.assign(result, { HOST: '127.0.0.1', PORT: '39201' });
   return result;

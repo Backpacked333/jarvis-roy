@@ -255,10 +255,11 @@ test("automatic cloud model selection preserves configured model and delegated r
     process.env.AI_GATEWAY_API_KEY = "fixture-provider-key-never-transmitted";
     const delegated = { ...root, session: { id: "analyst-session", parent: { rootSessionId: "root-session" } } } as DynamicModelContext;
     for (const context of [root, delegated]) {
-      const selected = selectModel(context); assert.notEqual(typeof selected, "string");
-      if (typeof selected === "string") throw new Error("Cloud selected an unbounded model string");
-      assert.equal(selected.model.modelId, modelId); assert.equal(selected.modelContextWindowTokens, 16_384);
-      await assert.rejects(async () => selected.model.doGenerate({ prompt, providerOptions: { gateway: { models: ["bypass/model"] } } }), ModelBudgetDenied);
+      const selected = selectModel(context);
+      if (typeof selected.model === "string") throw new Error("Cloud selected an unbudgeted model string");
+      const model = selected.model;
+      assert.equal(model.modelId, modelId); assert.equal(selected.modelContextWindowTokens, 16_384);
+      await assert.rejects(async () => model.doGenerate({ prompt, providerOptions: { gateway: { models: ["bypass/model"] } } }), ModelBudgetDenied);
     }
     const agent = await import("../agent/agent.ts"), analyst = await import("../agent/subagents/analyst/agent.ts");
     assert.ok(agent.default); assert.ok(analyst.default);
@@ -268,7 +269,7 @@ test("automatic cloud model selection preserves configured model and delegated r
     const analystSource = await readFile(new URL("../agent/subagents/analyst/agent.ts", import.meta.url), "utf8");
     assert.match(rootSource, /model: modelSelection/); assert.match(analystSource, /model: modelSelection/);
     assert.doesNotMatch(rootSource, /compaction:\s*\{[^}]*model:/);
-    process.env.JARVIS_RUNTIME_PROFILE = "macos"; assert.equal(selectModel(root), modelId);
+    process.env.JARVIS_RUNTIME_PROFILE = "macos"; assert.deepEqual(selectModel(root), { model: modelId, modelContextWindowTokens: 200_000 });
   } finally {
     if (previous === undefined) delete process.env.JARVIS_RUNTIME_PROFILE; else process.env.JARVIS_RUNTIME_PROFILE = previous;
     if (previousModel === undefined) delete process.env.JARVIS_MODEL; else process.env.JARVIS_MODEL = previousModel;
