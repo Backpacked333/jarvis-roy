@@ -4,7 +4,7 @@ Persistent objectives, project continuity and the private cloud deployment are d
 
 A native macOS assistant for spoken collaboration, project research and explicitly approved actions. Jarvis combines SwiftUI, an authenticated TypeScript bridge, Eve cloud reasoning and isolated local workers. Inspired by the [Awesome Jarvis blueprint](https://github.com/csells/awesome-jarvis/blob/main/blueprint.md).
 
-**Source-build preview. There is no signed installer or notarized consumer download.** The new experience is implemented behind default-off flags; the five implementation stages have not all passed their release gates. The build ad-hoc signs local app/helper bundles. See [implementation status and open acceptance gates](docs/implementation-status.md) and [the 30-task evaluation set](evaluations/README.md).
+**Preview. There is no notarized consumer download.** CI builds a self-contained, ad-hoc signed disk image for Apple silicon and for Intel on every push (see [Install without a terminal](#install-without-a-terminal)); macOS asks once before opening it. A new installation starts with the Assistant, project knowledge and reviewed memory on; anything that acts on the Mac, reaches an account, leaves the Mac or spends unattended stays off until you turn it on. The five implementation stages have not all passed their release gates, nothing has been accepted on a physical Mac yet, and the window follows the [Jarvis HUD design](#the-hud) which is still being built out. See [implementation status and open acceptance gates](docs/implementation-status.md) and [the 30-task evaluation set](evaluations/README.md).
 
 ## Available in the source preview
 
@@ -20,7 +20,24 @@ A native macOS assistant for spoken collaboration, project research and explicit
 - **Home Assistant:** optional approved state reads and allowlisted light/switch/fan/climate/media-player actions through your configured instance, not “all brands” or HomeKit support.
 - Approved notes and saved preferences; separate analyst for reasoning/drafting from supplied context, with no private tool access.
 
+## Install without a terminal
+
+1. Open the repository's **Actions** tab, choose the latest successful **Checks** run on the branch you want, and download `jarvis-macos-apple-silicon` (M-series Macs) or `jarvis-macos-intel`. Tagging a commit `v<version>` also creates a draft release holding both images.
+2. Unzip it, open the `.dmg`, and drag **Jarvis** to **Applications**. The image includes `Read me first.txt`.
+3. Open Jarvis. Because this build is not signed with an Apple Developer ID, macOS blocks the first launch: on macOS 15 open **System Settings → Privacy & Security** and click **Open Anyway**; on macOS 14 right-click the app and choose **Open**. This is needed once.
+4. Setup asks for one thing: a [Vercel AI Gateway key](https://vercel.com/ai-gateway). It is stored in your Keychain. Voice (an ElevenLabs key and voice ID) is optional.
+
+The app contains its own Node.js and runtime; nothing else needs installing. Your data lives in `~/Library/Application Support/JarvisRoy`. If Jarvis cannot start, the banner at the top of the window says why, shows the failing service's last output, and has **Copy diagnostics**. After replacing the app with a newer build, macOS may ask again for Keychain or microphone access; that is a side effect of ad-hoc signing.
+
+## The HUD
+
+The window follows the Jarvis HUD design handoff. Built so far: the instrument chrome and design tokens, the **Command Deck** (what needs you, threads, the core, operations, the conversation, a command bar and Stop all), the **authorization lock** for every approval (exact arguments, fingerprint, impact, hold to authorize), and the **Stop-all banner**. The core is Jarvis's presence: a particle face driven only by the real voice state and measured audio levels, with a drawn sphere as the fallback. The other tabs still show their earlier screens inside the chrome. Panels the design shows that have no real data behind them yet (situation, anticipation, telemetry) are not drawn rather than mocked.
+
+The face's geometry derives from a third-party model whose licence notices were not supplied with the design; see `macos/Sources/Jarvis/Resources/Presence/Presence-NOTICE.txt` before distributing a build.
+
 ## Requirements
+
+The table below is for building from source. The disk image above needs only macOS 14 or newer and a model key.
 
 | Dependency | Requirement |
 | --- | --- |
@@ -42,6 +59,8 @@ cd jarvis-roy
 ./scripts/setup-macos.sh
 open dist/Jarvis.app
 ```
+
+`cd runtime && npm run doctor` lists anything that would stop Jarvis from starting, with the fix for each item; it never prints a credential. `./scripts/package-macos.sh` builds the self-contained app and disk image locally. `cd runtime && npm run start:all` starts the two local services without the Mac app, for development.
 
 The setup script runs `npm ci`, builds Eve, builds both Swift executables and bundles the helper. The app records the trusted checkout/runtime and Node paths at build time; it still needs that prepared checkout and Node 24. In **Settings → Providers**, save your Gateway key in your login Keychain, then restart local services. Configure the ElevenLabs key and voice ID there if desired. Moving the checkout requires rebuilding or selecting its trusted runtime path in Settings. Missing model metadata or credentials are reported explicitly; saving a credential is not a connection test.
 
@@ -193,9 +212,9 @@ swift test --package-path macos-control
 swift test --package-path macos-control -c release
 ```
 
-CI is configured to use **macos-15** for native builds and tests; the new Swift code has not been compiled on macOS in this implementation session. Linux runtime tests cover auth, failed durable commits, scope/cloud boundaries, grant revocation, archive recovery, confirmation replay, model budgets, cancellation, provider failures and launcher filtering. The separate `isolated-workers` job installs the pinned controller/image and exercises real Docker controls plus HTTP → kernel → worker integration. Its model transport is deterministic, not live inference. No test count implies live account, acoustic or numerical task acceptance. See [evaluation instructions](evaluations/README.md) for the fixed 30 tasks and fixture recording.
+CI builds the app and runs the Swift tests in debug and release on **macos-15**, renders key screens to PNG (the `jarvis-ui-snapshots` artifact), and builds and self-checks the disk images. None of that is acceptance on a physical Mac. Linux runtime tests cover auth, failed durable commits, scope/cloud boundaries, grant revocation, archive recovery, confirmation replay, model budgets, cancellation, provider failures and launcher filtering. The separate `isolated-workers` job installs the pinned controller/image and exercises real Docker controls plus HTTP → kernel → worker integration. Its model transport is deterministic, not live inference. No test count implies live account, acoustic or numerical task acceptance. See [evaluation instructions](evaluations/README.md) for the fixed 30 tasks and fixture recording.
 
-The managed cloud baseline had **316 passing tests and 21 skipped**. Additional regression tests pass during implementation; the final count is recorded by the test run rather than fixed here. In this environment, the Gateway catalog is blocked and an allowlist change is saved as an unapplied setup draft. Rootless Docker fails the actual resource-enforcement probe, so worker execution correctly remains blocked. All 30 live task evaluations remain unrun. These are open release gates, not successful acceptance results; see [current status](docs/implementation-status.md).
+The runtime suite currently has just over 700 tests, with 21 skipped because they need Docker or a paid provider; the exact count is whatever the test run prints. In this environment, the Gateway catalog is blocked and an allowlist change is saved as an unapplied setup draft. Rootless Docker fails the actual resource-enforcement probe, so worker execution correctly remains blocked. All 30 live task evaluations remain unrun. These are open release gates, not successful acceptance results; see [current status](docs/implementation-status.md).
 
 Run real isolated tests locally with `JARVIS_WORKER_DOCKER_TESTS=1 JARVIS_WORKER_CODING_TESTS=1 JARVIS_WORKER_KERNEL_TESTS=1 JARVIS_WORKER_PYTHON="$PWD/runtime/workers/.venv/bin/python" npm --prefix runtime test` after explicitly setting up both platform-pinned images. The coding profile supports offline Node/Python builds and native helpers inside the disposable sandbox; it does not download packages. Declared outputs are published separately from bounded private checkpoint scratch. Optional live fixtures spend provider credits and require explicit opt-in; see [worker tests and setup](runtime/workers/README.md). Do not put production credentials in CI.
 

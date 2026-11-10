@@ -480,13 +480,32 @@ final class AppModel: ObservableObject {
     }
 
     func stopAll() async {
+        // Voice is muted before anything is sent, so nothing more is captured or spoken while the request travels.
         muteVoice()
+        stopPhase = .requesting
         selectionRevision += 1
         await act(key: "stop-all", path: "v1/stop")
         await rooms.refresh()
+        var cloudUnconfirmed = false
         if AssistantFeatures.enabled("JARVIS_ENABLE_CLOUD", preference: "Jarvis.cloudEnabled"), RuntimeProfiles.shared.cloudProfile != nil {
             do { try await PairedCloudConnection.shared.stopCloudWork() }
-            catch { self.error = "Local stop was requested. Cloud cancellation is unconfirmed: \(error.localizedDescription)" }
+            catch { cloudUnconfirmed = true; self.error = "Local stop was requested. Cloud cancellation is unconfirmed: \(error.localizedDescription)" }
         }
+        stopPhase = Self.stopOutcome(tasks: tasks, runs: rooms.state?.runs ?? [], connected: isConnected, cloudUnconfirmed: cloudUnconfirmed)
+    }
+
+    /// Where a Stop all stands. Shown as a banner that cannot be dismissed while anything may still be running.
+    @Published private(set) var stopPhase: StopAllPhase = .idle
+
+    func dismissStopBanner() { if stopPhase == .confirmed { stopPhase = .idle } }
+
+    /// A stop is only called confirmed when nothing is left that could still be working. Being unable to reach the
+    /// service counts as unconfirmed: silence is not confirmation.
+    static func stopOutcome(tasks: [AgentTask], runs: [HarnessRun], connected: Bool, cloudUnconfirmed: Bool) -> StopAllPhase {
+        let unsettledTasks = tasks.filter(\.canCancel).count
+        let unsettledRuns = runs.filter { ["running", "paused", "waiting_question", "cancel_requested"].contains($0.status) || ($0.status == "cancelled" && !$0.cancelConfirmed) }.count
+        let pending = unsettledTasks + unsettledRuns + (cloudUnconfirmed ? 1 : 0)
+        if pending > 0 { return .unconfirmed(pending: pending) }
+        return connected ? .confirmed : .unconfirmed(pending: 1)
     }
 }

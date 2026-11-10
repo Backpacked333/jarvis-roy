@@ -199,4 +199,34 @@ final class HUDDeckTests: XCTestCase {
         XCTAssertEqual(queue.map { $0.approval.id }, ["approval_one"])
         XCTAssertEqual(queue.first?.task.id, "task_approval")
     }
+
+    // MARK: Stop all
+
+    @MainActor
+    func testAStopIsOnlyConfirmedWhenNothingCouldStillBeWorking() throws {
+        XCTAssertEqual(AppModel.stopOutcome(tasks: [], runs: [], connected: true, cloudUnconfirmed: false), .confirmed)
+        // Silence is not confirmation.
+        XCTAssertEqual(AppModel.stopOutcome(tasks: [], runs: [], connected: false, cloudUnconfirmed: false), .unconfirmed(pending: 1))
+        XCTAssertEqual(AppModel.stopOutcome(tasks: [], runs: [], connected: true, cloudUnconfirmed: true), .unconfirmed(pending: 1))
+        // A task still waiting, and a run whose cancellation was requested but not confirmed, both count.
+        var run = try RoomsFixture.load().state.runs[0]
+        XCTAssertEqual(AppModel.stopOutcome(tasks: [UISnapshotFixtures.approvalTask()], runs: [run], connected: true, cloudUnconfirmed: false), .unconfirmed(pending: 2))
+        run.status = "cancelled"; run.cancelConfirmed = false
+        XCTAssertEqual(AppModel.stopOutcome(tasks: [], runs: [run], connected: true, cloudUnconfirmed: false), .unconfirmed(pending: 1))
+        run.cancelConfirmed = true
+        XCTAssertEqual(AppModel.stopOutcome(tasks: [], runs: [run], connected: true, cloudUnconfirmed: false), .confirmed)
+        run.status = "completed"
+        XCTAssertEqual(AppModel.stopOutcome(tasks: [], runs: [run], connected: true, cloudUnconfirmed: false), .confirmed)
+    }
+
+    func testTheStopBannerNeverClaimsAnythingWasUndone() {
+        XCTAssertEqual(StopAllBanner.message(.confirmed), "STOPPED · COMPLETED ACTIONS CAN’T BE UNDONE")
+        XCTAssertEqual(StopAllBanner.message(.unconfirmed(pending: 1)), "NOT CONFIRMED · 1 ITEM MAY STILL BE ACTIVE")
+        XCTAssertEqual(StopAllBanner.message(.unconfirmed(pending: 3)), "NOT CONFIRMED · 3 ITEMS MAY STILL BE ACTIVE")
+        XCTAssertTrue(StopAllBanner.message(.requesting).contains("VOICE MUTED"))
+        for phase in [StopAllPhase.requesting, .confirmed, .unconfirmed(pending: 2)] {
+            XCTAssertFalse(StopAllBanner.message(phase).contains("UNDONE ·"))
+            XCTAssertFalse(StopAllBanner.message(phase).lowercased().contains("rolled back"))
+        }
+    }
 }

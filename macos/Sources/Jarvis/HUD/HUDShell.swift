@@ -35,6 +35,10 @@ struct HUDShell: View {
                                startPoint: .leading, endPoint: .trailing)
                     .frame(height: 1).padding(.top, 10)
                     .padding(.leading, JV.S.contentInsetLeading).padding(.trailing, JV.S.contentInsetTrailing)
+                if model.stopPhase != .idle {
+                    StopAllBanner(phase: model.stopPhase, retry: { Task { await model.stopAll() } }, dismiss: { model.dismissStopBanner() })
+                        .padding(.leading, JV.S.contentInsetLeading).padding(.trailing, JV.S.contentInsetTrailing)
+                }
                 if model.tab == .deck {
                     DeckView(model: model, voice: voice, operations: operations, decisions: decisions, presence: presence)
                         .padding(.top, 16)
