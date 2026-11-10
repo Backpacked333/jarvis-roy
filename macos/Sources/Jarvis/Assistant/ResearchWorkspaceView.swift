@@ -136,7 +136,7 @@ struct ResearchWorkspaceView: View {
                         }
                         Text("A separate model reviewed this draft. Factual verification still depends on the cited evidence and recorded checks.").font(.caption).foregroundStyle(.secondary)
                     }.padding(14).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
-                    Text(.init(result.deliverable.markdown)).textSelection(.enabled)
+                    MarkdownBlocksView(result.deliverable.markdown)
                     if !result.deliverable.unresolved.isEmpty {
                         Text("Unresolved questions").font(.headline)
                         ForEach(Array(result.deliverable.unresolved.enumerated()), id: \.offset) { _, question in Text(question).textSelection(.enabled) }

@@ -26,6 +26,13 @@ final class UISnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testMarkdownBlocks() async throws {
+        _ = try UISnapshot.requireDirectory()
+        let view = ScrollView { MarkdownBlocksView(UISnapshotFixtures.answerMarkdown).padding(28) }
+        try await assertRendered(view, size: CGSize(width: 720, height: 860), name: "markdown-blocks")
+    }
+
+    @MainActor
     func testAssistantConversation() async throws {
         _ = try UISnapshot.requireDirectory()
         let scene = UISnapshotScene()

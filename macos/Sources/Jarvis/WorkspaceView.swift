@@ -215,7 +215,8 @@ struct WorkspaceView: View {
                             ForEach(conversation.messages) { message in
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(message.role == "user" ? "YOU" : "JARVIS").font(.caption).foregroundStyle(Palette.cyan)
-                                    Text(message.text).textSelection(.enabled).lineSpacing(5)
+                                    if message.role == "user" { Text(message.text).textSelection(.enabled).lineSpacing(5) }
+                                    else { MarkdownBlocksView(message.text) }
                                 }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
                                     .background(Palette.panel, in: RoundedRectangle(cornerRadius: 12))
                             }
@@ -419,7 +420,7 @@ struct WorkspaceView: View {
                         } label: { Image(systemName: "doc.on.doc") }
                             .buttonStyle(.plain).accessibilityLabel("Copy result")
                     }.foregroundStyle(Palette.muted)
-                    Text(task.reply).font(.system(size: 14)).lineSpacing(6).textSelection(.enabled)
+                    MarkdownBlocksView(task.reply).font(.system(size: 14))
                 }.padding(22).background(Palette.panel, in: RoundedRectangle(cornerRadius: 12))
             }
             if !task.events.isEmpty {

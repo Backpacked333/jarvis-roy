@@ -218,7 +218,7 @@ private struct AssistantPresentationView: View {
             Text(presentation.title).font(.title2.weight(.medium))
             switch content.kind {
             case .text:
-                Text(.init(content.markdown ?? "")).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                MarkdownBlocksView(content.markdown ?? "")
             case .document:
                 Text("Source version \(content.sourceVersionId ?? "")").font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                 ForEach(content.passages ?? []) { passage in
