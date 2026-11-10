@@ -128,7 +128,75 @@ final class HUDDeckTests: XCTestCase {
         XCTAssertEqual(DeckData.elapsed(-4), "00:00:00")
         XCTAssertEqual(DeckData.firstName("Roy Salman"), "ROY")
         XCTAssertNil(DeckData.firstName("  "))
+        XCTAssertEqual(DeckData.voiceWord(state: .listening, consent: true), "LISTENING")
+        XCTAssertEqual(DeckData.voiceWord(state: .listening, consent: false), "OFF")
+        XCTAssertEqual(DeckData.voiceWord(state: .idle, consent: true), "STANDBY")
         let parts = HUDTopBar.clockParts(Date(timeIntervalSince1970: 1_794_217_602), timeZone: utc)
         XCTAssertEqual(parts.minutes + parts.seconds, "09:46:42")
+    }
+
+    // MARK: Authorization lock
+
+    private let emailCard = "Tool: email_service\nExact arguments (JSON): {\"action\":\"send\",\"accountId\":\"iCloud\",\"from\":\"roy@example.com\",\"to\":[\"marta@example.com\"],\"subject\":\"Walkthrough moved to Friday\",\"body\":\"Hi Marta,\\nCould we move the walkthrough to Friday at 14:00?\\nThank you.\"}"
+
+    func testTheLockShowsTheCardReadablyWithoutChangingIt() {
+        let payload = AuthorizationPayload(detail: emailCard)
+        XCTAssertEqual(payload.tool, "email_service")
+        // Short arguments in a stable, sensible order; long text set apart as prose; nothing shortened.
+        XCTAssertEqual(payload.fields.map(\.key), ["accountId", "from", "to", "subject", "action"])
+        XCTAssertEqual(payload.fields.first { $0.key == "to" }?.value, "marta@example.com")
+        XCTAssertEqual(payload.bodies.map(\.key), ["body"])
+        XCTAssertEqual(payload.bodies.first?.value, "Hi Marta,\nCould we move the walkthrough to Friday at 14:00?\nThank you.")
+        XCTAssertTrue(payload.raw.hasPrefix("{\"action\":\"send\""))
+
+        // A card that is not in the runtime's format is shown whole, never guessed at.
+        let odd = AuthorizationPayload(detail: "Something else entirely")
+        XCTAssertNil(odd.tool)
+        XCTAssertTrue(odd.fields.isEmpty && odd.bodies.isEmpty)
+        XCTAssertEqual(odd.raw, "Something else entirely")
+        let broken = AuthorizationPayload(detail: "Tool: save_note\nExact arguments (JSON): {not json")
+        XCTAssertEqual(broken.tool, "save_note")
+        XCTAssertTrue(broken.fields.isEmpty)
+        XCTAssertEqual(broken.raw, "{not json")
+
+        XCTAssertEqual(AuthorizationPayload.display(true as NSNumber), "true")
+        XCTAssertEqual(AuthorizationPayload.display(3 as NSNumber), "3")
+        XCTAssertEqual(AuthorizationPayload.display(["a", "b"]), "a, b")
+        XCTAssertEqual(AuthorizationPayload.display(["k": 1]), "{\"k\":1}")
+    }
+
+    func testTheFingerprintChangesWithAnyChangeToTheCard() {
+        let first = AuthorizationData.fingerprint(id: "approval_one", revision: 1, detail: emailCard)
+        XCTAssertEqual(first.count, 32)
+        XCTAssertEqual(first, AuthorizationData.fingerprint(id: "approval_one", revision: 1, detail: emailCard))
+        XCTAssertNotEqual(first, AuthorizationData.fingerprint(id: "approval_one", revision: 2, detail: emailCard))
+        XCTAssertNotEqual(first, AuthorizationData.fingerprint(id: "approval_one", revision: 1, detail: emailCard + " "))
+        XCTAssertNotEqual(first, AuthorizationData.fingerprint(id: "approval_two", revision: 1, detail: emailCard))
+        let grouped = AuthorizationData.grouped(first)
+        XCTAssertEqual(grouped.count, 4 * 8 + 6 + 3)
+        XCTAssertTrue(grouped.contains(" · "))
+        let cells = AuthorizationData.cells(first)
+        XCTAssertEqual(cells.count, 32)
+        XCTAssertTrue(cells.allSatisfy { (0...15).contains($0) })
+    }
+
+    func testRiskExpiryAndQueueComeFromTheCard() {
+        let irreversible = ApprovalImpact(tool: "email_service", operation: "send", risk: "irreversible", reversible: false,
+                                          egress: [.init(label: "This Mac", scope: "local"), .init(label: "The recipients", scope: "external")], facts: ["A sent email cannot be recalled."])
+        XCTAssertEqual(AuthorizationData.risk(irreversible).label, "IRREVERSIBLE")
+        XCTAssertEqual(AuthorizationData.risk(irreversible).level, .high)
+        // No description is never read as low risk.
+        XCTAssertEqual(AuthorizationData.risk(nil).label, "UNCLASSIFIED")
+        XCTAssertEqual(AuthorizationData.risk(nil).level, .medium)
+        XCTAssertLessThan(AuthorizationData.risk(ApprovalImpact(tool: "save_note", risk: "contained", egress: [], facts: [])).position, 0.33)
+
+        let now = Date(timeIntervalSince1970: 1_794_217_602)
+        XCTAssertEqual(AuthorizationData.remaining(until: "2026-11-09T10:00:30.000Z", now: now), "13:48")
+        XCTAssertNil(AuthorizationData.remaining(until: "2026-11-09T09:46:42.000Z", now: now))
+        XCTAssertNil(AuthorizationData.remaining(until: nil, now: now))
+
+        let queue = AuthorizationData.queue(tasks: [UISnapshotFixtures.approvalTask()])
+        XCTAssertEqual(queue.map { $0.approval.id }, ["approval_one"])
+        XCTAssertEqual(queue.first?.task.id, "task_approval")
     }
 }

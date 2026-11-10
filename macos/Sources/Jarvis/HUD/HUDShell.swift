@@ -22,7 +22,7 @@ struct HUDShell: View {
 
     var body: some View {
         HUDScreen(tickerText: DeckData.ticker(supervisor: supervisor.state.rawValue, connected: model.isConnected, model: model.modelName,
-                                              voice: VoicePresence.label(state: voice.state, consent: voice.cloudConsentGranted),
+                                              voice: DeckData.voiceWord(state: voice.state, consent: voice.cloudConsentGranted),
                                               operations: operations, decisions: decisions.count), scanlines: scanlines) {
             VStack(spacing: 0) {
                 HUDTopBar(model: model, voice: voice, tabs: tabs, questionCount: model.rooms.questions.count)
@@ -46,6 +46,25 @@ struct HUDShell: View {
             }
         }
         .tint(JV.C.cyan)
+        .overlay {
+            if let open = lock {
+                AuthorizationLockView(model: model, task: open.entry.task, approval: open.entry.approval, position: open.index + 1, total: queue.count,
+                                      close: { model.openDecisionID = nil })
+                    .transition(.opacity)
+            }
+        }
+        .animation(JV.M.overlayIn, value: model.openDecisionID)
+        .onChange(of: queue.map { $0.approval.id }) { _, waiting in
+            // When the open decision is settled, the next one in the queue takes its place; with none left the lock closes.
+            guard let open = model.openDecisionID, !waiting.contains(open) else { return }
+            model.openDecisionID = waiting.first
+        }
+    }
+
+    private var queue: [(task: AgentTask, approval: Approval)] { AuthorizationData.queue(tasks: model.tasks) }
+    private var lock: (entry: (task: AgentTask, approval: Approval), index: Int)? {
+        guard let id = model.openDecisionID, let index = queue.firstIndex(where: { $0.approval.id == id }) else { return nil }
+        return (queue[index], index)
     }
 }
 

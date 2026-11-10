@@ -116,14 +116,14 @@ struct CoreView: View {
             .offset(y: diameter * 0.335)
         } else {
             VStack(spacing: 6) {
-                if let kicker = words.kicker { Text(kicker).font(JV.F.hud(9)).tracking(4) }
+                if let kicker = words.kicker { Text(kicker).font(JV.F.hud(8.5)).tracking(3).lineLimit(1).minimumScaleFactor(0.6) }
                 Text(words.title).font(JV.F.hud(words.title.count > 9 ? 12 : 24, .medium)).tracking(words.title.count > 9 ? 2 : 5)
                     .minimumScaleFactor(0.6).lineLimit(2)
-                if let detail { Text(detail).font(JV.F.mono(8.5, .medium)) }
+                if let detail { Text(detail).font(JV.F.mono(8, .medium)).lineLimit(1).minimumScaleFactor(0.6) }
             }
             .foregroundStyle(JV.C.cyanInk)
             .multilineTextAlignment(.center)
-            .frame(width: diameter * 0.34)
+            .frame(width: diameter * 0.30)
         }
     }
 

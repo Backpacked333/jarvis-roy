@@ -181,6 +181,26 @@ final class UISnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testHUDAuthorizationLock() async throws {
+        _ = try UISnapshot.requireDirectory()
+        let scene = UISnapshotScene()
+        defer { scene.model.shutdown() }
+        let card = "Tool: email_service\nExact arguments (JSON): {\"action\":\"send\",\"accountId\":\"iCloud\",\"from\":\"roy@example.com\",\"to\":[\"marta@example.com\"],\"subject\":\"Walkthrough moved to Friday\",\"body\":\"Hi Marta,\\nCould we move Thursday's walkthrough to Friday at 14:00? Thursday clashes with a grant review.\\nThank you!\"}"
+        let impact = ApprovalImpact(tool: "email_service", operation: "send", risk: "irreversible", reversible: false,
+                                    egress: [.init(label: "This Mac", scope: "local"), .init(label: "Mail", scope: "automation"), .init(label: "The recipients", scope: "external")],
+                                    facts: ["Sends this exact message from the named account.", "A sent email cannot be recalled.", "Delivery is submitted, not confirmed."])
+        let approval = Approval(id: "approval_mail", title: "Send this email to marta@example.com?", detail: card,
+                                options: [ApprovalOption(id: "approve", label: "Approve"), ApprovalOption(id: "deny", label: "Deny")],
+                                reviewable: true, blockedReason: nil, kind: "approval", revision: 1, expiresAt: "2099-01-01T00:00:00.000Z", impact: impact)
+        scene.runtime.tasks = [AgentTask(id: "task_mail", conversationId: "conversation_fixture", title: "Move the venue walkthrough", status: "waiting",
+                                         reply: "", lateReply: nil, error: nil, createdAt: "3", events: [], approvals: [approval])]
+        await scene.model.refresh()
+        scene.model.tab = .deck
+        scene.model.openDecisionID = "approval_mail"
+        try await assertRendered(HUDShell(model: scene.model, voice: scene.voice, presence: false), size: CGSize(width: 1440, height: 900), name: "hud-authorization")
+    }
+
+    @MainActor
     func testHUDComponentSheet() async throws {
         _ = try UISnapshot.requireDirectory()
         let view = HUDScreen(tickerText: "BRIDGE READY · RUNTIME READY · VOICE CONSENT OFF · NO WORK RUNNING", scanlines: true) {

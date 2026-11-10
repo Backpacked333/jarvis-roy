@@ -44,6 +44,8 @@ struct DeckDecision: Identifiable, Equatable {
     let kind: Kind
     let title: String
     let origin: String
+    /// The approval, question or proposal this stands for, as the runtime identifies it.
+    let reference: String
 }
 
 enum DeckData {
@@ -161,20 +163,34 @@ enum DeckData {
         var result: [DeckDecision] = []
         for task in tasks {
             for approval in task.approvals {
-                result.append(DeckDecision(id: "approval:\(approval.id)", kind: .approval, title: approval.title, origin: task.title))
+                result.append(DeckDecision(id: "approval:\(approval.id)", kind: .approval, title: approval.title, origin: task.title, reference: approval.id))
             }
         }
         for question in questions {
             let room = rooms.first { $0.id == question.target.roomId }?.title ?? "A room"
-            result.append(DeckDecision(id: "question:\(question.id)", kind: .question, title: question.question.prompt, origin: room))
+            result.append(DeckDecision(id: "question:\(question.id)", kind: .question, title: question.question.prompt, origin: room, reference: question.id))
         }
         for proposal in proposals {
-            result.append(DeckDecision(id: "proposal:\(proposal.id)", kind: .proposal, title: "Review by voice", origin: "Voice confirmation"))
+            result.append(DeckDecision(id: "proposal:\(proposal.id)", kind: .proposal, title: "Review by voice", origin: "Voice confirmation", reference: proposal.id))
         }
         return result
     }
 
     // MARK: Ticker and top bar
+
+    /// The voice state as one word for "VOICE · …" lines, so the label never repeats the word voice.
+    static func voiceWord(state: HarnessVoiceState, consent: Bool) -> String {
+        guard consent else { return "OFF" }
+        switch state {
+        case .connecting: return "CONNECTING"
+        case .listening: return "LISTENING"
+        case .thinking: return "THINKING"
+        case .speaking: return "SPEAKING"
+        case .idle: return "STANDBY"
+        case .interrupted: return "PAUSED"
+        case .unavailable: return "UNAVAILABLE"
+        }
+    }
 
     /// The scrolling line at the foot of the HUD. Only things that are true right now.
     static func ticker(supervisor: String, connected: Bool, model: String?, voice: String, operations: [DeckOperation], decisions: Int) -> String {

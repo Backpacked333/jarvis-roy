@@ -65,6 +65,8 @@ jobs:
         if: always()
         run: test -z "$(docker ps -q --filter label=ai.jarvis.owner)"
   native-macos:
+    # macOS runners are the scarce ones. A pull request's branch push already runs this for the same commit.
+    if: github.event_name == 'push'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4

@@ -26,7 +26,7 @@ struct DeckView: View {
     }
 
     private var mode: CoreView.Mode {
-        CoreView.Mode(voice.state, wakeArmed: voice.wakeWordEnabled, decisionOnScreen: false)
+        CoreView.Mode(voice.state, wakeArmed: voice.wakeWordEnabled, decisionOnScreen: model.openDecisionID != nil)
     }
     private var entries: [AssistantThreadEntry] {
         AssistantThread.entries(turns: assistant.visibleTurns, presentations: assistant.visiblePresentations)
@@ -62,7 +62,7 @@ struct DeckView: View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
                 Rectangle().fill(LinearGradient(colors: [.clear, JV.C.cyan], startPoint: .leading, endPoint: .trailing)).frame(width: 12, height: 1)
-                Text("VOICE · \(VoicePresence.label(state: voice.state, consent: voice.cloudConsentGranted))").jvText(JV.F.panelTitle, JV.C.cyan, uppercase: true)
+                Text("VOICE · \(DeckData.voiceWord(state: voice.state, consent: voice.cloudConsentGranted))").jvText(JV.F.panelTitle, JV.C.cyan)
                 Rectangle().fill(LinearGradient(colors: [JV.C.cyan, .clear], startPoint: .leading, endPoint: .trailing)).frame(width: 12, height: 1)
             }
             Button { pressCore() } label: {
@@ -360,7 +360,9 @@ struct DeckView: View {
     private func open(_ decision: DeckDecision) {
         switch decision.kind {
         case .question: model.tab = .rooms
-        case .approval, .proposal: model.tab = AssistantFeatures.assistant ? .assistant : .workspace
+        // An approval is decided on the authorization lock, in front of everything else.
+        case .approval: model.openDecisionID = decision.reference
+        case .proposal: model.tab = AssistantFeatures.assistant ? .assistant : .workspace
         }
     }
 }

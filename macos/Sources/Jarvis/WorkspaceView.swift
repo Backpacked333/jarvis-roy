@@ -72,8 +72,10 @@ struct WorkspaceView: View {
                 }
             }
         }
-        .background(Palette.background)
+        .background(chrome ? Palette.background : Color.clear)
         .tint(Palette.cyan)
+        // Inside the HUD, any control that does not style itself takes the HUD's square buttons.
+        .buttonStyle(JarvisButtonStyle(kind: .secondary))
         .alert("Delete this memory?", isPresented: Binding(
             get: { memoryToDelete != nil },
             set: { if !$0 { memoryToDelete = nil } }

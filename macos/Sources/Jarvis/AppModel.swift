@@ -27,6 +27,8 @@ final class AppModel: ObservableObject {
     @Published var modelName = "Connecting"
     /// Whether the bridge holds a reasoning credential; nil until it has said.
     @Published private(set) var providerConfigured: Bool?
+    /// The approval shown on the full-window authorization lock, if one is open.
+    @Published var openDecisionID: String?
     @AppStorage("speakReplies") var speakReplies = true
     let voice: VoiceController
     let rooms: RoomsModel

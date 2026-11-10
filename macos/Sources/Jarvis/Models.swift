@@ -52,6 +52,19 @@ struct Approval: Decodable, Identifiable {
     var revision: Int? = nil
     var expiresAt: String? = nil
     var allowText: Bool? = nil
+    /// What approving would set in motion, as the runtime describes the tool. Absent for questions and older services.
+    var impact: ApprovalImpact? = nil
+}
+
+/// The runtime's fixed description of a tool's effect. Shown beside the exact arguments; it never decides anything.
+struct ApprovalImpact: Decodable, Equatable {
+    struct Hop: Decodable, Equatable { let label: String; let scope: String }
+    let tool: String
+    var operation: String? = nil
+    let risk: String
+    var reversible: Bool? = nil
+    let egress: [Hop]
+    let facts: [String]
 }
 
 struct ApprovalOption: Decodable, Identifiable {
