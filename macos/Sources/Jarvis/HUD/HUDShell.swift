@@ -39,7 +39,12 @@ struct HUDShell: View {
                     StopAllBanner(phase: model.stopPhase, retry: { Task { await model.stopAll() } }, dismiss: { model.dismissStopBanner() })
                         .padding(.leading, JV.S.contentInsetLeading).padding(.trailing, JV.S.contentInsetTrailing)
                 }
-                if model.tab == .deck {
+                if model.tab == .deck && (voice.isListening || voice.dictationActive) {
+                    // While you speak, the deck gives way to the words and the core.
+                    ListeningView(model: model, voice: voice, presence: presence)
+                        .padding(.top, 16)
+                        .padding(.leading, JV.S.contentInsetLeading).padding(.trailing, JV.S.contentInsetTrailing).padding(.bottom, 14)
+                } else if model.tab == .deck {
                     DeckView(model: model, voice: voice, operations: operations, decisions: decisions, presence: presence)
                         .padding(.top, 16)
                         .padding(.leading, JV.S.contentInsetLeading).padding(.trailing, JV.S.contentInsetTrailing).padding(.bottom, 14)

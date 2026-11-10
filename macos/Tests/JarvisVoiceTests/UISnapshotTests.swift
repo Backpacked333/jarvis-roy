@@ -201,6 +201,31 @@ final class UISnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testHUDListening() async throws {
+        _ = try UISnapshot.requireDirectory()
+        let scene = UISnapshotScene()
+        defer { scene.model.shutdown() }
+        scene.voice.setCloudConsent(true)
+        scene.voice.transcript = "Move the venue walkthrough to Friday and let Marta know why"
+        let view = HUDScreen(tickerText: "CAPTURE IN PROGRESS · SPEECH DRAFTS, NEVER RUNS", scanlines: true) {
+            ListeningView(model: scene.model, voice: scene.voice, presence: false)
+                .padding(.top, 30).padding(.leading, JV.S.contentInsetLeading).padding(.trailing, JV.S.contentInsetTrailing).padding(.bottom, 14)
+        }
+        try await assertRendered(view, size: CGSize(width: 1440, height: 900), name: "hud-listening")
+    }
+
+    @MainActor
+    func testHUDStopBanners() async throws {
+        _ = try UISnapshot.requireDirectory()
+        let view = VStack(spacing: 14) {
+            StopAllBanner(phase: .requesting, retry: {}, dismiss: {})
+            StopAllBanner(phase: .confirmed, retry: {}, dismiss: {})
+            StopAllBanner(phase: .unconfirmed(pending: 2), retry: {}, dismiss: {})
+        }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(JV.C.void)
+        try await assertRendered(view, size: CGSize(width: 1280, height: 220), name: "hud-stop-banners")
+    }
+
+    @MainActor
     func testHUDComponentSheet() async throws {
         _ = try UISnapshot.requireDirectory()
         let view = HUDScreen(tickerText: "BRIDGE READY · RUNTIME READY · VOICE CONSENT OFF · NO WORK RUNNING", scanlines: true) {

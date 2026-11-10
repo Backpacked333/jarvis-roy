@@ -39,7 +39,7 @@ struct ReadinessBanner: View {
     @State private var showingOutput = false
     @State private var copied = false
 
-    private var tint: Color { notice.kind == .failed ? RoomsPalette.red : notice.kind == .needsKey ? RoomsPalette.amber : RoomsPalette.cyan }
+    private var tint: Color { notice.kind == .failed ? JV.C.red : notice.kind == .needsKey ? JV.C.amber : JV.C.cyan }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -51,13 +51,13 @@ struct ReadinessBanner: View {
                         .foregroundStyle(tint).accessibilityHidden(true)
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(notice.title).font(.callout.weight(.semibold)).foregroundStyle(.white)
-                    Text(notice.message).font(.callout).foregroundStyle(RoomsPalette.muted)
+                    Text(notice.title.uppercased()).font(JV.F.hud(10.5)).tracking(2.4).foregroundStyle(tint)
+                    Text(notice.message).font(.system(size: 13)).foregroundStyle(JV.C.text1.opacity(0.85))
                         .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 }
                 Spacer(minLength: 12)
                 if notice.kind == .needsKey {
-                    Button("Add key…", action: addKey).buttonStyle(.jarvis(.primary))
+                    Button("Add key…", action: addKey).buttonStyle(.hud(.attention))
                 }
                 if notice.kind == .failed {
                     if !notice.log.isEmpty {
@@ -69,25 +69,27 @@ struct ReadinessBanner: View {
                         copied = true
                     }
                     SettingsLink { Text("Settings…") }
-                    Button("Retry", action: retry).buttonStyle(.jarvis(.primary))
+                    Button("Retry", action: retry).buttonStyle(.hud(.primary))
                 }
             }
             if showingOutput && !notice.log.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(notice.log.enumerated()), id: \.offset) { _, line in
-                        Text(line).font(.system(.caption, design: .monospaced)).foregroundStyle(.white.opacity(0.85))
+                        Text(line).font(JV.F.mono(10.5)).foregroundStyle(JV.C.text1.opacity(0.9))
                             .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                .background(Color.black.opacity(0.35))
+                .overlay(alignment: .leading) { Rectangle().fill(tint.opacity(0.5)).frame(width: 2) }
                 .accessibilityLabel("Last output from the service that failed")
             }
         }
-        .buttonStyle(.jarvis)
-        .padding(.horizontal, 18).padding(.vertical, 12)
+        .buttonStyle(.hud(.secondary))
+        .padding(.horizontal, 18).padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(tint.opacity(0.08))
+        .background(JV.C.void)
         .overlay(alignment: .bottom) { Rectangle().fill(tint.opacity(0.35)).frame(height: 1) }
         .accessibilityElement(children: .contain)
     }

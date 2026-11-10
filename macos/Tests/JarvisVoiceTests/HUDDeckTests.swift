@@ -229,4 +229,19 @@ final class HUDDeckTests: XCTestCase {
             XCTAssertFalse(StopAllBanner.message(phase).lowercased().contains("rolled back"))
         }
     }
+
+    func testListeningLabelsOnlyReportWhatWasMeasuredOrReported() {
+        XCTAssertEqual(ListeningView.captureLine(model: nil), "CLOUD CAPTURE")
+        XCTAssertEqual(ListeningView.captureLine(model: "  "), "CLOUD CAPTURE")
+        XCTAssertEqual(ListeningView.captureLine(model: "scribe_v2_realtime"), "CLOUD CAPTURE · SCRIBE_V2_REALTIME")
+        XCTAssertEqual(ListeningView.elapsed(0), "00:00.0")
+        XCTAssertEqual(ListeningView.elapsed(73.44), "01:13.4")
+        XCTAssertEqual(ListeningView.elapsed(-2), "00:00.0")
+        // Silence has no meaningful decibel figure, so none is shown.
+        XCTAssertNil(ListeningView.decibels(0))
+        XCTAssertNil(ListeningView.decibels(.nan))
+        XCTAssertEqual(ListeningView.decibels(1), "0 dBFS")
+        XCTAssertEqual(ListeningView.decibels(0.1), "-20 dBFS")
+        XCTAssertEqual(ListeningView.decibels(4), "0 dBFS")
+    }
 }
