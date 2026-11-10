@@ -244,4 +244,32 @@ final class HUDDeckTests: XCTestCase {
         XCTAssertEqual(ListeningView.decibels(0.1), "-20 dBFS")
         XCTAssertEqual(ListeningView.decibels(4), "0 dBFS")
     }
+
+    // MARK: Signals
+
+    func testSignalsFireOnlyOnRealFactsAndCarryThem() throws {
+        XCTAssertEqual(DeckData.signals(state: nil, tasks: [], servicesReady: true, hasModelKey: true), [])
+        // Unknown is not missing: no nagging before the service has said whether it has a key.
+        XCTAssertEqual(DeckData.signals(state: nil, tasks: [], servicesReady: true, hasModelKey: nil), [])
+        XCTAssertEqual(DeckData.signals(state: nil, tasks: [], servicesReady: false, hasModelKey: false), [])
+        let key = DeckData.signals(state: nil, tasks: [], servicesReady: true, hasModelKey: false)
+        XCTAssertEqual(key.map(\.action), [.openSetup])
+
+        var state = try RoomsFixture.load().state
+        // A room with a run in progress produces no "start it" suggestion.
+        XCTAssertEqual(DeckData.signals(state: state, tasks: [], servicesReady: true, hasModelKey: true), [])
+        state.runs = []; state.questions = []
+        let ready = try XCTUnwrap(DeckData.signals(state: state, tasks: [], servicesReady: true, hasModelKey: true).first)
+        XCTAssertEqual(ready.action, .openRoom(state.rooms[0].id))
+        XCTAssertEqual(ready.actionLabel, "REVIEW START")
+        XCTAssertTrue(ready.because.contains("plan rev 1 accepted"))
+        XCTAssertTrue(ready.sentence.contains("Offline website exercise"))
+        // The reason says so when workers are not set up, rather than implying a start would work.
+        state.worker.available = false
+        XCTAssertTrue(try XCTUnwrap(DeckData.signals(state: state, tasks: [], servicesReady: true, hasModelKey: true).first).because.contains("workers not set up"))
+
+        state.plans[0].status = "draft"
+        XCTAssertEqual(DeckData.signals(state: state, tasks: [], servicesReady: true, hasModelKey: true).first?.actionLabel, "REVIEW")
+        XCTAssertEqual(DeckData.signals(state: state, tasks: [], servicesReady: true, hasModelKey: false, limit: 1).count, 1)
+    }
 }

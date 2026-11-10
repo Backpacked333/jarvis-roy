@@ -29,6 +29,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var providerConfigured: Bool?
     /// The approval shown on the full-window authorization lock, if one is open.
     @Published var openDecisionID: String?
+    /// Set to ask the window to show setup, for example from a deck signal.
+    @Published var setupRequested = false
     @AppStorage("speakReplies") var speakReplies = true
     let voice: VoiceController
     let rooms: RoomsModel

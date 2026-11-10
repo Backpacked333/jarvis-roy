@@ -125,6 +125,9 @@ private struct JarvisSceneHost: View {
         .onChange(of: supervisor.state) { _, state in
             if state == .ready { model.startObserving() }
         }
+        .onChange(of: model.setupRequested) { _, requested in
+            if requested { setupVisible = true; model.setupRequested = false }
+        }
         .onChange(of: scenePhase) { _, phase in model.setApplicationActive(phase == .active) }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)) { _ in model.muteVoice() }
     }

@@ -48,7 +48,68 @@ struct DeckDecision: Identifiable, Equatable {
     let reference: String
 }
 
+/// Something Jarvis noticed in its own state that you may want to act on next. Each one is produced by a fixed
+/// rule over real facts, carries the facts that triggered it, and can only open an existing screen.
+/// There is no confidence score: a rule either fired or it did not, and a number would pretend otherwise.
+struct DeckSignal: Identifiable, Equatable {
+    enum Action: Equatable {
+        case openRoom(String)       // show the room; starting or accepting stays a separate, explicit step there
+        case openSetup
+        case openThread
+    }
+    let id: String
+    let icon: String
+    let sentence: String
+    /// The facts behind it, for the BECAUSE line.
+    let because: String
+    let actionLabel: String
+    let action: Action
+}
+
 enum DeckData {
+    // MARK: Signals
+
+    /// At most `limit` signals, most actionable first. Empty when nothing in the app's state calls for one.
+    static func signals(state: HarnessState?, tasks: [AgentTask], servicesReady: Bool, hasModelKey: Bool?, limit: Int = 3) -> [DeckSignal] {
+        var result: [DeckSignal] = []
+        if servicesReady, hasModelKey == false {
+            result.append(DeckSignal(id: "key", icon: "key", sentence: "Add a model key so Jarvis can answer.",
+                                     because: "local services running · no key saved", actionLabel: "ADD KEY", action: .openSetup))
+        }
+        let interrupted = tasks.filter { $0.status == "interrupted" }
+        if let task = interrupted.first {
+            result.append(DeckSignal(id: "interrupted:\(task.id)", icon: "exclamationmark.arrow.circlepath",
+                                     sentence: "“\(String(task.title.prefix(60)))” was interrupted. Check it before continuing; nothing is replayed.",
+                                     because: interrupted.count == 1 ? "1 interrupted task · outcome not confirmed" : "\(interrupted.count) interrupted tasks · outcome not confirmed",
+                                     actionLabel: "OPEN", action: .openThread))
+        }
+        if let state {
+            for room in state.rooms where room.status != "archived" {
+                let runs = state.runs.filter { $0.roomId == room.id }.sorted { $0.createdAt > $1.createdAt }
+                let plans = state.plans.filter { $0.roomId == room.id }.sorted { $0.revision > $1.revision }
+                if runs.isEmpty, let plan = plans.first(where: { $0.status == "accepted" }) {
+                    let workers = state.worker.available ? "workers ready" : "workers not set up"
+                    let accepted = plan.acceptedAt.map { clock($0) } ?? "earlier"
+                    result.append(DeckSignal(id: "ready:\(plan.id)", icon: "bolt", sentence: "\(room.title) has an accepted plan that has not been started.",
+                                             because: "plan rev \(plan.revision) accepted \(accepted) · \(workers)",
+                                             actionLabel: "REVIEW START", action: .openRoom(room.id)))
+                } else if runs.isEmpty, let plan = plans.first(where: { $0.status == "draft" }) {
+                    result.append(DeckSignal(id: "draft:\(plan.id)", icon: "square.and.pencil", sentence: "\(room.title) has a draft plan waiting for your review.",
+                                             because: "draft rev \(plan.revision) written \(clock(plan.createdAt)) · nothing runs until you accept and start",
+                                             actionLabel: "REVIEW", action: .openRoom(room.id)))
+                } else if let run = runs.first, run.status == "completed" {
+                    let sealed = state.artifacts.filter { $0.roomId == room.id }.count
+                    if sealed > 0 {
+                        result.append(DeckSignal(id: "done:\(run.id)", icon: "lock.doc", sentence: "\(room.title) finished. Its results are ready to read.",
+                                                 because: "run completed \(clock(run.updatedAt)) · " + (sealed == 1 ? "1 sealed output" : "\(sealed) sealed outputs"),
+                                                 actionLabel: "OPEN", action: .openRoom(room.id)))
+                    }
+                }
+            }
+        }
+        return Array(result.prefix(max(0, limit)))
+    }
+
     // MARK: Operations
 
     static func operations(from state: HarnessState?, now: Date = Date()) -> [DeckOperation] {

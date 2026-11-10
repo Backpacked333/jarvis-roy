@@ -8,6 +8,7 @@ struct DeckView: View {
     @ObservedObject var voice: VoiceController
     @ObservedObject private var rooms: RoomsModel
     @ObservedObject private var assistant: AssistantModel
+    @ObservedObject private var supervisor = RuntimeSupervisor.shared
     let operations: [DeckOperation]
     let decisions: [DeckDecision]
     var presence: Bool
@@ -40,7 +41,7 @@ struct DeckView: View {
             let coreHeight = max(240, geometry.size.height - 142 - JV.S.gutter - 96)
             VStack(spacing: JV.S.gutter) {
                 HStack(alignment: .top, spacing: JV.S.gutter) {
-                    VStack(spacing: JV.S.gutter) { needsYou; threads; Spacer(minLength: 0) }.frame(width: column)
+                    VStack(spacing: JV.S.gutter) { needsYou; anticipating; threads; Spacer(minLength: 0) }.frame(width: column)
                     center(diameter: min(520, centerWidth - 8, coreHeight)).frame(width: centerWidth)
                     VStack(spacing: JV.S.gutter) { operationsPanel; Spacer(minLength: 0) }.frame(width: column)
                 }
@@ -147,9 +148,44 @@ struct DeckView: View {
         }
     }
 
+    /// Shown only when a rule has something to say; an empty panel here would be decoration.
+    @ViewBuilder private var anticipating: some View {
+        let signals = DeckData.signals(state: rooms.state, tasks: model.tasks, servicesReady: supervisor.state == .ready || supervisor.externallyManaged,
+                                       hasModelKey: supervisor.externallyManaged ? model.providerConfigured : supervisor.providerConfigured)
+        if !signals.isEmpty {
+            HUDPanel(index: "02", title: "Anticipating", meta: signals.count == 1 ? "1 SIGNAL" : "\(signals.count) SIGNALS") {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(signals) { signal in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: signal.icon).font(.system(size: 16)).foregroundStyle(JV.C.cyan)
+                                .frame(width: 28, height: 28).background(JV.C.fill2).overlay(Rectangle().stroke(JV.C.lineActive, lineWidth: 1))
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(signal.sentence).jvText(JV.F.body).fixedSize(horizontal: false, vertical: true)
+                                (Text("BECAUSE ").foregroundColor(JV.C.text3) + Text(signal.because).foregroundColor(JV.C.text2))
+                                    .font(JV.F.mono(9.5)).fixedSize(horizontal: false, vertical: true)
+                                Button(signal.actionLabel) { perform(signal.action) }
+                                    .buttonStyle(.plain).font(JV.F.hud(9)).tracking(1.8).foregroundStyle(JV.C.cyan)
+                                    .padding(.horizontal, 8).padding(.vertical, 4).overlay(Rectangle().stroke(JV.C.cyan.opacity(0.4), lineWidth: 1))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A signal can only take you somewhere. Accepting, starting and sending remain their own explicit steps there.
+    private func perform(_ action: DeckSignal.Action) {
+        switch action {
+        case .openRoom(let id): rooms.selectedRoomId = id; model.tab = .rooms
+        case .openSetup: model.setupRequested = true
+        case .openThread: model.tab = AssistantFeatures.assistant ? .assistant : .workspace
+        }
+    }
+
     private var threads: some View {
         let sessions = assistant.sessions.sorted { $0.updatedAt > $1.updatedAt }
-        return HUDPanel(index: "02", title: "Threads", meta: sessions.isEmpty ? nil : "\(sessions.count)") {
+        return HUDPanel(index: "03", title: "Threads", meta: sessions.isEmpty ? nil : "\(sessions.count)") {
             if sessions.isEmpty {
                 quiet("No conversations yet. Say or type something below.")
             } else {
@@ -173,7 +209,7 @@ struct DeckView: View {
 
     private var operationsPanel: some View {
         let available = rooms.state?.worker.available == true
-        return HUDPanel(index: "03", title: "Operations", meta: available ? "WORKERS READY · NO NET" : "WORKERS OFF", metaLED: available ? .ok : .off) {
+        return HUDPanel(index: "04", title: "Operations", meta: available ? "WORKERS READY · NO NET" : "WORKERS OFF", metaLED: available ? .ok : .off) {
             if operations.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     quiet("No rooms yet. A room plans and runs longer work in isolation.")
