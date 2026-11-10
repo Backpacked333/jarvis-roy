@@ -19,9 +19,9 @@ private struct JarvisButtonBody<Label: View>: View {
 
     var body: some View {
         label()
-            .font(.system(size: JarvisTheme.TextSize.label, weight: .medium))
+            .font(JV.F.hud(10)).tracking(1.8).textCase(.uppercase)
             .lineLimit(1)
-            .padding(.horizontal, kind == .quiet ? JarvisTheme.Space.s : 14).padding(.vertical, 7)
+            .padding(.horizontal, kind == .quiet ? JarvisTheme.Space.s : 14).frame(minHeight: 30)
             .foregroundStyle(foreground)
             .background(background, in: RoundedRectangle(cornerRadius: JarvisTheme.Radius.control))
             .overlay(RoundedRectangle(cornerRadius: JarvisTheme.Radius.control).stroke(border, lineWidth: 1))

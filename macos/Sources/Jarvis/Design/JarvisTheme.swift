@@ -19,10 +19,11 @@ enum JarvisTheme {
         static let onAccent = JV.C.cyanInk
     }
 
+    /// The HUD is square. These remain only so older screens compile while they are moved across.
     enum Radius {
-        static let control: CGFloat = 8
-        static let card: CGFloat = 12
-        static let panel: CGFloat = 18
+        static let control: CGFloat = 0
+        static let card: CGFloat = 0
+        static let panel: CGFloat = 0
     }
 
     enum Space {

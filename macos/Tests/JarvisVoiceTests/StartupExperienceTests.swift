@@ -154,17 +154,22 @@ final class StartupExperienceTests: XCTestCase {
         XCTAssertEqual(GuidedSetupView.voiceCheck(keySaved: true, voiceID: "voice", microphone: .restricted), .failed)
     }
 
-    func testTabsLeadWithTheConversationAndKeepTheOlderViewLast() {
+    func testTabsLeadWithTheDeckAndKeepTheOlderViewLast() {
         XCTAssertEqual(Set(WorkspaceTab.ordered), Set(WorkspaceTab.allCases))
         XCTAssertEqual(WorkspaceTab.ordered.count, WorkspaceTab.allCases.count)
-        XCTAssertEqual(WorkspaceTab.available(assistant: true).first, .assistant)
+        XCTAssertEqual(Array(WorkspaceTab.available(assistant: true).prefix(2)), [.deck, .assistant])
         XCTAssertEqual(WorkspaceTab.available(assistant: true).last, .workspace)
+        // Without the assistant experience there is nothing for the deck or the thread to talk to.
         XCTAssertFalse(WorkspaceTab.available(assistant: false).contains(.assistant))
-        XCTAssertEqual(WorkspaceTab.available(assistant: false).first, .today)
+        XCTAssertFalse(WorkspaceTab.available(assistant: false).contains(.deck))
         // ⌘1 to ⌘9 is all the menu can offer.
         XCTAssertLessThanOrEqual(WorkspaceTab.ordered.count, 9)
         XCTAssertEqual(WorkspaceTab.workspace.title, "Classic threads")
-        XCTAssertEqual(WorkspaceTab.assistant.title, "Assistant")
+        // The HUD's bar: six tabs, with privacy inside Trust and the classic view only while it is needed.
+        XCTAssertEqual(WorkspaceTab.hud(assistant: true, classic: false), [.deck, .assistant, .rooms, .memory, .today, .capabilities])
+        XCTAssertEqual(WorkspaceTab.hud(assistant: true, classic: true).last, .workspace)
+        XCTAssertEqual(WorkspaceTab.hud(assistant: false, classic: false), [.rooms, .memory, .today, .capabilities, .workspace])
+        XCTAssertEqual(WorkspaceTab.privacy.hudTitle, WorkspaceTab.capabilities.hudTitle)
     }
 
     func testBundledFontsAreAvailableOnceRegistered() {
@@ -212,7 +217,9 @@ final class StartupExperienceTests: XCTestCase {
         XCTAssertTrue(page.contains("default-src 'none'"))
         XCTAssertTrue(page.contains("script-src 'nonce-abc123'"))
         XCTAssertFalse(page.contains("unsafe-inline"))
-        XCTAssertFalse(page.contains("http"))
+        // No address of any kind appears in the page: there is nothing for it to load.
+        XCTAssertFalse(page.contains("http://"))
+        XCTAssertFalse(page.contains("https://"))
         XCTAssertNil(PresenceDocument.document(data: "x</script><script>alert(1)", engine: "", nonce: "abc123"))
         XCTAssertNil(PresenceDocument.document(data: "", engine: "y</SCRIPT>", nonce: "abc123"))
         XCTAssertNil(PresenceDocument.document(data: "", engine: "", nonce: "a b'"))

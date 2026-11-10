@@ -146,6 +146,41 @@ final class UISnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testHUDDeck() async throws {
+        _ = try UISnapshot.requireDirectory()
+        let scene = UISnapshotScene(rooms: RoomsTestService(try RoomsFixture.load()))
+        defer { scene.model.shutdown() }
+        scene.runtime.tasks = [UISnapshotFixtures.approvalTask()]
+        await scene.model.refresh()
+        await scene.model.rooms.refresh()
+        try scene.model.assistant.apply(try UISnapshotFixtures.richConversation())
+        scene.model.tab = .deck
+        try await assertRendered(HUDShell(model: scene.model, voice: scene.voice, presence: false), size: CGSize(width: 1440, height: 900), name: "hud-deck")
+    }
+
+    @MainActor
+    func testHUDDeckEmptyAtMinimumSize() async throws {
+        _ = try UISnapshot.requireDirectory()
+        let scene = UISnapshotScene()
+        defer { scene.model.shutdown() }
+        await scene.model.refresh()
+        scene.model.tab = .deck
+        try await assertRendered(HUDShell(model: scene.model, voice: scene.voice, presence: false), size: CGSize(width: 1280, height: 800), name: "hud-deck-empty")
+    }
+
+    @MainActor
+    func testHUDThread() async throws {
+        _ = try UISnapshot.requireDirectory()
+        let scene = UISnapshotScene()
+        defer { scene.model.shutdown() }
+        await scene.model.refresh()
+        try scene.model.assistant.apply(try UISnapshotFixtures.richConversation())
+        scene.model.tab = .assistant
+        scene.model.assistant.followPresentations()
+        try await assertRendered(HUDShell(model: scene.model, voice: scene.voice, presence: false), size: CGSize(width: 1440, height: 900), name: "hud-thread")
+    }
+
+    @MainActor
     func testHUDComponentSheet() async throws {
         _ = try UISnapshot.requireDirectory()
         let view = HUDScreen(tickerText: "BRIDGE READY · RUNTIME READY · VOICE CONSENT OFF · NO WORK RUNNING", scanlines: true) {

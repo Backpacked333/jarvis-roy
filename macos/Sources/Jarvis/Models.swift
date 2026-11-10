@@ -65,16 +65,34 @@ struct MemoryEntry: Decodable, Identifiable {
 }
 
 enum WorkspaceTab: String, CaseIterable, Identifiable {
-    case today = "Today", assistant = "Assistant", rooms = "Rooms", workspace = "Workspace", capabilities = "Capabilities", memory = "Memory", privacy = "Privacy"
+    case deck = "Deck", today = "Today", assistant = "Assistant", rooms = "Rooms", workspace = "Workspace", capabilities = "Capabilities", memory = "Memory", privacy = "Privacy"
     var id: String { rawValue }
     /// What the person sees. The older task-thread view is kept for existing threads, under a name that says so.
     var title: String { self == .workspace ? "Classic threads" : rawValue }
-    /// Sidebar and ⌘1–⌘7 order: the conversation first, the older thread view last.
-    static let ordered: [WorkspaceTab] = [.assistant, .today, .rooms, .memory, .capabilities, .privacy, .workspace]
-    /// The tabs offered, in order. The Assistant tab exists only while that experience is on.
-    static func available(assistant: Bool) -> [WorkspaceTab] { ordered.filter { $0 != .assistant || assistant } }
+    /// The name on the HUD's top bar, where capabilities and privacy share one tab.
+    var hudTitle: String {
+        switch self {
+        case .deck: return "DECK"
+        case .assistant: return "THREAD"
+        case .rooms: return "ROOMS"
+        case .memory: return "MEMORY"
+        case .today: return "TODAY"
+        case .capabilities, .privacy: return "TRUST"
+        case .workspace: return "CLASSIC"
+        }
+    }
+    /// Order for the Go menu's ⌘1–⌘8: the deck and the conversation first, the older thread view last.
+    static let ordered: [WorkspaceTab] = [.deck, .assistant, .rooms, .memory, .today, .capabilities, .privacy, .workspace]
+    /// The tabs offered, in order. The deck and the Assistant tab exist only while that experience is on.
+    static func available(assistant: Bool) -> [WorkspaceTab] { ordered.filter { ($0 != .assistant && $0 != .deck) || assistant } }
+    /// The HUD's top bar. Privacy is reached inside Trust; the classic view is offered while it is the only
+    /// conversation surface, or still holds threads.
+    static func hud(assistant: Bool, classic: Bool) -> [WorkspaceTab] {
+        (assistant ? [.deck, .assistant] : []) + [.rooms, .memory, .today, .capabilities] + (classic || !assistant ? [.workspace] : [])
+    }
     var icon: String {
         switch self {
+        case .deck: return "scope"
         case .today: return "sun.max"
         case .assistant: return "waveform"
         case .rooms: return "circle.hexagongrid"

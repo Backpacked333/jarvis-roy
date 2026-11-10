@@ -47,13 +47,14 @@ struct CoreView: View {
         TimelineView(.animation(minimumInterval: 1 / 30, paused: still)) { timeline in
             let t = still ? 0 : timeline.date.timeIntervalSinceReferenceDate
             ZStack {
-                sphere.opacity(showsFace ? 0.28 : 1)
+                sphere.scaleEffect(showsFace ? 1.5 : 1).opacity(showsFace ? 0.22 : 1)
                 if presence {
                     PresenceFaceView(state: PresenceState(mode: mode, inputRMS: inputRMS, playbackRMS: playbackRMS,
                                                           still: reduceMotion || scenePhase != .active), ready: $faceReady)
-                        .frame(width: diameter * 0.72, height: diameter * 0.72)
-                        // The face fades into the core's edge instead of being cut off by it.
-                        .mask(RadialGradient(colors: [.black, .black, .clear], center: .center, startRadius: 0, endRadius: diameter * 0.36))
+                        // The face is given the space inside the waveform ring, a little more than the sphere it replaces.
+                        .frame(width: diameter * 0.56, height: diameter * 0.56)
+                        // It fades into the core's edge instead of being cut off by it.
+                        .mask(RadialGradient(colors: [.black, .black, .clear], center: .center, startRadius: 0, endRadius: diameter * 0.28))
                         .opacity(faceReady ? 1 : 0)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
@@ -69,14 +70,15 @@ struct CoreView: View {
     }
 
     private var sphere: some View {
-        let r = diameter * 0.36
+        // The handoff insets the sphere 166 pt inside a 520 pt core, so it sits within the reticle and waveform.
+        let r = diameter * 0.18
         return Circle()
             .fill(RadialGradient(colors: hot
                 ? [Color(hex: 0xF2FEFE), Color(hex: 0x9AEDF0), Color(hex: 0x2A8A93), Color(hex: 0x061E24)]
                 : [JV.C.cyan50.opacity(0.75), Color(hex: 0x8FEAEE).opacity(0.45), JV.C.cyan900.opacity(0.55), Color(hex: 0x041014).opacity(0.9)],
                 center: UnitPoint(x: 0.36, y: 0.30), startRadius: 0, endRadius: r * 1.1))
             .frame(width: r * 2, height: r * 2)
-            .shadow(color: tint.opacity(hot ? 0.6 : 0.4), radius: hot ? 50 : 30)
+            .shadow(color: tint.opacity(hot ? 0.6 : 0.4), radius: (hot ? 50 : 30) * min(1, diameter / 520))
             .saturation(mode == .stopped || mode == .unavailable ? 0 : 1)
             .animation(JV.M.state, value: mode)
     }
@@ -111,16 +113,17 @@ struct CoreView: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 6)
             .background(JV.C.void.opacity(0.55))
-            .offset(y: diameter * 0.30)
+            .offset(y: diameter * 0.335)
         } else {
             VStack(spacing: 6) {
                 if let kicker = words.kicker { Text(kicker).font(JV.F.hud(9)).tracking(4) }
-                Text(words.title).font(JV.F.hud(words.title.count > 10 ? 16 : 30, .medium)).tracking(words.title.count > 10 ? 3 : 6)
+                Text(words.title).font(JV.F.hud(words.title.count > 9 ? 12 : 24, .medium)).tracking(words.title.count > 9 ? 2 : 5)
+                    .minimumScaleFactor(0.6).lineLimit(2)
                 if let detail { Text(detail).font(JV.F.mono(8.5, .medium)) }
             }
             .foregroundStyle(JV.C.cyanInk)
             .multilineTextAlignment(.center)
-            .frame(width: diameter * 0.6)
+            .frame(width: diameter * 0.34)
         }
     }
 

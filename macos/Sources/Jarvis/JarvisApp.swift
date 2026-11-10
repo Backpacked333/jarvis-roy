@@ -61,7 +61,7 @@ struct JarvisApp: App {
         Window("Jarvis", id: "main") {
             JarvisSceneHost(model: model, delegate: delegate)
         }
-        .defaultSize(width: 1280, height: 840)
+        .defaultSize(width: 1440, height: 900)
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .newItem) {
@@ -102,9 +102,10 @@ private struct JarvisSceneHost: View {
                                 retry: { Task { await supervisor.start() } },
                                 diagnostics: { supervisor.diagnosticsReport() })
             }
-            WorkspaceView(model: model, voice: model.voice)
+            HUDShell(model: model, voice: model.voice)
         }
-        .frame(minWidth: 1050, minHeight: 720)
+        // The handoff's minimum: below this the deck's columns no longer fit beside the core.
+        .frame(minWidth: 1280, minHeight: 800)
         .preferredColorScheme(.dark)
         .task {
             await supervisor.start()

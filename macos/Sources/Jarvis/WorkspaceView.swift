@@ -15,6 +15,9 @@ struct WorkspaceView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var voice: VoiceController
     @ObservedObject private var supervisor = RuntimeSupervisor.shared
+    /// False when the HUD shell supplies the navigation and header, and this view only hosts a tab's content.
+    var chrome = true
+    @State private var showingPrivacy = false
     @State private var memoryToDelete: MemoryEntry?
     @State private var questionAnswers: [String: String] = [:]
     @AppStorage("Jarvis.assistantEnabled") private var assistantPreference = false
@@ -25,11 +28,15 @@ struct WorkspaceView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            sidebar
-            Rectangle().fill(Palette.line).frame(width: 1)
+            if chrome {
+                sidebar
+                Rectangle().fill(Palette.line).frame(width: 1)
+            }
             VStack(spacing: 0) {
-                header
-                Rectangle().fill(Palette.line).frame(height: 1)
+                if chrome {
+                    header
+                    Rectangle().fill(Palette.line).frame(height: 1)
+                }
                 if let error = model.error {
                     notice(error, icon: "exclamationmark.triangle", color: Palette.amber)
                 }
@@ -41,6 +48,11 @@ struct WorkspaceView: View {
                     notice(model.connectionError ?? "Connecting to the local agent service…", icon: "network", color: Palette.amber)
                 }
                 switch model.tab {
+                case .deck:
+                    DeckView(model: model, voice: voice, operations: DeckData.operations(from: model.rooms.state),
+                             decisions: DeckData.decisions(tasks: model.tasks, questions: model.rooms.questions, rooms: model.rooms.state?.rooms ?? [],
+                                                           proposals: model.assistant.visibleProposals), presence: false)
+                        .padding(18)
                 case .today: TodayWorkspaceView(app: model, assistant: model.assistant)
                 case .assistant: AssistantWorkspaceView(model: model, assistant: model.assistant, voice: voice)
                 case .rooms:
@@ -49,7 +61,8 @@ struct WorkspaceView: View {
                         onReviewApproval: { approval in Task { await model.reviewApproval(approval) } },
                         observationOwnership: .application)
                 case .workspace: workspace
-                case .capabilities: capabilities
+                case .capabilities:
+                    if chrome { capabilities } else { trust }
                 case .memory:
                     if memoryAvailable {
                         MemoryWorkspaceView(projectID: model.assistant.selectedSession?.focus.projectID, client: model.assistant.client)
@@ -469,6 +482,18 @@ struct WorkspaceView: View {
                 Text("Turning a capability on does not grant macOS permission. macOS asks separately, and names Jarvis (or the terminal, if you used the developer launcher); grant only the identity you recognize.").font(.caption).foregroundStyle(Palette.muted)
             }.padding(32).frame(maxWidth: 850, alignment: .leading)
         }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The HUD's Trust tab: what Jarvis may use, and what leaves this Mac, behind one switch.
+    private var trust: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button("Capabilities") { showingPrivacy = false }.buttonStyle(.hud(showingPrivacy ? .ghost : .secondary))
+                Button("Privacy") { showingPrivacy = true }.buttonStyle(.hud(showingPrivacy ? .secondary : .ghost))
+                Spacer()
+            }.padding(.horizontal, 32).padding(.top, 14)
+            if showingPrivacy { privacy } else { capabilities }
+        }
     }
 
     private var privacy: some View {
