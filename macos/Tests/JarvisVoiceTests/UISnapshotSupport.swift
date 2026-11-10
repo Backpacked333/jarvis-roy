@@ -27,12 +27,15 @@ enum UISnapshot {
                                       settle: Duration = .milliseconds(700)) async throws -> Int {
         let directory = try requireDirectory()
         _ = NSApplication.shared
-        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).environment(\.colorScheme, .dark))
+        // Sheets and panels draw no background of their own; the window supplies it in the app.
+        let dark = NSAppearance(named: .darkAqua)
+        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height)
+            .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .dark))
         host.frame = NSRect(origin: .zero, size: size)
+        host.appearance = dark
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = NSColor(calibratedWhite: 0.07, alpha: 1)
+        window.appearance = dark
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -30_000, y: -30_000))
         window.orderFrontRegardless()
@@ -42,7 +45,8 @@ enum UISnapshot {
         guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
             throw SnapshotFailure.noBitmap(name)
         }
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        if let dark { dark.performAsCurrentDrawingAppearance { host.cacheDisplay(in: host.bounds, to: bitmap) } }
+        else { host.cacheDisplay(in: host.bounds, to: bitmap) }
         guard let png = bitmap.representation(using: .png, properties: [:]) else { throw SnapshotFailure.noBitmap(name) }
         try png.write(to: directory.appendingPathComponent(name + ".png"), options: .atomic)
         return distinctColours(in: bitmap)
