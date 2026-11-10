@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { access, mkdtemp, open, rm } from 'node:fs/promises';
+import { access, mkdtemp, open, realpath, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -38,7 +38,8 @@ async function smoke(assistantEnabled) {
     probe.listen(port, '127.0.0.1', () => probe.close(error => error ? reject(error) : resolve()));
   });
 
-  const directory = await mkdtemp(join(tmpdir(), 'jarvis-runtime-smoke-'));
+  // Resolved first: on macOS the temporary directory sits behind a symlink, which a data directory may not.
+  const directory = await mkdtemp(join(await realpath(tmpdir()), 'jarvis-runtime-smoke-'));
   const token = randomBytes(32).toString('hex');
   const nativeToken = assistantEnabled ? randomBytes(32).toString('hex') : undefined;
   const source = { ...process.env, JARVIS_LOCAL_TOKEN: token, JARVIS_DATA_DIR: directory };

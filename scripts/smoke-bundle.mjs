@@ -8,7 +8,7 @@
 // --turn additionally sends one real question and requires an answer. It needs
 // AI_GATEWAY_API_KEY and spends a few cents; without it no provider is called.
 import { createHash } from 'node:crypto';
-import { lstat, mkdtemp, readdir, readFile, readlink, rm, stat } from 'node:fs/promises';
+import { lstat, mkdtemp, readdir, readFile, readlink, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -76,7 +76,8 @@ export async function smokeBundle(target, { turn = false, env = process.env } = 
   }
   if (turn && !(env.AI_GATEWAY_API_KEY ?? '').trim()) throw new Error('--turn needs AI_GATEWAY_API_KEY.');
   const before = await fingerprint(resources);
-  const data = await mkdtemp(join(tmpdir(), 'jarvis-bundle-smoke-'));
+  // On macOS the temporary directory sits behind a symlink, and Jarvis refuses a data directory reached through one.
+  const data = await mkdtemp(join(await realpath(tmpdir()), 'jarvis-bundle-smoke-'));
   const source = { ...env };
   for (const name of Object.keys(source)) {
     // Start from a clean slate so the check does not depend on, or leak into, a developer's own settings.
