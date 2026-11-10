@@ -20,6 +20,8 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
     @Published var captureMode: VoiceCaptureMode = .conversation
     @Published private(set) var dictationActive = false
     @Published private(set) var dictationPaused = false
+    /// The speech model named by the voice service's last status report; nil until it reports one.
+    @Published private(set) var reportedVoiceModel: String?
     var onDictationRetained: ((HarnessVoiceUtterance) -> Void)?
     private var dictation: VoiceDictation?
     private var finishDictationRequested = false
@@ -723,6 +725,7 @@ final class VoiceController: NSObject, ObservableObject, HarnessVoiceControlling
         if continuousConnectionEnabled, providerPreflight.reusable(at: now()), let cachedProviderStatus { return cachedProviderStatus }
         let ticket = turn.generation
         let result = try await transport.status()
+        reportedVoiceModel = VoicePresence.modelLabel(result.model)
         guard current(ticket) else { return result }
         if result.status != "unavailable" { providerPreflight.verified(at: now()); cachedProviderStatus = result }
         else { providerPreflight.reset(); cachedProviderStatus = nil }

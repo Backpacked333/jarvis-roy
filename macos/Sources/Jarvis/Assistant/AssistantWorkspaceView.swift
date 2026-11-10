@@ -46,41 +46,7 @@ struct AssistantWorkspaceView: View {
                 if surfaceMode != .hidden { surface.frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity) }
             }
             Divider()
-            VStack(spacing: 10) {
-                if let selection = assistant.visualSelection {
-                    HStack { Label(selection.label, systemImage: "scope"); Text("Bound to displayed revision").foregroundStyle(.secondary); Spacer(); Button("Clear") { assistant.selectVisual(nil) } }.font(.caption)
-                }
-                HStack {
-                    Picker("Next turn", selection: $assistant.intent) {
-                        Text("Continue").tag("continue")
-                        Text("Ask alongside work").tag("side_question")
-                        Text("Propose goal change").tag("redirect_work")
-                    }.labelsHidden().frame(maxWidth: 230)
-                    Picker("Capture", selection: $voice.captureMode) {
-                        ForEach(VoiceCaptureMode.allCases) { mode in Text(mode.title).tag(mode) }
-                    }.labelsHidden().frame(maxWidth: 220).disabled(voice.captureInProgress || voice.dictationActive)
-                    VoicePauseSettingsView(mode: voice.captureMode)
-                    Spacer()
-                    if voice.dictationPaused { Button("Continue dictation") { Task { await voice.continueDictation() } } }
-                    if voice.isListening {
-                        Button("Still thinking") { voice.holdConversationPause() }
-                    }
-                    if voice.isListening || voice.dictationActive { Button("Finish") { voice.finishListening() } }
-                    Button { Task { await model.startManualListening() } } label: { Label("Speak", systemImage: "mic.fill") }
-                        .disabled(!voice.cloudConsentGranted || assistant.selectedSession == nil || voice.dictationActive)
-                    Button("Stop speaking") { assistant.muteNarration(); voice.stopSpeaking(); Task { await assistant.invalidateVoiceReview() } }
-                }
-                HStack(alignment: .bottom) {
-                    TextField("Ask Jarvis, or continue by voice…", text: $assistant.draft, axis: .vertical).id(assistant.selectedSessionID)
-                        .disabled(assistant.selectedSession == nil)
-                        .textFieldStyle(.plain).lineLimit(1...5).padding(12)
-                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-                    Button { Task { await assistant.sendDraft() } } label: { Image(systemName: "arrow.up.circle.fill").font(.title) }
-                        .buttonStyle(.plain).disabled(assistant.submitting || assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || assistant.selectedSession == nil)
-                        .accessibilityLabel("Send assistant request")
-                }
-                if voice.isListening || voice.dictationActive { Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
-            }.padding(18)
+            composer
         }
         .sheet(isPresented: $knowledgeVisible) {
             if let project = assistant.selectedSession?.focus.projectID {
@@ -110,6 +76,84 @@ struct AssistantWorkspaceView: View {
             }
         }
     }
+    private var capturing: Bool { voice.isListening || voice.dictationActive }
+    private var intentLabel: String? {
+        switch assistant.intent {
+        case "side_question": return "Asking alongside running work"
+        case "redirect_work": return "Proposing a goal change"
+        default: return nil
+        }
+    }
+
+    /// One row to talk or type. The microphone is the single voice control;
+    /// less common choices sit in the options menu.
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let selection = assistant.visualSelection {
+                HStack { Label(selection.label, systemImage: "scope"); Text("Bound to displayed revision").foregroundStyle(.secondary); Spacer(); Button("Clear") { assistant.selectVisual(nil) } }.font(.caption)
+            }
+            if capturing || voice.dictationPaused {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(voice.transcript.isEmpty ? (voice.dictationPaused ? "Dictation paused. Continue or finish when you are ready." : "Listening…") : voice.transcript)
+                        .font(.callout).foregroundStyle(voice.transcript.isEmpty ? Color.secondary : Color.primary).lineLimit(4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel(voice.transcript.isEmpty ? "Listening" : "Live transcription: \(voice.transcript)")
+                    if voice.dictationPaused { Button("Continue dictation") { Task { await voice.continueDictation() } } }
+                    if voice.isListening { Button("Still thinking") { voice.holdConversationPause() }.help("Keep listening through a long pause") }
+                    if capturing || voice.dictationPaused { Button("Finish") { voice.finishListening() } }
+                }.font(.caption).padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(RoomsPalette.cyan.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+            }
+            HStack(alignment: .center, spacing: 12) {
+                VoiceMicButton(model: model, voice: voice, rooms: model.rooms, diameter: 46, unavailable: !model.isConnected && assistant.selectedSession == nil)
+                TextField("Ask Jarvis anything, or press the microphone and talk", text: $assistant.draft, axis: .vertical).id(assistant.selectedSessionID)
+                    .disabled(assistant.selectedSession == nil)
+                    .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...5)
+                    .onSubmit { Task { await assistant.sendDraft() } }
+                Menu {
+                    Picker("Next turn", selection: $assistant.intent) {
+                        Text("Continue").tag("continue")
+                        Text("Ask alongside work").tag("side_question")
+                        Text("Propose goal change").tag("redirect_work")
+                    }
+                    Picker("Voice capture", selection: $voice.captureMode) {
+                        ForEach(VoiceCaptureMode.allCases) { mode in Text(mode.title).tag(mode) }
+                    }.disabled(voice.captureInProgress || voice.dictationActive)
+                } label: { Image(systemName: "ellipsis.circle").font(.title3) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .help("Choose how the next turn is handled and how speech is captured")
+                    .accessibilityLabel("Turn and capture options")
+                VoicePauseSettingsView(mode: voice.captureMode).buttonStyle(.plain).foregroundStyle(.secondary)
+                Button { Task { await assistant.sendDraft() } } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 28)) }
+                    .buttonStyle(.plain).foregroundStyle(RoomsPalette.cyan)
+                    .disabled(assistant.submitting || assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || assistant.selectedSession == nil)
+                    .accessibilityLabel("Send assistant request")
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(RoomsPalette.panel, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(capturing ? RoomsPalette.cyan.opacity(0.55) : RoomsPalette.line))
+            HStack(spacing: 12) {
+                Text(VoicePresence.label(state: voice.state, consent: voice.cloudConsentGranted, dictationPaused: voice.dictationPaused))
+                    .foregroundStyle(capturing ? RoomsPalette.cyan : RoomsPalette.muted)
+                if let intentLabel {
+                    Text("·").foregroundStyle(RoomsPalette.muted)
+                    Text(intentLabel).foregroundStyle(RoomsPalette.amber)
+                    Button("Reset") { assistant.intent = "continue" }.buttonStyle(.plain).foregroundStyle(RoomsPalette.muted)
+                }
+                if voice.captureMode == .dictation {
+                    Text("·").foregroundStyle(RoomsPalette.muted)
+                    Text("Extended dictation").foregroundStyle(RoomsPalette.muted)
+                }
+                Spacer()
+                if voice.cloudConsentGranted {
+                    Button("Stop speaking") { assistant.muteNarration(); voice.stopSpeaking(); Task { await assistant.invalidateVoiceReview() } }
+                        .buttonStyle(.plain).foregroundStyle(voice.isSpeaking ? RoomsPalette.cyan : RoomsPalette.muted)
+                        .help("Silence this reply. Work in progress continues.")
+                }
+            }.font(.caption)
+        }.padding(.horizontal, 22).padding(.vertical, 14).frame(maxWidth: 864).frame(maxWidth: .infinity)
+    }
+
     private var material: [AssistantPresentation] { AssistantThread.material(assistant.visiblePresentations) }
     private var surfaceMode: AssistantSurfaceMode {
         AssistantThread.surfaceMode(selected: assistant.selectedPresentation, following: assistant.followingPresentation, hasMaterial: !material.isEmpty)

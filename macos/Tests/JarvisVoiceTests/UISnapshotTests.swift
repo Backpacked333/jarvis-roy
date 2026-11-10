@@ -53,6 +53,7 @@ final class UISnapshotTests: XCTestCase {
         try scene.model.assistant.apply(try UISnapshotFixtures.richConversation())
         scene.model.tab = .assistant
         scene.model.assistant.selectPresentation("presentation_table")
+        scene.voice.setCloudConsent(true)
         try await assertRendered(WorkspaceView(model: scene.model, voice: scene.voice), name: "assistant-material")
     }
 
@@ -75,6 +76,38 @@ final class UISnapshotTests: XCTestCase {
         await scene.model.refresh()
         scene.model.tab = .assistant
         try await assertRendered(WorkspaceView(model: scene.model, voice: scene.voice), name: "assistant-empty")
+    }
+
+    @MainActor
+    func testVoiceOrbStates() async throws {
+        _ = try UISnapshot.requireDirectory()
+        let states: [(String, HarnessVoiceState, Bool, Double, Double)] = [
+            ("Voice off", .idle, false, 0, 0), ("Ready", .idle, true, 0, 0), ("Connecting", .connecting, true, 0, 0),
+            ("Listening, quiet", .listening, true, 0.05, 0), ("Listening, loud", .listening, true, 0.85, 0),
+            ("Thinking", .thinking, true, 0, 0), ("Speaking", .speaking, true, 0, 0.6), ("Unavailable", .unavailable, true, 0, 0),
+        ]
+        let view = HStack(spacing: 28) {
+            ForEach(Array(states.enumerated()), id: \.offset) { _, entry in
+                VStack(spacing: 14) {
+                    VoiceOrb(state: entry.1, levels: .init(inputRMS: entry.3, playbackRMS: entry.4, generation: 1), consent: entry.2, diameter: 72)
+                    Text(entry.0).font(.caption).foregroundStyle(.secondary)
+                    Text(VoicePresence.label(state: entry.1, consent: entry.2)).font(.caption2)
+                }
+            }
+        }.padding(36).background(RoomsPalette.background)
+        try await assertRendered(view, size: CGSize(width: 1000, height: 220), name: "voice-orb-states")
+    }
+
+    @MainActor
+    func testQuickSummon() async throws {
+        _ = try UISnapshot.requireDirectory()
+        let scene = UISnapshotScene()
+        defer { scene.model.shutdown() }
+        await scene.model.refresh()
+        try scene.model.assistant.apply(try UISnapshotFixtures.plainConversation())
+        let view = QuickSummonView(app: scene.model, assistant: scene.model.assistant, voice: scene.voice,
+                                   captureStarted: {}, openWorkspace: {}, close: {})
+        try await assertRendered(view, size: CGSize(width: 572, height: 250), name: "quick-summon")
     }
 
     @MainActor

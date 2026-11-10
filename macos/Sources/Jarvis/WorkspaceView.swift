@@ -15,8 +15,6 @@ struct WorkspaceView: View {
     @ObservedObject var voice: VoiceController
     @State private var memoryToDelete: MemoryEntry?
     @State private var questionAnswers: [String: String] = [:]
-    @State private var cloudDisclosure = false
-    @State private var handsFreeDisclosure = false
     @AppStorage("Jarvis.assistantEnabled") private var assistantPreference = false
     @AppStorage("Jarvis.memoryEnabled") private var memoryPreference = false
 
@@ -60,18 +58,6 @@ struct WorkspaceView: View {
         }
         .background(Palette.background)
         .tint(Palette.cyan)
-        .confirmationDialog("Allow ElevenLabs voice for this session?", isPresented: $cloudDisclosure, titleVisibility: .visible) {
-            Button("Allow cloud voice") { voice.setCloudConsent(true) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Active command microphone audio is uploaded to ElevenLabs Scribe, and spoken reply text goes to Eleven v4 Turbo. Provider charges apply. Never speak passwords or API keys. This permission resets when Jarvis quits; there is no fallback voice. Hands-free capture requires its own opt-in.")
-        }
-        .confirmationDialog("Enable hands-free conversation?", isPresented: $handsFreeDisclosure, titleVisibility: .visible) {
-            Button("Enable hands-free") { Task { await voice.setHandsFreeEnabled(true) } }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("During replies, your microphone runs locally with echo cancellation and speech detection. Detected interruption starts a fresh ElevenLabs capture. After a reply or exact clarification finishes playing, a bounded cloud answer window opens automatically; silence closes it after eight seconds. Completed speech is submitted only to the captured conversation or question. Spoken yes never approves sensitive actions. Mute stops capture and disables hands-free. Wake listening is separate. Unsupported hardware fails closed.")
-        }
         .alert("Delete this memory?", isPresented: Binding(
             get: { memoryToDelete != nil },
             set: { if !$0 { memoryToDelete = nil } }
@@ -141,13 +127,19 @@ struct WorkspaceView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
+            HStack(spacing: 14) {
                 Text(model.tab.rawValue).font(.system(size: 14, weight: .medium))
-                Text("ELEVEN v4 TURBO").font(.system(size: 9, weight: .semibold, design: .monospaced)).tracking(1.2).foregroundStyle(Palette.cyan)
                 Spacer()
                 if model.tab == .rooms, AssistantFeatures.assistant, model.rooms.selectedRoom != nil {
                     Button("Discuss this room") { Task { await model.discussSelectedRoom() } }.font(.caption)
                 }
+                if headerMicrophone {
+                    HStack(spacing: 8) {
+                        VoiceMicButton(model: model, voice: voice, rooms: model.rooms, diameter: 30)
+                        Text(listenTitle).font(.system(size: 11)).foregroundStyle(Palette.muted)
+                    }
+                }
+                VoiceMenu(model: model, voice: voice)
                 Circle().fill(model.isConnected ? Palette.cyan : Palette.amber).frame(width: 6, height: 6)
                 Text(model.isConnected ? "Agent connected" : "Agent offline").font(.system(size: 11)).foregroundStyle(Palette.muted)
                 Button { Task { await model.stopAll() } } label: { Label("Stop all", systemImage: "stop.circle") }
@@ -155,42 +147,34 @@ struct WorkspaceView: View {
                     .disabled(model.pendingActions.contains("stop-all"))
                     .help("Stop voice and request cancellation of all work (⌘.). Completed actions cannot be undone.")
             }
-            HStack(spacing: 14) {
-                Toggle("Cloud voice", isOn: Binding(get: { voice.cloudConsentGranted }, set: { enabled in
-                    if enabled { cloudDisclosure = true } else { model.muteVoice(); voice.setCloudConsent(false) }
-                })).toggleStyle(.checkbox)
-                Toggle("Hands-free", isOn: Binding(get: { voice.handsFreeEnabled }, set: { enabled in
-                    if enabled { handsFreeDisclosure = true } else { Task { await voice.setHandsFreeEnabled(false) } }
-                })).toggleStyle(.checkbox).disabled(!voice.cloudConsentGranted || voice.isRequestingPermission)
-                Button(listenTitle) { Task { await model.startManualListening() } }
-                    .disabled(!voice.cloudConsentGranted || voice.isRequestingPermission || model.pendingActions.contains("voice-start"))
-                Button("Finish") { voice.finishListening() }.disabled(!voice.isCapturingCommand)
-                Button("Mute / stop voice") { model.muteVoice() }
-                Spacer(minLength: 0)
-                Text(voice.state.rawValue.uppercased()).font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(voice.isListening ? Palette.amber : Palette.cyan)
-            }.font(.caption)
-            Text(voice.wakeStatus).font(.system(size: 10)).foregroundStyle(Palette.muted)
+            if voice.cloudConsentGranted || voice.wakeWordEnabled {
+                Text(voice.wakeStatus).font(.system(size: 10)).foregroundStyle(Palette.muted)
+            }
             if voice.handsFreeEnabled {
                 Text(voice.handsFreeStatus).font(.system(size: 10)).foregroundStyle(Palette.amber)
             }
             if let notice = model.voiceNotice { Text(notice).font(.system(size: 10)).foregroundStyle(Palette.muted) }
-            if let context = voice.capturedContext {
+            if let context = voice.capturedContext, model.tab != .assistant {
                 Text(captureLabel(context)).font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.cyan)
             }
-            if voice.capturedContext != nil, !voice.transcript.isEmpty {
+            if voice.capturedContext != nil, !voice.transcript.isEmpty, model.tab != .assistant {
                 Text(voice.transcript).font(.system(size: 13)).lineLimit(3).textSelection(.enabled)
                     .accessibilityLabel("Live transcription: \(voice.transcript)")
                     .frame(maxWidth: .infinity, alignment: .leading).padding(10)
                     .background(Palette.cyan.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
             }
-        }.padding(.horizontal, 24).padding(.vertical, 16)
+        }.padding(.horizontal, 24).padding(.vertical, 14)
     }
 
+    /// Conversations carry the microphone beside their composer. Rooms has no
+    /// composer, so its microphone lives here; a screen never shows two.
+    private var headerMicrophone: Bool { model.tab == .rooms }
+
     private var listenTitle: String {
-        if voice.isSpeaking { return "Interrupt / Listen" }
-        if model.tab == .rooms, model.rooms.selectedRoomId == nil { return "Create room & listen" }
-        return "Listen"
+        if voice.isListening || voice.dictationActive { return "Finish" }
+        if voice.isSpeaking { return "Interrupt and speak" }
+        if model.tab == .rooms, model.rooms.selectedRoomId == nil { return "Create a room and speak" }
+        return "Speak a goal"
     }
 
     private func captureLabel(_ context: HarnessVoiceContext) -> String {
@@ -285,15 +269,7 @@ struct WorkspaceView: View {
                 get: { voice.wakeWordEnabled }, set: { enabled in Task { await model.setWakeEnabled(enabled) } }
             )).toggleStyle(.switch).font(.caption).disabled(model.selectedConversationID == nil)
             HStack(alignment: .bottom, spacing: 12) {
-                Button {
-                    if voice.isListening { voice.stopListening() } else { Task { await model.startManualListening() } }
-                } label: {
-                    Image(systemName: voice.isListening ? "stop.fill" : "mic.fill")
-                        .font(.system(size: 15)).frame(width: 38, height: 38)
-                        .background(voice.isListening ? Palette.cyan.opacity(0.2) : .white.opacity(0.05), in: Circle())
-                }.buttonStyle(.plain).foregroundStyle(Palette.cyan)
-                    .disabled(voice.isRequestingPermission || model.selectedConversationID == nil)
-                    .accessibilityLabel(voice.isListening ? "Stop microphone" : "Start microphone")
+                VoiceMicButton(model: model, voice: voice, rooms: model.rooms, diameter: 40, unavailable: model.selectedConversationID == nil)
                 TextField("What would you like to do?", text: $model.draft, axis: .vertical)
                     .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...5).padding(.vertical, 10)
                     .disabled(model.selectedConversationID == nil)

@@ -41,13 +41,14 @@ private final class QuickSummonPanel: NSPanel {
 }
 
 @MainActor
-private struct QuickSummonView: View {
+struct QuickSummonView: View {
     @ObservedObject var app: AppModel
     @ObservedObject var assistant: AssistantModel
     @ObservedObject var voice: VoiceController
     let captureStarted: () -> Void, openWorkspace: () -> Void, close: () -> Void
     @FocusState private var focused: Bool
     @State private var creating = false
+    private var capturing: Bool { voice.isListening || voice.dictationActive }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -68,15 +69,14 @@ private struct QuickSummonView: View {
                         .onSubmit { send() }
                     if let selection = assistant.visualSelection { Text("Referring to: \(selection.label)").font(.caption).foregroundStyle(.secondary) }
                     if let error = assistant.error { Text(error).font(.caption).foregroundStyle(.orange).lineLimit(3) }
-                    if voice.isListening || voice.dictationActive { Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript).font(.caption).lineLimit(3) }
-                    HStack {
+                    if capturing { Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript).font(.caption).lineLimit(3) }
+                    HStack(spacing: 12) {
+                        // The same microphone as the workspace, bound to this session before capture starts.
+                        VoiceMicButton(model: app, voice: voice, rooms: app.rooms, diameter: 42,
+                                       prepare: { captureStarted(); app.tab = .assistant })
+                        Text(VoicePresence.label(state: voice.state, consent: voice.cloudConsentGranted, dictationPaused: voice.dictationPaused))
+                            .font(.caption).foregroundStyle(capturing ? RoomsPalette.cyan : RoomsPalette.muted)
                         if voice.dictationPaused { Button("Continue") { captureStarted(); Task { await voice.continueDictation() } } }
-                        if voice.isListening || voice.dictationActive { Button("Finish") { voice.finishListening() } }
-                        else {
-                            Button { captureStarted(); app.tab = .assistant; Task { await app.startManualListening() } } label: { Label("Speak", systemImage: "mic") }
-                                .disabled(!voice.cloudConsentGranted)
-                        }
-                        if !voice.cloudConsentGranted { Text("Enable voice in the workspace").font(.caption).foregroundStyle(.secondary) }
                         Spacer()
                         Button("Send", action: send).buttonStyle(.borderedProminent)
                             .disabled(assistant.submitting || assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
