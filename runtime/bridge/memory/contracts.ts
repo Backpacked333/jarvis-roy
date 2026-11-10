@@ -59,4 +59,3 @@ export type MemoryReference = z.infer<typeof MemoryReferenceSchema>;
 export type MemoryRecall = z.infer<typeof MemoryRecallSchema>;
 export interface MemoryMatch { entry: MemoryEntry; score: number; reasons: string[] }
 export interface MemoryContext { nativeAuthenticated: boolean; projectId?: string | null }
-
