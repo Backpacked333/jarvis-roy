@@ -32,6 +32,7 @@ export function portFree(port) {
 export async function startLocalServices({ runtimeDirectory, dataDirectory, env = process.env, node = process.execPath,
   runtimeCwd = runtimeDirectory, readyTimeoutMs = 45_000 }) {
   const entries = { runtime: join(runtimeDirectory, '.output/server/index.mjs'), bridge: join(runtimeDirectory, 'bridge/server.ts') };
+  const guard = join(runtimeDirectory, 'service-guard.mjs');
   try { await access(entries.runtime); } catch { throw new Error('The agent runtime is not built. Run: cd runtime && npm run build'); }
   for (const port of [RUNTIME_PORT, BRIDGE_PORT]) {
     if (!await portFree(port)) throw new Error(`Port ${port} is already in use. Quit the other Jarvis instance first.`);
@@ -75,7 +76,10 @@ export async function startLocalServices({ runtimeDirectory, dataDirectory, env 
     for (const [role, cwd] of [['runtime', runtimeCwd], ['bridge', runtimeDirectory]]) {
       const log = await open(join(logs, `${role}.log`), 'a', 0o600);
       try {
-        const child = spawn(node, [entries[role]], { cwd, env: environmentFor(role, source), stdio: ['ignore', log.fd, log.fd] });
+        // Standard input is a pipe nothing writes to: if this process dies, it closes and the service stops itself.
+        const child = spawn(node, [guard, entries[role]], { cwd, env: { ...environmentFor(role, source), JARVIS_LIFELINE: 'stdin' },
+          stdio: ['pipe', log.fd, log.fd] });
+        child.stdin.on('error', () => { /* The service has already exited. */ });
         const record = { role, child, failed: false, exited: undefined };
         record.exited = new Promise(resolve => {
           child.once('exit', resolve);

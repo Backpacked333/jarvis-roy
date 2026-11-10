@@ -50,6 +50,11 @@ struct JarvisApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = AppModel()
 
+    init() {
+        // Must run before any preference is read, including by the model created for the first window.
+        RuntimePreferences.registerFirstRunDefaults()
+    }
+
     var body: some Scene {
         WindowGroup("Jarvis", id: "main") {
             JarvisSceneHost(model: model, delegate: delegate)
@@ -82,16 +87,12 @@ private struct JarvisSceneHost: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if supervisor.state != .ready {
-                HStack {
-                    if supervisor.state == .starting { ProgressView().controlSize(.small) }
-                    Text(supervisor.detail).font(.callout).textSelection(.enabled)
-                    Spacer()
-                    SettingsLink { Label("Settings", systemImage: "gearshape") }
-                    if supervisor.state == .failed {
-                        Button("Retry") { Task { await supervisor.start() } }
-                    }
-                }.padding().background(.regularMaterial)
+            if let notice = ReadinessNotice.current(state: supervisor.state, detail: supervisor.detail, failureLog: supervisor.failureLog,
+                // The app knows what it gave the services; with the developer launcher only the bridge can say.
+                providerConfigured: supervisor.externallyManaged ? model.providerConfigured : supervisor.providerConfigured) {
+                ReadinessBanner(notice: notice, addKey: { setupVisible = true },
+                                retry: { Task { await supervisor.start() } },
+                                diagnostics: { supervisor.diagnosticsReport() })
             }
             WorkspaceView(model: model, voice: model.voice)
         }

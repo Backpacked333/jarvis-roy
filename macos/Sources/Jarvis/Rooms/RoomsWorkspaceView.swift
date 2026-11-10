@@ -195,7 +195,7 @@ struct RoomsWorkspaceView: View {
         VStack(alignment: .leading, spacing: 18) {
             if model.isRefreshing { ProgressView("Loading durable rooms…") }
             else {
-                RoomsEmptyState(icon: "network.slash", title: "The local service is unavailable.", detail: "Start Jarvis with its launch script. Your saved rooms remain on disk; no placeholder activity is shown.")
+                RoomsEmptyState(icon: "network.slash", title: "The local service is unavailable.", detail: "Jarvis's local services are not answering. Use Retry in the banner above, or restart them in Settings. Your saved rooms remain on disk; no placeholder activity is shown.")
                 Button("Reconnect") { Task { await model.refresh() } }
             }
             Spacer()

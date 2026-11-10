@@ -87,13 +87,15 @@ struct GuidedSetupView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Your Mac is the local control point").font(.title2)
             setupStatus("Local services", value: runtime.state == .ready ? "Ready" : runtime.state.rawValue.capitalized, detail: runtime.detail)
-            setupStatus("Model catalog", value: runtime.modelMetadataAvailable ? "Available" : "Needs setup", detail: "Exact model and price metadata are required before budgeted work.")
+            setupStatus("Model key", value: runtime.providerConfigured ? "Saved" : "Needed",
+                        detail: runtime.providerConfigured ? "A Vercel AI Gateway key is saved in your Keychain. A saved key is not proof the provider accepts it."
+                            : "Jarvis reasons through the Vercel AI Gateway. Create a key at vercel.com/ai-gateway and save it below.")
             GroupBox("Provider credentials") {
                 VStack(alignment: .leading, spacing: 12) {
                     SecureField("Vercel AI Gateway API key", text: $gatewayCredential)
                     SecureField("ElevenLabs API key (optional)", text: $voiceCredential)
                     Button("Save credentials to Keychain") { saveCredentials() }.disabled(gatewayCredential.isEmpty && voiceCredential.isEmpty)
-                    Text("Credentials stay in macOS Keychain. Restart local services after changing them. Never paste them into a conversation.").font(.caption).foregroundStyle(.secondary)
+                    Text("Keys stay in your macOS Keychain and are never shown again. Saving restarts local services so they are used straight away. Never paste a key into a conversation.").font(.caption).foregroundStyle(.secondary)
                 }.padding(8)
             }
             Toggle("Assistant conversation workspace", isOn: $assistantEnabled)
@@ -188,6 +190,11 @@ struct GuidedSetupView: View {
             Label("Closing the window keeps services available; Quit stops them", systemImage: "menubar.rectangle")
             Button("Start a conversation") { completed = true; clearSecrets(); dismiss(); Task { await app.startNewConversation() } }
                 .buttonStyle(.borderedProminent).disabled(runtime.state != .ready)
+            if runtime.state != .ready {
+                Text("Available once local services are ready: \(runtime.detail)").font(.caption).foregroundStyle(.orange)
+            } else if !runtime.providerConfigured && !runtime.externallyManaged {
+                Text("Jarvis cannot answer until a model key is saved in the first step.").font(.caption).foregroundStyle(.orange)
+            }
             Text("Voice starts only after explicit session consent and macOS microphone permission. Test speakers, headphones, interruption, long pauses, and device changes on this Mac before relying on hands-free use.").font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -201,7 +208,10 @@ struct GuidedSetupView: View {
             let store = ProviderCredentials()
             if !gatewayCredential.isEmpty { try store.save(gatewayCredential, for: .gateway) }
             if !voiceCredential.isEmpty { try store.save(voiceCredential, for: .voice) }
-            clearSecrets(); notice = "Credentials saved in Keychain. Restart local services to use them."; error = nil
+            clearSecrets(); error = nil
+            notice = runtime.externallyManaged ? "Saved in Keychain. The developer launcher's own environment still takes precedence."
+                : "Saved in Keychain. Restarting local services to use them…"
+            Task { await runtime.credentialsChanged() }
         } catch { self.error = error.localizedDescription }
     }
     private func refreshIntegrations() async {

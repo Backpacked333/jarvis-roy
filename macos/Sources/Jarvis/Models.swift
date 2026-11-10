@@ -7,6 +7,8 @@ struct RuntimeState: Decodable {
     let conversations: [Conversation]
     let memories: [MemoryEntry]
     let error: String?
+    /// Whether the bridge process holds a reasoning credential. Absent from older services.
+    var providerConfigured: Bool? = nil
 }
 
 struct AgentTask: Decodable, Identifiable {
@@ -92,6 +94,15 @@ struct ConversationMessage: Decodable, Identifiable {
     let text: String
     let createdAt: String
     let taskId: String
+}
+
+/// One rule for every approval button in the app. A response already on its way, a lost connection, or an
+/// action the service marked unreviewable can never be approved; denying an unreviewable action stays possible.
+enum ApprovalGate {
+    static func allows(optionID: String, reviewable: Bool?, pending: Bool, connected: Bool) -> Bool {
+        guard !pending, connected else { return false }
+        return reviewable != false || optionID == "deny"
+    }
 }
 
 struct CapabilityState: Decodable {

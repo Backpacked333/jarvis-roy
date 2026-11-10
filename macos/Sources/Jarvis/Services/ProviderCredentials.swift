@@ -43,6 +43,14 @@ struct ProviderCredentials {
         return text
     }
 
+    /// Whether a value is stored, without reading it.
+    func isSaved(_ credential: ProviderCredential) -> Bool {
+        var query = identity(credential)
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        query[kSecReturnAttributes as String] = true
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
     func save(_ value: String, for credential: ProviderCredential) throws {
         guard !value.isEmpty, value.count <= 8_192, !value.contains("\n"), !value.contains("\r"), !value.contains("\0") else { throw Failure.invalid }
         let attributes: [String: Any] = [kSecValueData as String: Data(value.utf8)]

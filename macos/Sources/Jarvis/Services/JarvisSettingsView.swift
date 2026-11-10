@@ -98,7 +98,7 @@ struct JarvisSettingsView: View {
             Form {
                 Section("Provider credentials") {
                     ForEach(ProviderCredential.allCases) { ProviderCredentialRow(credential: $0) }
-                    Text("Credentials are stored in your login Keychain. Existing launcher credentials take precedence. Saving a credential does not prove provider access.")
+                    Text("Keys are stored in your login Keychain and are never shown again. Saving one restarts local services so it is used straight away. A saved key is not proof that the provider accepts it.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Provider preferences") {
@@ -185,21 +185,33 @@ private struct ProviderCredentialRow: View {
     let credential: ProviderCredential
     @State private var value = ""
     @State private var status = ""
+    @State private var saved = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                SecureField(credential.title, text: $value)
+                Image(systemName: saved ? "checkmark.circle.fill" : "circle").foregroundStyle(saved ? Color.green : Color.secondary)
+                    .accessibilityLabel(saved ? "\(credential.title) key is saved" : "\(credential.title) key is not set")
+                SecureField(saved ? "\(credential.title) · saved (enter a new key to replace)" : credential.title, text: $value)
                 Button("Save") {
-                    do { try ProviderCredentials().save(value, for: credential); value = ""; status = "Saved in Keychain. Restart services to apply." }
-                    catch { status = error.localizedDescription }
+                    do {
+                        try ProviderCredentials().save(value, for: credential); value = ""; saved = true
+                        status = RuntimeSupervisor.shared.externallyManaged ? "Saved in Keychain. The developer launcher's own environment still takes precedence."
+                            : "Saved in Keychain. Restarting local services to use it…"
+                        Task { await RuntimeSupervisor.shared.credentialsChanged() }
+                    } catch { status = error.localizedDescription }
                 }.disabled(value.isEmpty)
                 Button("Remove") {
-                    do { try ProviderCredentials().remove(credential); value = ""; status = "Removed from Keychain. Restart services to apply." }
-                    catch { status = error.localizedDescription }
-                }
+                    do {
+                        try ProviderCredentials().remove(credential); value = ""; saved = false
+                        status = "Removed from Keychain. Restarting local services…"
+                        Task { await RuntimeSupervisor.shared.credentialsChanged() }
+                    } catch { status = error.localizedDescription }
+                }.disabled(!saved)
             }
             if !status.isEmpty { Text(status).font(.caption).foregroundStyle(.secondary) }
         }
+        // Presence only: the stored value is never read back into the field.
+        .onAppear { saved = ProviderCredentials().isSaved(credential) }
     }
 }

@@ -357,7 +357,8 @@ struct WorkspaceView: View {
                         ForEach(approval.options) { option in
                             Button(option.label) {
                                 Task { await model.act(key: approval.id, path: "v1/tasks/\(task.id)/respond", body: ["interactionId": approval.id, "optionId": option.id, "expectedRevision": String(approval.revision ?? 0)]) }
-                            }.disabled(model.pendingActions.contains(approval.id) || !model.isConnected || (approval.reviewable == false && option.id != "deny"))
+                            }.disabled(!ApprovalGate.allows(optionID: option.id, reviewable: approval.reviewable,
+                                                             pending: model.pendingActions.contains(approval.id), connected: model.isConnected))
                         }
                     }
                     if approval.kind == "question" && approval.allowText == true {
@@ -438,7 +439,7 @@ struct WorkspaceView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 Text("Capabilities & setup").font(.largeTitle.weight(.light))
-                Text("Optional capabilities are off until configured in the launch environment. There are no credential fields in this app. Set the variables below in your terminal, then quit Jarvis and rerun scripts/run-macos.sh. Unset them and restart to disable.")
+                Text("Optional capabilities stay off until you turn them on. Switches and provider keys live in Settings; restart local services there to apply a change. Each capability below shows what it needs.")
                     .foregroundStyle(Palette.muted)
                 if let error = model.capabilityError {
                     notice("Capability status unavailable: \(error)", icon: "exclamationmark.triangle", color: Palette.amber)
@@ -460,7 +461,7 @@ struct WorkspaceView: View {
                     Text("Reading actual runtime configuration…").foregroundStyle(Palette.muted)
                 }
                 Link("Open macOS Privacy & Security", destination: URL(string: "x-apple.systempreferences:com.apple.preference.security")!)
-                Text("Permission declarations do not grant access. macOS may attribute helper/Automation requests to the launching terminal; grant only the identity you recognize. See README for provider setup and limitations.").font(.caption).foregroundStyle(Palette.muted)
+                Text("Turning a capability on does not grant macOS permission. macOS asks separately, and names Jarvis (or the terminal, if you used the developer launcher); grant only the identity you recognize.").font(.caption).foregroundStyle(Palette.muted)
             }.padding(32).frame(maxWidth: 850, alignment: .leading)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }

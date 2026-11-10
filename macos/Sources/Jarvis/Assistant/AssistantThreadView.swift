@@ -184,9 +184,12 @@ struct AssistantThreadView: View {
                             Button(option.label) {
                                 Task { await model.act(key: approval.id, path: "v1/tasks/\(task.id)/respond",
                                     body: ["interactionId": approval.id, "optionId": option.id, "expectedRevision": String(approval.revision ?? 0)]) }
-                            }
+                            }.disabled(!ApprovalGate.allows(optionID: option.id, reviewable: approval.reviewable,
+                                                             pending: model.pendingActions.contains(approval.id), connected: model.isConnected))
                             if AssistantFeatures.voiceApproval, option.id == "approve" {
                                 Button("Review by voice") { Task { await assistant.createVoiceProposal(task: task, approval: approval, option: option) } }
+                                    .disabled(!ApprovalGate.allows(optionID: option.id, reviewable: approval.reviewable,
+                                                                   pending: model.pendingActions.contains(approval.id), connected: model.isConnected))
                             }
                         }
                     }

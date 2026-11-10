@@ -145,6 +145,21 @@ final class UISnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testReadinessBanners() async throws {
+        _ = try UISnapshot.requireDirectory()
+        let notices = [
+            ReadinessNotice.current(state: .starting, detail: "Starting your local assistant…", providerConfigured: nil),
+            ReadinessNotice.current(state: .ready, detail: "", providerConfigured: false),
+            ReadinessNotice.current(state: .failed, detail: "Ports 39201 or 39202 are already in use. Quit any other copy of Jarvis or its developer launcher, then retry.",
+                                    failureLog: ["Jarvis bridge could not start: port 39202 is already in use. Quit the other Jarvis instance first."], providerConfigured: true),
+        ].compactMap { $0 }
+        XCTAssertEqual(notices.count, 3)
+        let view = VStack(spacing: 18) { ForEach(Array(notices.enumerated()), id: \.offset) { _, notice in ReadinessBanner(notice: notice) } }
+            .padding(.vertical, 18).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(RoomsPalette.background)
+        try await assertRendered(view, size: CGSize(width: 1280, height: 300), name: "readiness-banners")
+    }
+
+    @MainActor
     func testGuidedSetup() async throws {
         _ = try UISnapshot.requireDirectory()
         let scene = UISnapshotScene()

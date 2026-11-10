@@ -25,6 +25,8 @@ final class AppModel: ObservableObject {
     @Published var capabilityState: CapabilityState?
     @Published var capabilityError: String?
     @Published var modelName = "Connecting"
+    /// Whether the bridge holds a reasoning credential; nil until it has said.
+    @Published private(set) var providerConfigured: Bool?
     @AppStorage("speakReplies") var speakReplies = true
     let voice: VoiceController
     let rooms: RoomsModel
@@ -45,7 +47,8 @@ final class AppModel: ObservableObject {
         self.voice = injectedVoice ?? VoiceController()
         self.rooms = RoomsModel(client: harnessClient ?? HarnessClient())
         self.assistant = AssistantModel(voice: self.voice)
-        if AssistantFeatures.assistant { self.tab = .today }
+        // Open on the conversation. Today leads only once there are objectives for it to show.
+        if AssistantFeatures.assistant { self.tab = AssistantFeatures.objectives ? .today : .assistant }
         voice.contextProvider = { [weak self] in self?.captureContext ?? HarnessVoiceContext() }
         voice.onUtterance = { [weak self] utterance in Task { await self?.handleUtterance(utterance) } }
         voice.onAudioLevels = { [weak self] levels in self?.rooms.updateAudioLevels(levels) }
@@ -234,6 +237,7 @@ final class AppModel: ObservableObject {
             isConnected = state.ready
             connectionError = state.error
             modelName = state.model
+            if providerConfigured != state.providerConfigured { providerConfigured = state.providerConfigured }
             tasks = state.tasks.sorted { $0.createdAt > $1.createdAt }
             conversations = state.conversations.sorted { $0.updatedAt > $1.updatedAt }
             memories = state.memories
