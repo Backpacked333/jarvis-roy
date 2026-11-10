@@ -1,22 +1,22 @@
 import SwiftUI
 
-/// The one place Jarvis's colours, spacing, corner radii and text sizes are decided.
-/// Views take values from here instead of writing their own, so every screen reads as one app.
+/// Spacing and text sizes for the screens that have not moved to the HUD layout yet.
+/// Colours come from the HUD tokens in `JV`, which are the single source of truth.
 enum JarvisTheme {
+    /// Older names kept so existing screens compile; every value is a HUD token from `JV.C`.
     enum Colors {
-        static let background = Color(red: 0.025, green: 0.037, blue: 0.054)
-        static let panel = Color(red: 0.052, green: 0.070, blue: 0.090)
-        static let elevated = Color(red: 0.075, green: 0.098, blue: 0.122)
-        static let line = Color.white.opacity(0.10)
-        static let accent = Color(red: 0.43, green: 0.89, blue: 0.91)
-        /// Secondary text. Light enough to stay readable on every surface above.
-        static let muted = Color(red: 0.65, green: 0.71, blue: 0.77)
-        static let warning = Color(red: 1.0, green: 0.76, blue: 0.43)
-        static let danger = Color(red: 1.0, green: 0.48, blue: 0.49)
-        static let success = Color(red: 0.47, green: 0.87, blue: 0.62)
-        static let text = Color.white
+        static let background = JV.C.void
+        static let panel = JV.C.panel
+        static let elevated = JV.C.elevated
+        static let line = JV.C.line
+        static let accent = JV.C.cyan
+        static let muted = JV.C.text2
+        static let warning = JV.C.amber
+        static let danger = JV.C.red
+        static let success = JV.C.cyan
+        static let text = JV.C.text1
         /// Text drawn on top of `accent`.
-        static let onAccent = Color(red: 0.02, green: 0.09, blue: 0.11)
+        static let onAccent = JV.C.cyanInk
     }
 
     enum Radius {

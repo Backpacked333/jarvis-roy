@@ -53,6 +53,7 @@ struct JarvisApp: App {
     init() {
         // Must run before any preference is read, including by the model created for the first window.
         RuntimePreferences.registerFirstRunDefaults()
+        JarvisFonts.registerBundledFonts()
     }
 
     var body: some Scene {

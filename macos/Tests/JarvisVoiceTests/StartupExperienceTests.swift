@@ -167,6 +167,24 @@ final class StartupExperienceTests: XCTestCase {
         XCTAssertEqual(WorkspaceTab.assistant.title, "Assistant")
     }
 
+    func testBundledFontsAreAvailableOnceRegistered() {
+        JarvisFonts.registerBundledFonts()
+        // A missing font silently becomes the system font, so its absence has to be asserted.
+        XCTAssertEqual(JarvisFonts.availablePostScriptNames(), JarvisFonts.postScriptNames)
+    }
+
+    func testCoreModeFollowsTheRealVoiceStateAndADecisionWins() {
+        XCTAssertEqual(CoreView.Mode(.idle, wakeArmed: false, decisionOnScreen: false), .standby)
+        XCTAssertEqual(CoreView.Mode(.idle, wakeArmed: true, decisionOnScreen: false), .armed)
+        XCTAssertEqual(CoreView.Mode(.connecting, wakeArmed: false, decisionOnScreen: false), .connecting)
+        XCTAssertEqual(CoreView.Mode(.listening, wakeArmed: true, decisionOnScreen: false), .listening)
+        XCTAssertEqual(CoreView.Mode(.thinking, wakeArmed: false, decisionOnScreen: false), .thinking)
+        XCTAssertEqual(CoreView.Mode(.speaking, wakeArmed: false, decisionOnScreen: false), .speaking)
+        XCTAssertEqual(CoreView.Mode(.interrupted, wakeArmed: false, decisionOnScreen: false), .stopped)
+        XCTAssertEqual(CoreView.Mode(.unavailable, wakeArmed: false, decisionOnScreen: false), .unavailable)
+        XCTAssertEqual(CoreView.Mode(.listening, wakeArmed: false, decisionOnScreen: true), .authorization)
+    }
+
     func testBridgeStateDecodesWithAndWithoutProviderStatus() throws {
         let older = Data(#"{"ready":true,"model":"m","tasks":[],"conversations":[],"memories":[]}"#.utf8)
         XCTAssertNil(try JSONDecoder().decode(RuntimeState.self, from: older).providerConfigured)

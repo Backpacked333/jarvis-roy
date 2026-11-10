@@ -11,6 +11,7 @@ final class UISnapshotTests: XCTestCase {
     override func setUp() {
         super.setUp()
         UISnapshotFlags.enable(UISnapshotFlags.assistant)
+        JarvisFonts.registerBundledFonts()
     }
 
     override func tearDown() {
@@ -142,6 +143,55 @@ final class UISnapshotTests: XCTestCase {
         await scene.model.rooms.refresh()
         scene.model.tab = .rooms
         try await assertRendered(WorkspaceView(model: scene.model, voice: scene.voice), name: "rooms")
+    }
+
+    @MainActor
+    func testHUDComponentSheet() async throws {
+        _ = try UISnapshot.requireDirectory()
+        let view = HUDScreen(tickerText: "BRIDGE READY · RUNTIME READY · VOICE CONSENT OFF · NO WORK RUNNING", scanlines: true) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(spacing: 14) {
+                    HUDPanel(index: "01", title: "Indicators", meta: "LIVE", metaLED: .ok) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 14) { StatusLED(state: .ok); StatusLED(state: .attention); StatusLED(state: .error); StatusLED(state: .off) }
+                            SegmentedMeter(value: 0.92, glow: true).frame(width: 84)
+                            SegmentedMeter(value: 0.4, color: JV.C.amber).frame(width: 84)
+                            HStack(spacing: 12) {
+                                RingGauge(value: 0.46) { Text("46").font(JV.F.mono(10, .medium)).foregroundStyle(JV.C.cyan200) }
+                                RingGauge(value: 0, color: JV.C.amber, dashed: true) { Image(systemName: "play.fill").font(.system(size: 9)).foregroundStyle(JV.C.amber) }
+                                Keycap(label: "⌘K"); Keycap(label: "⌃⌥␣")
+                            }
+                            HStack(spacing: 8) { GateBadge(kind: .gated); GateBadge(kind: .authorized); GateBadge(kind: .rejected) }
+                        }
+                    }
+                    HUDPanel(index: "02", title: "Buttons", emphasis: true) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 10) {
+                                Button("Primary") {}.buttonStyle(.hud(.primary)); Button("Secondary") {}.buttonStyle(.hud(.secondary))
+                                Button("Ghost") {}.buttonStyle(.hud(.ghost))
+                            }
+                            HStack(spacing: 10) { Button("Stop run…") {}.buttonStyle(.hud(.danger)); Button("Needs you") {}.buttonStyle(.hud(.attention)) }
+                            HoldToConfirmButton(action: {})
+                            EventRow(glyph: .op, time: "10:14:03", source: "R_1", text: "builder sealed out/trend.json")
+                            EventRow(glyph: .question, time: "10:15:48", source: "R_2", text: "asked which budget year to use", tint: JV.C.amber)
+                        }
+                    }
+                    Text("Sentence text in the display face").jvText(JV.F.display)
+                    Text("0123456789 · mono data").jvText(JV.F.data, JV.C.cyan200)
+                }.frame(width: 340)
+                VStack(spacing: 18) {
+                    HStack(spacing: 18) {
+                        CoreView(mode: .standby, diameter: 380, metrics: (context: 0.62, budget: 0.17))
+                        CoreView(mode: .listening, diameter: 380, inputRMS: 0.7)
+                    }
+                    HStack(spacing: 18) {
+                        CoreView(mode: .thinking, diameter: 180); CoreView(mode: .speaking, diameter: 180, playbackRMS: 0.6)
+                        CoreView(mode: .authorization, diameter: 180); CoreView(mode: .stopped, diameter: 180); CoreView(mode: .armed, diameter: 180)
+                    }
+                }
+            }.padding(.leading, JV.S.contentInsetLeading).padding(.trailing, JV.S.contentInsetTrailing).padding(.top, 30)
+        }
+        try await assertRendered(view, size: CGSize(width: 1440, height: 900), name: "hud-components")
     }
 
     @MainActor
