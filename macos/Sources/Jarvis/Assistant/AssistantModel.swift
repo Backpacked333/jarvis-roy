@@ -100,7 +100,12 @@ final class AssistantModel: ObservableObject {
     }
 
     func reload() async throws {
-        let state = try await client.value(AssistantState.self, path: "/v1/assistant/state", maximum: 24 * 1_024 * 1_024)
+        try apply(try await client.value(AssistantState.self, path: "/v1/assistant/state", maximum: 24 * 1_024 * 1_024))
+    }
+
+    /// The single path for adopting a complete snapshot, so a rendered fixture
+    /// passes the same validation as a state fetched from the bridge.
+    func apply(_ state: AssistantState) throws {
         guard state.version == 1, state.sequence >= 0,
               state.sessions.allSatisfy({ $0.version == 1 }), state.turns.allSatisfy({ $0.version == 1 }),
               state.presentations.allSatisfy({ $0.version == 1 }), state.proposals.allSatisfy({ $0.version == 1 }) else { throw AssistantClientError.invalidResponse }
