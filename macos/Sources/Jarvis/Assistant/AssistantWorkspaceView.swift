@@ -41,100 +41,9 @@ struct AssistantWorkspaceView: View {
             if let error = assistant.error { Text(error).foregroundStyle(.orange).font(.callout).padding(12).frame(maxWidth: .infinity, alignment: .leading) }
             if let notice = assistant.notice { Text(notice).font(.callout).foregroundStyle(.secondary).padding(.horizontal, 22).padding(.top, 8) }
             HSplitView {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        if !assistant.visiblePinnedPresentations.isEmpty {
-                            Text("Pinned revisions").font(.caption).foregroundStyle(.secondary)
-                            ForEach(assistant.visiblePinnedPresentations) { presentation in
-                                Button { assistant.selectPinnedPresentation(presentation.id) } label: {
-                                    Label("\(presentation.title) · r\(presentation.revision)", systemImage: "pin.fill").lineLimit(2)
-                                }.buttonStyle(.bordered)
-                            }
-                        }
-                        if assistant.visibleTurns.isEmpty {
-                            ContentUnavailableView("Start with a question", systemImage: "waveform",
-                                description: Text("Discuss a paper, compare evidence, plan work, or prepare an action. Sources and results will appear alongside the conversation."))
-                        }
-                        ForEach(assistant.visibleTurns) { turn in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(turn.text).font(.body).textSelection(.enabled)
-                                HStack {
-                                    Text(turn.intent == "side_question" ? "Side conversation" : turn.status.capitalized)
-                                    if !turn.isSettled { ProgressView().controlSize(.small) }
-                                }.font(.caption).foregroundStyle(.secondary)
-                                if let error = turn.error { Text(error).font(.caption).foregroundStyle(.orange) }
-                                if let taskID = turn.taskId, let project = turn.capturedFocus.projectID, AssistantFeatures.knowledge || AssistantFeatures.memory {
-                                    Button("Context used") { contextUsed = .init(id: taskID, projectID: project) }.font(.caption)
-                                }
-                                ForEach(assistant.visiblePresentations.filter { $0.turnId == turn.id }) { presentation in
-                                    Button { assistant.selectPresentation(presentation.id) } label: {
-                                        Label(presentation.title.isEmpty ? presentation.content.kind.rawValue.capitalized : presentation.title,
-                                              systemImage: icon(presentation.content.kind))
-                                            .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-                                    }.buttonStyle(.bordered)
-                                }
-                            }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
-                        }
-                        ForEach(assistant.visibleProposals) { proposal in
-                            VStack(alignment: .leading, spacing: 10) {
-                                Label("Review exact action", systemImage: "checkmark.shield").font(.headline)
-                                Text(proposal.action.toolName).font(.subheadline)
-                                Text(proposal.action.reviewText).font(.callout).textSelection(.enabled)
-                                Text(proposal.status.replacingOccurrences(of: "_", with: " ")).font(.caption).foregroundStyle(.secondary)
-                                if let challenge = proposal.challenge, proposal.status == "awaiting_confirmation" {
-                                    Text("Say: \(challenge)").font(.headline).foregroundStyle(.cyan)
-                                }
-                                Button("Read and confirm by voice") { Task { await assistant.readProposal(proposal) } }
-                                    .disabled(!["proposed", "reviewed"].contains(proposal.status) || !voice.cloudConsentGranted)
-                            }.padding(14).background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-                        }
-                        ForEach(model.tasks.filter { task in assistant.visibleTurns.contains { $0.taskId == task.id } }) { task in
-                            ForEach(task.approvals) { approval in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(approval.title).font(.headline)
-                                    Text(approval.detail).font(.callout).textSelection(.enabled)
-                                    HStack {
-                                        ForEach(approval.options) { option in
-                                            Button(option.label) {
-                                                Task { await model.act(key: approval.id, path: "v1/tasks/\(task.id)/respond",
-                                                    body: ["interactionId": approval.id, "optionId": option.id, "expectedRevision": String(approval.revision ?? 0)]) }
-                                            }
-                                            if AssistantFeatures.voiceApproval, option.id == "approve" {
-                                                Button("Review by voice") { Task { await assistant.createVoiceProposal(task: task, approval: approval, option: option) } }
-                                            }
-                                        }
-                                    }
-                                }.padding(14).background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-                            }
-                        }
-                    }.padding(18)
-                }.frame(minWidth: 250, idealWidth: 350, maxWidth: 470)
-                VStack(spacing: 0) {
-                    HStack {
-                        Button { assistant.goBack() } label: { Label("Back", systemImage: "chevron.left") }.disabled(!assistant.canGoBack)
-                        if !assistant.followingPresentation {
-                            Button("Follow Jarvis") { assistant.followPresentations() }.help("Let new results update the working surface")
-                            if assistant.hasPresentationUpdate { Button("Show update") { assistant.showPresentationUpdate() } }
-                        }
-                        Spacer()
-                        if let selected = assistant.selectedPresentation {
-                            if let text = selected.content.markdown {
-                                Button("Read aloud") { voice.speak(text, context: selected.capturedFocus.voiceContext) }
-                                    .disabled(!voice.cloudConsentGranted || voice.captureInProgress || voice.dictationActive)
-                            }
-                            Text("Revision \(selected.revision)").font(.caption).foregroundStyle(.secondary)
-                            Button { assistant.togglePin(selected.id) } label: {
-                                Label(assistant.pinned.contains(selected.id) ? "Unpin" : "Pin", systemImage: assistant.pinned.contains(selected.id) ? "pin.fill" : "pin")
-                            }
-                        }
-                    }.padding(12)
-                    Divider()
-                    ScrollView {
-                        if let selected = assistant.selectedPresentation { AssistantPresentationView(presentation: selected, assistant: assistant, rooms: model.rooms).id("\(selected.id):\(selected.revision)").padding(24) }
-                        else { ContentUnavailableView("Your working surface", systemImage: "rectangle.3.group", description: Text("Ask Jarvis to explain, compare, calculate, or draft. Select a card to explore its evidence and details.")) }
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                }.frame(minWidth: 330)
+                AssistantThreadView(model: model, assistant: assistant, voice: voice, onContextUsed: { contextUsed = $0 })
+                    .frame(minWidth: 380, idealWidth: 540, maxWidth: surfaceMode == .hidden ? .infinity : 720, maxHeight: .infinity)
+                if surfaceMode != .hidden { surface.frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity) }
             }
             Divider()
             VStack(spacing: 10) {
@@ -201,10 +110,61 @@ struct AssistantWorkspaceView: View {
             }
         }
     }
-    private func icon(_ kind: AssistantPresentationContent.Kind) -> String {
-        switch kind { case .text: return "doc.text"; case .sources: return "books.vertical"; case .code: return "chevron.left.forwardslash.chevron.right"
-        case .math: return "function"; case .table: return "tablecells"; case .chart: return "chart.xyaxis.line"; case .artifact: return "doc.zipper"; case .plan: return "list.bullet.rectangle"
-        case .document: return "doc.text.magnifyingglass"; case .draft: return "square.and.pencil"; case .code_diff: return "arrow.triangle.branch" }
+    private var material: [AssistantPresentation] { AssistantThread.material(assistant.visiblePresentations) }
+    private var surfaceMode: AssistantSurfaceMode {
+        AssistantThread.surfaceMode(selected: assistant.selectedPresentation, following: assistant.followingPresentation, hasMaterial: !material.isEmpty)
+    }
+
+    /// The working surface shows the selected presentation and nothing else.
+    /// While Jarvis is being followed and the newest result is the reply
+    /// already written in the conversation, it lists the session's material.
+    private var surface: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button { assistant.goBack() } label: { Label("Back", systemImage: "chevron.left") }.disabled(!assistant.canGoBack)
+                if !assistant.followingPresentation {
+                    Button("Follow Jarvis") { assistant.followPresentations() }.help("Let new results update the working surface")
+                    if assistant.hasPresentationUpdate { Button("Show update") { assistant.showPresentationUpdate() } }
+                }
+                Spacer()
+                if surfaceMode == .detail, let selected = assistant.selectedPresentation {
+                    if let text = selected.content.markdown {
+                        Button("Read aloud") { voice.speak(text, context: selected.capturedFocus.voiceContext) }
+                            .disabled(!voice.cloudConsentGranted || voice.captureInProgress || voice.dictationActive)
+                    }
+                    Text("Revision \(selected.revision)").font(.caption).foregroundStyle(.secondary)
+                    Button { assistant.togglePin(selected.id) } label: {
+                        Label(assistant.pinned.contains(selected.id) ? "Unpin" : "Pin", systemImage: assistant.pinned.contains(selected.id) ? "pin.fill" : "pin")
+                    }
+                } else {
+                    Text("Working material").font(.caption).foregroundStyle(.secondary)
+                }
+            }.padding(12)
+            Divider()
+            ScrollView {
+                if surfaceMode == .detail, let selected = assistant.selectedPresentation {
+                    AssistantPresentationView(presentation: selected, assistant: assistant, rooms: model.rooms).id("\(selected.id):\(selected.revision)").padding(24)
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("From this conversation").font(.title3.weight(.medium))
+                        Text("Sources, tables, code and drafts open here. The conversation stays on the left.").font(.callout).foregroundStyle(.secondary)
+                        ForEach(material.reversed()) { presentation in
+                            Button { assistant.selectPresentation(presentation.id) } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: presentation.content.kind.symbol).font(.title3).frame(width: 28)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(presentation.displayTitle).lineLimit(2).multilineTextAlignment(.leading)
+                                        Text("\(presentation.content.kind.label) · \(presentation.materialDetail)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                    Spacer(minLength: 8)
+                                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.buttonStyle(AssistantMaterialButtonStyle(selected: false))
+                        }
+                    }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }.background(RoomsPalette.panel.opacity(0.45))
     }
 }
 

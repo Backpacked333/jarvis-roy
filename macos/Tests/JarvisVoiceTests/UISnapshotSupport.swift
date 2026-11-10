@@ -180,10 +180,12 @@ enum UISnapshotFixtures {
         ])
     }
 
-    /// A plain exchange with no sources, tables or other working material.
+    /// A plain exchange with no sources, tables or other working material, and a
+    /// second question Jarvis has accepted but not yet answered.
     static func plainConversation() throws -> AssistantState {
         try state(sessions: [session(title: "A quick question")], turns: [
             turn(id: "turn_plain", text: "Give me a one line reason to prefer WAL mode.", status: "completed"),
+            turn(id: "turn_thinking", text: "And one reason not to?", status: "running"),
         ], presentations: [
             text(id: "presentation_plain", turn: "turn_plain", markdown: "Readers and the writer stop blocking each other, so the app stays responsive while it saves."),
         ])

@@ -45,6 +45,18 @@ final class UISnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testAssistantMaterialBesideConversation() async throws {
+        _ = try UISnapshot.requireDirectory()
+        let scene = UISnapshotScene()
+        defer { scene.model.shutdown() }
+        await scene.model.refresh()
+        try scene.model.assistant.apply(try UISnapshotFixtures.richConversation())
+        scene.model.tab = .assistant
+        scene.model.assistant.selectPresentation("presentation_table")
+        try await assertRendered(WorkspaceView(model: scene.model, voice: scene.voice), name: "assistant-material")
+    }
+
+    @MainActor
     func testAssistantPlainConversation() async throws {
         _ = try UISnapshot.requireDirectory()
         let scene = UISnapshotScene()
