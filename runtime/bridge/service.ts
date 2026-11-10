@@ -3,6 +3,7 @@ import { configuredModel } from "../agent/lib/model.ts";
 import { containsCredentialLikeData, deleteMemory, listMemories } from "../agent/lib/memory.ts";
 import { BridgeError, errorMessage } from "./errors.ts";
 import { redactText } from "./redaction.ts";
+import { explainModelFailure } from "./provider-errors.ts";
 import { reviewArguments } from "./approval.ts";
 import { googleEffectBinding, type GoogleEffectReceipt } from "./google-effect-contracts.ts";
 import { CONVERSATION_ID, TaskStore } from "./store.ts";
@@ -47,6 +48,11 @@ const BLOCKED_QUESTION_TITLE = "Question blocked";
 const BLOCKED_QUESTION_DETAIL = "This question cannot be answered here. Stop the task and request a non-sensitive clarification.";
 const BLOCKED_QUESTION_REASON = "This question was blocked by the clarification safety policy.";
 const UNCONFIRMED_RESPONSE = "Response submission is unconfirmed. Do not retry this approval or answer. Stop this task and confirm cancellation before continuing; already-completed actions are not rolled back.";
+
+/** A task whose delivery failed on its own, with no Stop requested for it by anyone. */
+function failedWithoutCancellation(task: { status: TaskStatus; cancelRequested?: boolean; cancellationPending?: boolean; cancelConfirmed?: boolean }): boolean {
+  return task.status === "failed" && !task.cancelRequested && !task.cancellationPending && !task.cancelConfirmed;
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -767,7 +773,10 @@ export class JarvisService {
           task.status = "waiting";
         } else if (result.status === "failed") {
           task.status = "failed";
-          task.error = redactText(errorMessage(asRecord(result.error).message));
+          task.error = explainModelFailure(redactText(errorMessage(asRecord(result.error).message)));
+          task.approvals = [];
+        } else if (result.status === "cancelled" && failedWithoutCancellation(task)) {
+          // The delivery already failed and nobody asked to stop it; a trailing "cancelled" is not a confirmation.
           task.approvals = [];
         } else if (result.status === "cancelled") {
           task.responseUnconfirmed = false;
@@ -886,6 +895,11 @@ export class JarvisService {
           const outcome = stringValue(data.outcome);
           if (outcome === "completed") {
             append("Turn completed.");
+          } else if (outcome === "cancelled" && failedWithoutCancellation(task)) {
+            // Eve settles a turn it abandoned after its own failure as cancelled. Nobody asked
+            // for that: keep the failure, so the reason that follows is shown instead of erased.
+            task.turnId ??= stringValue(data.turnId);
+            append("Turn ended after the failure.");
           } else if (outcome === "cancelled") {
             task.turnId ??= stringValue(data.turnId);
             task.responseUnconfirmed = false;
@@ -898,7 +912,7 @@ export class JarvisService {
             append("Turn cancelled.");
           } else if (outcome === "failed") {
             if (!task.cancelConfirmed) {
-              task.error = redactText(errorMessage(asRecord(data.error).message));
+              task.error = explainModelFailure(redactText(errorMessage(asRecord(data.error).message)));
             }
             append("Turn failed.");
           }
@@ -1070,7 +1084,7 @@ export class JarvisService {
         case "session.ended": {
           if (data.outcome === "failed") {
             if (!task.cancelConfirmed) {
-              task.error = redactText(errorMessage(asRecord(data.error).message));
+              task.error = explainModelFailure(redactText(errorMessage(asRecord(data.error).message)));
             }
             settledInteractions.push(...task.approvals.map((approval) => approval.id));
             task.approvals = [];
