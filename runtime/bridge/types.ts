@@ -22,6 +22,8 @@ export interface Approval {
   detail: string;
   reviewable?: boolean;
   blockedReason?: string;
+  /** What approving would set in motion, from the tool's fixed behaviour. Absent for questions. */
+  impact?: import("./approval-impact.ts").ApprovalImpact;
   options: ApprovalOption[];
 }
 

@@ -5,6 +5,7 @@ import { BridgeError, errorMessage } from "./errors.ts";
 import { redactText } from "./redaction.ts";
 import { explainModelFailure } from "./provider-errors.ts";
 import { reviewArguments } from "./approval.ts";
+import { approvalImpact } from "./approval-impact.ts";
 import { googleEffectBinding, type GoogleEffectReceipt } from "./google-effect-contracts.ts";
 import { CONVERSATION_ID, TaskStore } from "./store.ts";
 import { HarnessApprovalSchema, type HarnessApproval } from "./harness-contracts/interactions.ts";
@@ -990,6 +991,7 @@ export class JarvisService {
             allowText: kind === "question" && !blocked && (request.allowFreeform === true || options.length === 0),
             title: title.slice(0, 500),
             ...(review ?? {}),
+            ...(kind === "approval" && approvalImpact(callName, input) ? { impact: approvalImpact(callName, input) } : {}),
             ...(blocked ? { reviewable: false, blockedReason: BLOCKED_QUESTION_REASON } : {}),
             detail: review ? review.detail : prompt.slice(0, 8_000),
             options: visibleOptions,
