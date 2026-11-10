@@ -69,7 +69,7 @@ private struct RoomsArtifactInspector: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(selection.path).font(.headline).textSelection(.enabled)
-                    Text("UNTRUSTED SOURCE · NEVER EXECUTED").font(.system(size: 9, weight: .semibold)).tracking(1.5).foregroundStyle(RoomsPalette.amber)
+                    Text("UNTRUSTED SOURCE · NEVER EXECUTED").font(.system(size: 10, weight: .semibold)).tracking(1.5).foregroundStyle(RoomsPalette.amber)
                 }
                 Spacer()
                 Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)

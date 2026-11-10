@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 
 struct IntegrationReadiness: Decodable {
@@ -26,8 +27,12 @@ struct GuidedSetupView: View {
     @AppStorage("Jarvis.cloudEnabled") private var cloudEnabled = false
     @Environment(\.dismiss) private var dismiss
     @State private var step = 0
+    @AppStorage("Jarvis.voiceID") private var voiceID = ""
     @State private var gatewayCredential = ""
     @State private var voiceCredential = ""
+    @State private var voiceKeySaved = false
+    @State private var microphone = AVAuthorizationStatus.notDetermined
+    @State private var capabilitiesChanged = false
     @State private var cloudOrigin = ""
     @State private var cloudBootstrap = ""
     @State private var deviceLabel = "My Mac"
@@ -47,63 +52,183 @@ struct GuidedSetupView: View {
         self.app = app; _cloudProjectID = State(initialValue: cloudProjectID ?? UUID().uuidString)
     }
     private var projectID: String? { cloudProjectID.isEmpty ? nil : cloudProjectID }
-    private let steps = [("Start on this Mac", "desktopcomputer"), ("Add your cloud", "cloud"), ("Connect accounts", "person.crop.circle"), ("Try a conversation", "waveform")]
+    private let steps = [("This Mac", "desktopcomputer"), ("Cloud · optional", "cloud"), ("Accounts · optional", "person.crop.circle"), ("First conversation", "waveform")]
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) { Text("Make Jarvis yours").font(.title); Text("Set up one capability at a time. You can return here from Today.").foregroundStyle(.secondary) }
-                Spacer(); Button("Done") { completed = true; clearSecrets(); dismiss() }
-            }.padding(24)
-            Divider()
-            HSplitView {
-                VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center) {
+                Image(systemName: "waveform.circle.fill").font(.system(size: 30)).foregroundStyle(JarvisTheme.Colors.accent).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Set up Jarvis").font(.system(size: JarvisTheme.TextSize.title, weight: .semibold))
+                    Text("One step at a time. You can come back here from Today.").font(.system(size: JarvisTheme.TextSize.label)).foregroundStyle(JarvisTheme.Colors.muted)
+                }
+                Spacer()
+                Button("Done") { completed = true; clearSecrets(); dismiss() }.keyboardShortcut(.cancelAction)
+            }.padding(.horizontal, JarvisTheme.Space.xl).padding(.vertical, JarvisTheme.Space.l)
+            Rectangle().fill(JarvisTheme.Colors.line).frame(height: 1)
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: JarvisTheme.Space.s) {
                     ForEach(Array(steps.enumerated()), id: \.offset) { index, entry in
-                        Button { step = index } label: { Label(entry.0, systemImage: entry.1).frame(maxWidth: .infinity, alignment: .leading).padding(10) }
-                            .buttonStyle(.plain).background(step == index ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                        Button { step = index } label: {
+                            Label(entry.0, systemImage: entry.1).font(.system(size: JarvisTheme.TextSize.body, weight: .medium))
+                                .foregroundStyle(step == index ? JarvisTheme.Colors.accent : JarvisTheme.Colors.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                                .background(step == index ? JarvisTheme.Colors.accent.opacity(0.09) : Color.clear, in: RoundedRectangle(cornerRadius: JarvisTheme.Radius.control))
+                                .contentShape(RoundedRectangle(cornerRadius: JarvisTheme.Radius.control))
+                        }.buttonStyle(.plain).accessibilityAddTraits(step == index ? .isSelected : [])
                     }
                     Spacer()
                     SettingsLink { Label("All settings", systemImage: "gearshape") }
-                }.padding(18).frame(width: 210)
+                }.padding(JarvisTheme.Space.l).frame(width: 220).background(JarvisTheme.Colors.panel.opacity(0.5))
+                Rectangle().fill(JarvisTheme.Colors.line).frame(width: 1)
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        if let error { Text(error).foregroundStyle(.orange).textSelection(.enabled) }
-                        if let notice { Text(notice).foregroundStyle(.secondary) }
+                    VStack(alignment: .leading, spacing: JarvisTheme.Space.l) {
+                        if let error {
+                            Label(error, systemImage: "exclamationmark.triangle.fill").font(.system(size: JarvisTheme.TextSize.label))
+                                .foregroundStyle(JarvisTheme.Colors.warning).textSelection(.enabled)
+                        }
+                        if let notice { Text(notice).font(.system(size: JarvisTheme.TextSize.label)).foregroundStyle(JarvisTheme.Colors.muted) }
                         switch step {
                         case 0: localSetup
                         case 1: cloudSetup
                         case 2: accountSetup
                         default: conversationSetup
                         }
-                    }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                    }.padding(JarvisTheme.Space.xl).frame(maxWidth: .infinity, alignment: .leading)
                 }.frame(minWidth: 520)
             }
         }.frame(width: 900, height: 690)
+            .background(JarvisTheme.Colors.background)
+            .foregroundStyle(JarvisTheme.Colors.text)
+            .buttonStyle(.jarvis)
+            .toggleStyle(.switch)
+            .tint(JarvisTheme.Colors.accent)
+            .preferredColorScheme(.dark)
+            .onAppear { refreshLocalChecks() }
             .onDisappear { clearSecrets() }
             .onChange(of: profiles.cloudProfile?.id) { _, _ in integrations = nil; pairingCode = nil; pairingExpiry = nil; error = nil }
-            .onChange(of: step) { _, _ in error = nil; notice = nil; clearSecrets() }
+            .onChange(of: step) { _, _ in error = nil; notice = nil; clearSecrets(); refreshLocalChecks() }
+            .onChange(of: [assistantEnabled, knowledgeEnabled, memoryEnabled, researchEnabled, objectivesEnabled]) { _, _ in capabilitiesChanged = true }
     }
+
+    /// The state of the two things Jarvis cannot work without, and of optional voice.
+    static func servicesCheck(_ state: RuntimeSupervisor.State) -> JarvisCheckState {
+        switch state {
+        case .ready: return .done
+        case .idle, .starting, .stopping: return .working
+        case .failed, .stopped: return .failed
+        }
+    }
+    /// With the developer launcher only the bridge knows whether it was given a key; nil means it has not said yet.
+    static func keyCheck(externallyManaged: Bool, supervisorHasKey: Bool, bridgeHasKey: Bool?) -> JarvisCheckState {
+        if externallyManaged { return bridgeHasKey == true ? .done : bridgeHasKey == false ? .needed : .optional }
+        return supervisorHasKey ? .done : .needed
+    }
+    static func voiceCheck(keySaved: Bool, voiceID: String, microphone: AVAuthorizationStatus) -> JarvisCheckState {
+        guard keySaved, !voiceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .optional }
+        switch microphone {
+        case .authorized: return .done
+        case .denied, .restricted: return .failed
+        default: return .needed
+        }
+    }
+
+    private var keyState: JarvisCheckState {
+        Self.keyCheck(externallyManaged: runtime.externallyManaged, supervisorHasKey: runtime.providerConfigured, bridgeHasKey: app.providerConfigured)
+    }
+    private var readyToTalk: Bool { runtime.state == .ready && keyState != .needed }
+
+    private func refreshLocalChecks() {
+        voiceKeySaved = ProviderCredentials().isSaved(.voice)
+        microphone = AVCaptureDevice.authorizationStatus(for: .audio)
+    }
+
     private var localSetup: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Your Mac is the local control point").font(.title2)
-            setupStatus("Local services", value: runtime.state == .ready ? "Ready" : runtime.state.rawValue.capitalized, detail: runtime.detail)
-            setupStatus("Model catalog", value: runtime.modelMetadataAvailable ? "Available" : "Needs setup", detail: "Exact model and price metadata are required before budgeted work.")
-            GroupBox("Provider credentials") {
-                VStack(alignment: .leading, spacing: 12) {
-                    SecureField("Vercel AI Gateway API key", text: $gatewayCredential)
-                    SecureField("ElevenLabs API key (optional)", text: $voiceCredential)
-                    Button("Save credentials to Keychain") { saveCredentials() }.disabled(gatewayCredential.isEmpty && voiceCredential.isEmpty)
-                    Text("Credentials stay in macOS Keychain. Restart local services after changing them. Never paste them into a conversation.").font(.caption).foregroundStyle(.secondary)
-                }.padding(8)
+        VStack(alignment: .leading, spacing: JarvisTheme.Space.l) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Get Jarvis ready on this Mac").font(.system(size: JarvisTheme.TextSize.title, weight: .medium))
+                Text("Jarvis needs two things before it can answer: its local services running, and a model key. Everything else is optional.")
+                    .font(.system(size: JarvisTheme.TextSize.body)).foregroundStyle(JarvisTheme.Colors.muted).fixedSize(horizontal: false, vertical: true)
             }
-            Toggle("Assistant conversation workspace", isOn: $assistantEnabled)
-            Toggle("Project documents and context", isOn: $knowledgeEnabled)
-            Toggle("Reviewed personal memory", isOn: $memoryEnabled)
-            Toggle("Bounded research", isOn: $researchEnabled)
-            Toggle("Objectives and Today progress", isOn: $objectivesEnabled)
-            Text("New capabilities take effect after restarting local services. Source access and cloud disclosure still require their own grants.").font(.caption).foregroundStyle(.secondary)
-            HStack { Button("Restart local services") { Task { await runtime.restart() } }; Button("Next: optional cloud") { step = 1 } }
-            SettingsLink { Text("Runtime paths, worker image, and macOS permissions…") }
+            JarvisCard {
+                JarvisCheckRow(state: Self.servicesCheck(runtime.state), title: "Local services", detail: runtime.detail) {
+                    if runtime.state == .failed || runtime.state == .stopped {
+                        Button("Retry") { Task { await runtime.start() } }.padding(.top, 4)
+                    }
+                }
+            }
+            JarvisCard(tint: keyState == .needed ? JarvisTheme.Colors.warning : nil) {
+                JarvisCheckRow(state: keyState, title: "Model key",
+                               detail: keyState == .done ? "A Vercel AI Gateway key is saved. A saved key is not proof the provider accepts it; Jarvis tells you if it is rejected."
+                                   : keyState == .optional ? "The developer launcher supplies the key from its own environment."
+                                   : "Jarvis reasons through the Vercel AI Gateway. Create a key there, paste it here, and it is stored in your Keychain.") {
+                    if !runtime.externallyManaged {
+                        HStack(spacing: JarvisTheme.Space.s) {
+                            SecureField(keyState == .done ? "Paste a new key to replace the saved one" : "Vercel AI Gateway key", text: $gatewayCredential)
+                                .textFieldStyle(.roundedBorder).onSubmit { saveCredentials() }
+                            Button("Save key") { saveCredentials() }.buttonStyle(.jarvis(.primary)).disabled(gatewayCredential.isEmpty)
+                        }.padding(.top, 4)
+                        if let url = URL(string: "https://vercel.com/ai-gateway") {
+                            Link("Create a key at vercel.com/ai-gateway", destination: url).font(.system(size: JarvisTheme.TextSize.label))
+                        }
+                    }
+                }
+            }
+            JarvisCard {
+                JarvisCheckRow(state: Self.voiceCheck(keySaved: voiceKeySaved, voiceID: voiceID, microphone: microphone), title: "Voice · optional",
+                               detail: "Speaking and listening use ElevenLabs. Add its key and a voice ID to talk with Jarvis; typing works without them. Audio is only captured after you accept the voice disclosure in a conversation.") {
+                    if !runtime.externallyManaged {
+                        HStack(spacing: JarvisTheme.Space.s) {
+                            SecureField(voiceKeySaved ? "ElevenLabs key · saved" : "ElevenLabs key", text: $voiceCredential).textFieldStyle(.roundedBorder)
+                            TextField("Voice ID", text: $voiceID).textFieldStyle(.roundedBorder).frame(width: 190)
+                            Button("Save") { saveCredentials() }.disabled(voiceCredential.isEmpty)
+                        }.padding(.top, 4)
+                    }
+                    HStack(spacing: JarvisTheme.Space.s) {
+                        Text(microphoneSummary).font(.system(size: JarvisTheme.TextSize.label)).foregroundStyle(JarvisTheme.Colors.muted)
+                        if microphone == .notDetermined {
+                            Button("Allow microphone") { Task { _ = await AVCaptureDevice.requestAccess(for: .audio); refreshLocalChecks() } }
+                        } else if microphone == .denied, let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                            Button("Open Microphone settings") { NSWorkspace.shared.open(url) }
+                        }
+                    }
+                }
+            }
+            JarvisCard {
+                Text("WHAT JARVIS CAN USE").jarvisEyebrow()
+                Toggle("Conversations with sources, tables, code and drafts", isOn: $assistantEnabled)
+                Toggle("Your documents, per project, with explicit read grants", isOn: $knowledgeEnabled)
+                Toggle("Memory you review before it is kept", isOn: $memoryEnabled)
+                Toggle("Research runs with a budget you approve", isOn: $researchEnabled)
+                Toggle("Long-running objectives on Today", isOn: $objectivesEnabled)
+                Text("Screen control, terminal commands, Mail, Calendar and Messages stay off until you turn them on in Settings, and each action still asks first.")
+                    .font(.system(size: JarvisTheme.TextSize.caption)).foregroundStyle(JarvisTheme.Colors.muted).fixedSize(horizontal: false, vertical: true)
+                if capabilitiesChanged {
+                    HStack(spacing: JarvisTheme.Space.s) {
+                        Button("Apply and restart services") { capabilitiesChanged = false; Task { await runtime.restart() } }
+                            .disabled(runtime.externallyManaged || runtime.state == .starting || runtime.state == .stopping)
+                        Text(runtime.externallyManaged ? "Relaunch the developer launcher to apply." : "Changes take effect after a restart; nothing in progress is replayed.")
+                            .font(.system(size: JarvisTheme.TextSize.caption)).foregroundStyle(JarvisTheme.Colors.muted)
+                    }
+                }
+            }
+            HStack(spacing: JarvisTheme.Space.s) {
+                Button("Start a conversation") { completed = true; clearSecrets(); dismiss(); Task { await app.startNewConversation() } }
+                    .buttonStyle(.jarvis(.primary)).disabled(!readyToTalk).keyboardShortcut(.defaultAction)
+                Button("Pair a cloud companion…") { step = 1 }.buttonStyle(.jarvis(.quiet))
+                if !readyToTalk {
+                    Text(runtime.state != .ready ? "Available once local services are ready." : "Available once a model key is saved.")
+                        .font(.system(size: JarvisTheme.TextSize.caption)).foregroundStyle(JarvisTheme.Colors.warning)
+                }
+            }
+        }
+    }
+    private var microphoneSummary: String {
+        switch microphone {
+        case .authorized: return "Microphone: allowed."
+        case .denied: return "Microphone: blocked in System Settings."
+        case .restricted: return "Microphone: restricted on this Mac."
+        default: return "Microphone: macOS will ask the first time."
         }
     }
     private var cloudSetup: some View {
@@ -179,21 +304,37 @@ struct GuidedSetupView: View {
         }
     }
     private var conversationSetup: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Start with one real question").font(.title2)
-            Text("Open a conversation, import a document for that project, and ask for an explanation with evidence. Review a memory suggestion before saving it globally.").foregroundStyle(.secondary)
-            Label("Control–Option–Space summons the compact panel", systemImage: "keyboard")
-            Label("Back holds the displayed revision; Follow Jarvis resumes updates", systemImage: "pin")
-            Label("Stop speaking leaves background work running", systemImage: "speaker.slash")
-            Label("Closing the window keeps services available; Quit stops them", systemImage: "menubar.rectangle")
-            Button("Start a conversation") { completed = true; clearSecrets(); dismiss(); Task { await app.startNewConversation() } }
-                .buttonStyle(.borderedProminent).disabled(runtime.state != .ready)
-            Text("Voice starts only after explicit session consent and macOS microphone permission. Test speakers, headphones, interruption, long pauses, and device changes on this Mac before relying on hands-free use.").font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: JarvisTheme.Space.l) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Start with one real question").font(.system(size: JarvisTheme.TextSize.title, weight: .medium))
+                Text("Ask something you actually want answered. To ground it in your own material, import a document for that conversation's project and ask for an explanation with evidence.")
+                    .font(.system(size: JarvisTheme.TextSize.body)).foregroundStyle(JarvisTheme.Colors.muted).fixedSize(horizontal: false, vertical: true)
+            }
+            JarvisCard {
+                Text("GOOD TO KNOW").jarvisEyebrow()
+                Label("Control–Option–Space opens a small Jarvis panel from anywhere", systemImage: "keyboard")
+                Label("Command–Period stops all work", systemImage: "stop.circle")
+                Label("Anything that acts on your Mac or an account shows an approval card first", systemImage: "hand.raised")
+                Label("Closing the window keeps Jarvis available in the menu bar; Quit stops it", systemImage: "menubar.rectangle")
+            }.font(.system(size: JarvisTheme.TextSize.body))
+            HStack(spacing: JarvisTheme.Space.s) {
+                Button("Start a conversation") { completed = true; clearSecrets(); dismiss(); Task { await app.startNewConversation() } }
+                    .buttonStyle(.jarvis(.primary)).disabled(!readyToTalk).keyboardShortcut(.defaultAction)
+                if !readyToTalk {
+                    Button("Finish setup on this Mac") { step = 0 }.buttonStyle(.jarvis(.quiet))
+                    Text(runtime.state != .ready ? "Local services are not ready yet." : "A model key is still needed.")
+                        .font(.system(size: JarvisTheme.TextSize.caption)).foregroundStyle(JarvisTheme.Colors.warning)
+                }
+            }
+            Text("Voice has only been exercised in automated tests so far. Try speakers, headphones and interruptions on this Mac before relying on hands-free use.")
+                .font(.system(size: JarvisTheme.TextSize.caption)).foregroundStyle(JarvisTheme.Colors.muted).fixedSize(horizontal: false, vertical: true)
         }
     }
     private func setupStatus(_ title: String, value: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) { HStack { Text(title).font(.headline); Spacer(); Text(value).font(.caption).foregroundStyle(.secondary) }; Text(detail).font(.caption).foregroundStyle(.secondary) }
-            .padding(14).background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
+        JarvisCard(padding: 14) {
+            HStack { Text(title).font(.system(size: JarvisTheme.TextSize.heading, weight: .medium)); Spacer(); Text(value).font(.system(size: JarvisTheme.TextSize.caption)).foregroundStyle(JarvisTheme.Colors.accent) }
+            Text(detail).font(.system(size: JarvisTheme.TextSize.label)).foregroundStyle(JarvisTheme.Colors.muted).fixedSize(horizontal: false, vertical: true)
+        }
     }
     private func clearSecrets() { gatewayCredential = ""; voiceCredential = ""; cloudBootstrap = "" }
     private func saveCredentials() {
@@ -201,7 +342,10 @@ struct GuidedSetupView: View {
             let store = ProviderCredentials()
             if !gatewayCredential.isEmpty { try store.save(gatewayCredential, for: .gateway) }
             if !voiceCredential.isEmpty { try store.save(voiceCredential, for: .voice) }
-            clearSecrets(); notice = "Credentials saved in Keychain. Restart local services to use them."; error = nil
+            clearSecrets(); error = nil; refreshLocalChecks()
+            notice = runtime.externallyManaged ? "Saved in Keychain. The developer launcher's own environment still takes precedence."
+                : "Saved in Keychain. Restarting local services to use them…"
+            Task { await runtime.credentialsChanged() }
         } catch { self.error = error.localizedDescription }
     }
     private func refreshIntegrations() async {

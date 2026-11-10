@@ -21,6 +21,18 @@ struct RuntimePreferences {
         "JARVIS_ENABLE_PHONE": "Jarvis.phoneEnabled",
     ]
 
+    /// What a new installation starts with. A person's own choice, once made, always wins over these.
+    /// Anything that can act on the Mac, reach an account, leave the Mac, or spend unattended stays off.
+    static let firstRunDefaults: [String: Bool] = [
+        "Jarvis.assistantEnabled": true,
+        "Jarvis.knowledgeEnabled": true,
+        "Jarvis.memoryEnabled": true,
+    ]
+
+    static func registerFirstRunDefaults(in defaults: UserDefaults = .standard) {
+        defaults.register(defaults: firstRunDefaults)
+    }
+
     func environment(inherited: [String: String]) -> [String: String] {
         var result = inherited
         for (name, preference) in Self.flags where inherited[name] == nil {
@@ -55,6 +67,7 @@ struct RuntimePreferences {
                       "JARVIS_LOCAL_TOKEN": localToken, "JARVIS_DATA_DIR": dataDirectory]
         var names = ["HOME", "TMPDIR", "USER", "LOGNAME", "JARVIS_MODEL", "JARVIS_DEEP_MODEL", "AI_GATEWAY_API_KEY",
                      "TAVILY_API_KEY", "HOME_ASSISTANT_URL", "HOME_ASSISTANT_TOKEN", "JARVIS_ALLOW_HOME_ASSISTANT_HTTP",
+                     "JARVIS_CONTEXT_WINDOW_TOKENS",
                      "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
                      "NODE_EXTRA_CA_CERTS", "NODE_USE_ENV_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR"] + Array(flags.keys)
         if role == "bridge" {

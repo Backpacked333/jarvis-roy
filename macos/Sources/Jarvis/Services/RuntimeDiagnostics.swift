@@ -14,7 +14,7 @@ enum RuntimeDiagnosticPolicy {
     static let maximumDurationMilliseconds = 600_000.0
     static let codes: Set<String> = [
         "startup_begin", "startup_ready", "startup_failed", "model_catalog_missing", "process_started", "process_exited",
-        "shutdown_confirmed", "shutdown_unconfirmed", "restart_reconcile", "restart_limit", "forced_process_stop",
+        "shutdown_confirmed", "shutdown_unconfirmed", "shutdown_recovered", "restart_reconcile", "restart_limit", "forced_process_stop",
         "local_credentials_invalid", "summon_shortcut_unavailable", "briefing_dispatched", "briefing_unconfirmed", "briefing_journal_unavailable",
         "voice_speech_requested", "voice_first_pcm", "voice_playback_scheduled", "voice_first_output_rendered",
         "voice_interrupt_complete", "voice_barge_in_stop_complete", "voice_capture_requested", "voice_capture_ready",

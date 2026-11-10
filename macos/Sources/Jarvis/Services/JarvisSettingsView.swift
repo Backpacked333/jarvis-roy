@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct JarvisSettingsView: View {
@@ -98,7 +99,7 @@ struct JarvisSettingsView: View {
             Form {
                 Section("Provider credentials") {
                     ForEach(ProviderCredential.allCases) { ProviderCredentialRow(credential: $0) }
-                    Text("Credentials are stored in your login Keychain. Existing launcher credentials take precedence. Saving a credential does not prove provider access.")
+                    Text("Keys are stored in your login Keychain and are never shown again. Saving one restarts local services so it is used straight away. A saved key is not proof that the provider accepts it.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Provider preferences") {
@@ -109,17 +110,31 @@ struct JarvisSettingsView: View {
                 }
             }.formStyle(.grouped).tabItem { Label("Providers", systemImage: "key") }
             Form {
-                Section("Source-build runtime") {
-                    Text("The app starts the prepared runtime recorded when it was built. Only change these paths to trusted local code. A moved checkout must be rebuilt or selected here.")
+                Section(supervisor.usesBundledRuntime ? "Runtime" : "Source-build runtime") {
+                    Text(supervisor.usesBundledRuntime
+                         ? "This app runs the runtime and Node.js shipped inside it. Leave these empty unless you are developing Jarvis; only ever point them at code you trust."
+                         : "The app starts the prepared runtime recorded when it was built. Only change these paths to trusted local code. A moved checkout must be rebuilt or selected here.")
                         .font(.callout).foregroundStyle(.secondary)
                     TextField("Runtime directory override", text: $runtimeDirectory)
                     TextField("Node 24 executable override", text: $nodeExecutable)
+                }
+                Section("Service logs") {
+                    Text("Each local service's recent output is kept on this Mac only, with credential-shaped text removed, so a failed start can be explained. Files are private to your account and capped in size.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Show logs in Finder") { if let url = supervisor.logDirectory { NSWorkspace.shared.open(url) } }
+                            .disabled(supervisor.logDirectory == nil)
+                        Button("Copy diagnostics") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(supervisor.diagnosticsReport(), forType: .string)
+                        }
+                    }
                 }
                 Section("Isolated analysis workers") {
                     WorkerImagePreferenceView()
                 }
                 Section("Runtime diagnostics") {
-                    Text("Only fixed event codes, service roles and bounded durations are recorded; no transcripts, source IDs, provider responses, or credentials.")
+                    Text("These events hold only fixed codes, service roles and bounded durations; no transcripts, source IDs, provider responses, or credentials.")
                         .font(.caption).foregroundStyle(.secondary)
                     Text("Voice timings measure local stop, first received PCM and first non-silent render callback. Session feedback measures published state, not a displayed frame. Physical audio latency and full-turn performance require Mac testing.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -185,21 +200,33 @@ private struct ProviderCredentialRow: View {
     let credential: ProviderCredential
     @State private var value = ""
     @State private var status = ""
+    @State private var saved = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                SecureField(credential.title, text: $value)
+                Image(systemName: saved ? "checkmark.circle.fill" : "circle").foregroundStyle(saved ? Color.green : Color.secondary)
+                    .accessibilityLabel(saved ? "\(credential.title) key is saved" : "\(credential.title) key is not set")
+                SecureField(saved ? "\(credential.title) · saved (enter a new key to replace)" : credential.title, text: $value)
                 Button("Save") {
-                    do { try ProviderCredentials().save(value, for: credential); value = ""; status = "Saved in Keychain. Restart services to apply." }
-                    catch { status = error.localizedDescription }
+                    do {
+                        try ProviderCredentials().save(value, for: credential); value = ""; saved = true
+                        status = RuntimeSupervisor.shared.externallyManaged ? "Saved in Keychain. The developer launcher's own environment still takes precedence."
+                            : "Saved in Keychain. Restarting local services to use it…"
+                        Task { await RuntimeSupervisor.shared.credentialsChanged() }
+                    } catch { status = error.localizedDescription }
                 }.disabled(value.isEmpty)
                 Button("Remove") {
-                    do { try ProviderCredentials().remove(credential); value = ""; status = "Removed from Keychain. Restart services to apply." }
-                    catch { status = error.localizedDescription }
-                }
+                    do {
+                        try ProviderCredentials().remove(credential); value = ""; saved = false
+                        status = "Removed from Keychain. Restarting local services…"
+                        Task { await RuntimeSupervisor.shared.credentialsChanged() }
+                    } catch { status = error.localizedDescription }
+                }.disabled(!saved)
             }
             if !status.isEmpty { Text(status).font(.caption).foregroundStyle(.secondary) }
         }
+        // Presence only: the stored value is never read back into the field.
+        .onAppear { saved = ProviderCredentials().isSaved(credential) }
     }
 }

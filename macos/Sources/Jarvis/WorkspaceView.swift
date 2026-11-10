@@ -1,22 +1,25 @@
 import SwiftUI
 import AppKit
 
+/// The shell's colour names, all taken from the shared theme.
 private enum Palette {
-    static let background = Color(red: 0.035, green: 0.047, blue: 0.063)
-    static let panel = Color(red: 0.061, green: 0.075, blue: 0.094)
-    static let line = Color.white.opacity(0.075)
-    static let cyan = Color(red: 0.40, green: 0.88, blue: 0.91)
-    static let muted = Color(red: 0.52, green: 0.59, blue: 0.65)
-    static let amber = Color(red: 0.97, green: 0.73, blue: 0.39)
+    static let background = JarvisTheme.Colors.background
+    static let panel = JarvisTheme.Colors.panel
+    static let line = JarvisTheme.Colors.line
+    static let cyan = JarvisTheme.Colors.accent
+    static let muted = JarvisTheme.Colors.muted
+    static let amber = JarvisTheme.Colors.warning
 }
 
 struct WorkspaceView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var voice: VoiceController
+    @ObservedObject private var supervisor = RuntimeSupervisor.shared
+    /// False when the HUD shell supplies the navigation and header, and this view only hosts a tab's content.
+    var chrome = true
+    @State private var showingPrivacy = false
     @State private var memoryToDelete: MemoryEntry?
     @State private var questionAnswers: [String: String] = [:]
-    @State private var cloudDisclosure = false
-    @State private var handsFreeDisclosure = false
     @AppStorage("Jarvis.assistantEnabled") private var assistantPreference = false
     @AppStorage("Jarvis.memoryEnabled") private var memoryPreference = false
 
@@ -25,21 +28,31 @@ struct WorkspaceView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            sidebar
-            Rectangle().fill(Palette.line).frame(width: 1)
+            if chrome {
+                sidebar
+                Rectangle().fill(Palette.line).frame(width: 1)
+            }
             VStack(spacing: 0) {
-                header
-                Rectangle().fill(Palette.line).frame(height: 1)
+                if chrome {
+                    header
+                    Rectangle().fill(Palette.line).frame(height: 1)
+                }
                 if let error = model.error {
                     notice(error, icon: "exclamationmark.triangle", color: Palette.amber)
                 }
                 if let error = voice.error {
                     notice(error, icon: "mic.badge.xmark", color: Palette.amber)
                 }
-                if !model.isConnected {
+                // While services are starting or have failed, the banner above the workspace already says so.
+                if !model.isConnected && (supervisor.state == .ready || supervisor.externallyManaged) {
                     notice(model.connectionError ?? "Connecting to the local agent service…", icon: "network", color: Palette.amber)
                 }
                 switch model.tab {
+                case .deck:
+                    DeckView(model: model, voice: voice, operations: DeckData.operations(from: model.rooms.state),
+                             decisions: DeckData.decisions(tasks: model.tasks, questions: model.rooms.questions, rooms: model.rooms.state?.rooms ?? [],
+                                                           proposals: model.assistant.visibleProposals), presence: false)
+                        .padding(18)
                 case .today: TodayWorkspaceView(app: model, assistant: model.assistant)
                 case .assistant: AssistantWorkspaceView(model: model, assistant: model.assistant, voice: voice)
                 case .rooms:
@@ -48,7 +61,8 @@ struct WorkspaceView: View {
                         onReviewApproval: { approval in Task { await model.reviewApproval(approval) } },
                         observationOwnership: .application)
                 case .workspace: workspace
-                case .capabilities: capabilities
+                case .capabilities:
+                    if chrome { capabilities } else { trust }
                 case .memory:
                     if memoryAvailable {
                         MemoryWorkspaceView(projectID: model.assistant.selectedSession?.focus.projectID, client: model.assistant.client)
@@ -58,20 +72,10 @@ struct WorkspaceView: View {
                 }
             }
         }
-        .background(Palette.background)
+        .background(chrome ? Palette.background : Color.clear)
         .tint(Palette.cyan)
-        .confirmationDialog("Allow ElevenLabs voice for this session?", isPresented: $cloudDisclosure, titleVisibility: .visible) {
-            Button("Allow cloud voice") { voice.setCloudConsent(true) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Active command microphone audio is uploaded to ElevenLabs Scribe, and spoken reply text goes to Eleven v4 Turbo. Provider charges apply. Never speak passwords or API keys. This permission resets when Jarvis quits; there is no fallback voice. Hands-free capture requires its own opt-in.")
-        }
-        .confirmationDialog("Enable hands-free conversation?", isPresented: $handsFreeDisclosure, titleVisibility: .visible) {
-            Button("Enable hands-free") { Task { await voice.setHandsFreeEnabled(true) } }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("During replies, your microphone runs locally with echo cancellation and speech detection. Detected interruption starts a fresh ElevenLabs capture. After a reply or exact clarification finishes playing, a bounded cloud answer window opens automatically; silence closes it after eight seconds. Completed speech is submitted only to the captured conversation or question. Spoken yes never approves sensitive actions. Mute stops capture and disables hands-free. Wake listening is separate. Unsupported hardware fails closed.")
-        }
+        // Inside the HUD, any control that does not style itself takes the HUD's square buttons.
+        .buttonStyle(JarvisButtonStyle(kind: .secondary))
         .alert("Delete this memory?", isPresented: Binding(
             get: { memoryToDelete != nil },
             set: { if !$0 { memoryToDelete = nil } }
@@ -92,13 +96,13 @@ struct WorkspaceView: View {
                 Image(systemName: "waveform.circle.fill").font(.system(size: 29)).foregroundStyle(Palette.cyan)
                 Text("JARVIS").font(.system(size: 19, weight: .semibold)).tracking(4)
             }.padding(.top, 45).padding(.bottom, 8)
-            Text("A PERSONAL ASSISTANT").font(.system(size: 9, weight: .medium)).tracking(2).foregroundStyle(Palette.muted)
+            Text("A PERSONAL ASSISTANT").font(.system(size: 10, weight: .medium)).tracking(2).foregroundStyle(Palette.muted)
             Text("YOUR SPACE").font(.system(size: 10, weight: .medium)).tracking(1.8).foregroundStyle(Palette.muted).padding(.top, 50).padding(.bottom, 15)
-            ForEach(WorkspaceTab.allCases.filter { $0 != .assistant || assistantAvailable }) { tab in
+            ForEach(WorkspaceTab.available(assistant: assistantAvailable)) { tab in
                 Button { model.tab = tab } label: {
                     HStack(spacing: 12) {
                         Image(systemName: tab.icon).frame(width: 18)
-                        Text(tab.rawValue).font(.system(size: 13, weight: .medium))
+                        Text(tab.title).font(.system(size: 13, weight: .medium))
                         Spacer()
                         if tab == .workspace && model.approvalCount > 0 {
                             Text("\(model.approvalCount)").font(.caption2).foregroundStyle(Palette.amber)
@@ -107,7 +111,9 @@ struct WorkspaceView: View {
                     .foregroundStyle(model.tab == tab ? Palette.cyan : Palette.muted)
                     .padding(12)
                     .background(model.tab == tab ? Palette.cyan.opacity(0.075) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                    .contentShape(RoundedRectangle(cornerRadius: 8))
                 }.buttonStyle(.plain).padding(.bottom, 6)
+                    .accessibilityLabel(tab.title).accessibilityAddTraits(model.tab == tab ? .isSelected : [])
             }
             Button { Task { await model.startNewConversation() } } label: {
                 Label("New conversation", systemImage: "plus")
@@ -134,20 +140,26 @@ struct WorkspaceView: View {
                 Label("You stay in control", systemImage: "lock.shield").font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.8))
                 Text("Desktop actions wait for your approval. Always.").font(.system(size: 11)).foregroundStyle(Palette.muted).lineSpacing(4)
                 Rectangle().fill(Palette.line).frame(height: 1).padding(.vertical, 6)
-                Text("LOCAL CONTROL\nCLOUD REASONING").font(.system(size: 9, weight: .medium)).tracking(1.5).foregroundStyle(Palette.muted).lineSpacing(5)
+                Text("LOCAL CONTROL\nCLOUD REASONING").font(.system(size: 10, weight: .medium)).tracking(1.5).foregroundStyle(Palette.muted).lineSpacing(5)
             }.padding(.bottom, 28)
         }.padding(.horizontal, 22).frame(width: 205).background(Palette.panel.opacity(0.5))
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                Text(model.tab.rawValue).font(.system(size: 14, weight: .medium))
-                Text("ELEVEN v4 TURBO").font(.system(size: 9, weight: .semibold, design: .monospaced)).tracking(1.2).foregroundStyle(Palette.cyan)
+            HStack(spacing: 14) {
+                Text(model.tab.title).font(.system(size: 14, weight: .medium))
                 Spacer()
                 if model.tab == .rooms, AssistantFeatures.assistant, model.rooms.selectedRoom != nil {
                     Button("Discuss this room") { Task { await model.discussSelectedRoom() } }.font(.caption)
                 }
+                if headerMicrophone {
+                    HStack(spacing: 8) {
+                        VoiceMicButton(model: model, voice: voice, rooms: model.rooms, diameter: 30)
+                        Text(listenTitle).font(.system(size: 11)).foregroundStyle(Palette.muted)
+                    }
+                }
+                VoiceMenu(model: model, voice: voice)
                 Circle().fill(model.isConnected ? Palette.cyan : Palette.amber).frame(width: 6, height: 6)
                 Text(model.isConnected ? "Agent connected" : "Agent offline").font(.system(size: 11)).foregroundStyle(Palette.muted)
                 Button { Task { await model.stopAll() } } label: { Label("Stop all", systemImage: "stop.circle") }
@@ -155,42 +167,34 @@ struct WorkspaceView: View {
                     .disabled(model.pendingActions.contains("stop-all"))
                     .help("Stop voice and request cancellation of all work (⌘.). Completed actions cannot be undone.")
             }
-            HStack(spacing: 14) {
-                Toggle("Cloud voice", isOn: Binding(get: { voice.cloudConsentGranted }, set: { enabled in
-                    if enabled { cloudDisclosure = true } else { model.muteVoice(); voice.setCloudConsent(false) }
-                })).toggleStyle(.checkbox)
-                Toggle("Hands-free", isOn: Binding(get: { voice.handsFreeEnabled }, set: { enabled in
-                    if enabled { handsFreeDisclosure = true } else { Task { await voice.setHandsFreeEnabled(false) } }
-                })).toggleStyle(.checkbox).disabled(!voice.cloudConsentGranted || voice.isRequestingPermission)
-                Button(listenTitle) { Task { await model.startManualListening() } }
-                    .disabled(!voice.cloudConsentGranted || voice.isRequestingPermission || model.pendingActions.contains("voice-start"))
-                Button("Finish") { voice.finishListening() }.disabled(!voice.isCapturingCommand)
-                Button("Mute / stop voice") { model.muteVoice() }
-                Spacer(minLength: 0)
-                Text(voice.state.rawValue.uppercased()).font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(voice.isListening ? Palette.amber : Palette.cyan)
-            }.font(.caption)
-            Text(voice.wakeStatus).font(.system(size: 10)).foregroundStyle(Palette.muted)
+            if voice.cloudConsentGranted || voice.wakeWordEnabled {
+                Text(voice.wakeStatus).font(.system(size: 10)).foregroundStyle(Palette.muted)
+            }
             if voice.handsFreeEnabled {
                 Text(voice.handsFreeStatus).font(.system(size: 10)).foregroundStyle(Palette.amber)
             }
             if let notice = model.voiceNotice { Text(notice).font(.system(size: 10)).foregroundStyle(Palette.muted) }
-            if let context = voice.capturedContext {
+            if let context = voice.capturedContext, model.tab != .assistant {
                 Text(captureLabel(context)).font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.cyan)
             }
-            if voice.capturedContext != nil, !voice.transcript.isEmpty {
+            if voice.capturedContext != nil, !voice.transcript.isEmpty, model.tab != .assistant {
                 Text(voice.transcript).font(.system(size: 13)).lineLimit(3).textSelection(.enabled)
                     .accessibilityLabel("Live transcription: \(voice.transcript)")
                     .frame(maxWidth: .infinity, alignment: .leading).padding(10)
                     .background(Palette.cyan.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
             }
-        }.padding(.horizontal, 24).padding(.vertical, 16)
+        }.padding(.horizontal, 24).padding(.vertical, 14)
     }
 
+    /// Conversations carry the microphone beside their composer. Rooms has no
+    /// composer, so its microphone lives here; a screen never shows two.
+    private var headerMicrophone: Bool { model.tab == .rooms }
+
     private var listenTitle: String {
-        if voice.isSpeaking { return "Interrupt / Listen" }
-        if model.tab == .rooms, model.rooms.selectedRoomId == nil { return "Create room & listen" }
-        return "Listen"
+        if voice.isListening || voice.dictationActive { return "Finish" }
+        if voice.isSpeaking { return "Interrupt and speak" }
+        if model.tab == .rooms, model.rooms.selectedRoomId == nil { return "Create a room and speak" }
+        return "Speak a goal"
     }
 
     private func captureLabel(_ context: HarnessVoiceContext) -> String {
@@ -215,7 +219,8 @@ struct WorkspaceView: View {
                             ForEach(conversation.messages) { message in
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(message.role == "user" ? "YOU" : "JARVIS").font(.caption).foregroundStyle(Palette.cyan)
-                                    Text(message.text).textSelection(.enabled).lineSpacing(5)
+                                    if message.role == "user" { Text(message.text).textSelection(.enabled).lineSpacing(5) }
+                                    else { MarkdownBlocksView(message.text) }
                                 }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
                                     .background(Palette.panel, in: RoundedRectangle(cornerRadius: 12))
                             }
@@ -284,15 +289,7 @@ struct WorkspaceView: View {
                 get: { voice.wakeWordEnabled }, set: { enabled in Task { await model.setWakeEnabled(enabled) } }
             )).toggleStyle(.switch).font(.caption).disabled(model.selectedConversationID == nil)
             HStack(alignment: .bottom, spacing: 12) {
-                Button {
-                    if voice.isListening { voice.stopListening() } else { Task { await model.startManualListening() } }
-                } label: {
-                    Image(systemName: voice.isListening ? "stop.fill" : "mic.fill")
-                        .font(.system(size: 15)).frame(width: 38, height: 38)
-                        .background(voice.isListening ? Palette.cyan.opacity(0.2) : .white.opacity(0.05), in: Circle())
-                }.buttonStyle(.plain).foregroundStyle(Palette.cyan)
-                    .disabled(voice.isRequestingPermission || model.selectedConversationID == nil)
-                    .accessibilityLabel(voice.isListening ? "Stop microphone" : "Start microphone")
+                VoiceMicButton(model: model, voice: voice, rooms: model.rooms, diameter: 40, unavailable: model.selectedConversationID == nil)
                 TextField("What would you like to do?", text: $model.draft, axis: .vertical)
                     .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...5).padding(.vertical, 10)
                     .disabled(model.selectedConversationID == nil)
@@ -306,7 +303,7 @@ struct WorkspaceView: View {
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(voice.isListening ? Palette.cyan.opacity(0.5) : Palette.line))
             HStack {
                 Text(model.sendBlockReason ?? "Follow-up in this conversation · approvals require buttons · ⌘. stops all work")
-                    .font(.system(size: 9)).foregroundStyle(model.draft.count > 8000 ? Palette.amber : Palette.muted)
+                    .font(.system(size: 10)).foregroundStyle(model.draft.count > 8000 ? Palette.amber : Palette.muted)
                 Spacer()
                 Button {
                     model.speakReplies.toggle()
@@ -345,7 +342,7 @@ struct WorkspaceView: View {
                             VStack(alignment: .leading, spacing: 9) {
                                 HStack(spacing: 6) {
                                     Circle().fill(statusColor(task)).frame(width: 5, height: 5)
-                                    Text(task.statusLabel).font(.system(size: 9, weight: .medium)).foregroundStyle(statusColor(task))
+                                    Text(task.statusLabel).font(.system(size: 10, weight: .medium)).foregroundStyle(statusColor(task))
                                 }
                                 Text(task.title).font(.system(size: 12)).lineLimit(3).multilineTextAlignment(.leading).foregroundStyle(.white.opacity(0.85))
                             }.padding(13).frame(maxWidth: .infinity, alignment: .leading)
@@ -355,7 +352,7 @@ struct WorkspaceView: View {
                     }
                 }
             }
-            Text("\(model.modelName)\nApproval-gated tools").font(.system(size: 9)).foregroundStyle(Palette.muted).lineSpacing(5)
+            Text("\(model.modelName)\nApproval-gated tools").font(.system(size: 10)).foregroundStyle(Palette.muted).lineSpacing(5)
         }.padding(20).background(Palette.panel.opacity(0.25))
     }
 
@@ -380,7 +377,8 @@ struct WorkspaceView: View {
                         ForEach(approval.options) { option in
                             Button(option.label) {
                                 Task { await model.act(key: approval.id, path: "v1/tasks/\(task.id)/respond", body: ["interactionId": approval.id, "optionId": option.id, "expectedRevision": String(approval.revision ?? 0)]) }
-                            }.disabled(model.pendingActions.contains(approval.id) || !model.isConnected || (approval.reviewable == false && option.id != "deny"))
+                            }.disabled(!ApprovalGate.allows(optionID: option.id, reviewable: approval.reviewable,
+                                                             pending: model.pendingActions.contains(approval.id), connected: model.isConnected))
                         }
                     }
                     if approval.kind == "question" && approval.allowText == true {
@@ -419,7 +417,7 @@ struct WorkspaceView: View {
                         } label: { Image(systemName: "doc.on.doc") }
                             .buttonStyle(.plain).accessibilityLabel("Copy result")
                     }.foregroundStyle(Palette.muted)
-                    Text(task.reply).font(.system(size: 14)).lineSpacing(6).textSelection(.enabled)
+                    MarkdownBlocksView(task.reply).font(.system(size: 14))
                 }.padding(22).background(Palette.panel, in: RoundedRectangle(cornerRadius: 12))
             }
             if !task.events.isEmpty {
@@ -461,7 +459,7 @@ struct WorkspaceView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 Text("Capabilities & setup").font(.largeTitle.weight(.light))
-                Text("Optional capabilities are off until configured in the launch environment. There are no credential fields in this app. Set the variables below in your terminal, then quit Jarvis and rerun scripts/run-macos.sh. Unset them and restart to disable.")
+                Text("Optional capabilities stay off until you turn them on. Switches and provider keys live in Settings; restart local services there to apply a change. Each capability below shows what it needs.")
                     .foregroundStyle(Palette.muted)
                 if let error = model.capabilityError {
                     notice("Capability status unavailable: \(error)", icon: "exclamationmark.triangle", color: Palette.amber)
@@ -483,9 +481,21 @@ struct WorkspaceView: View {
                     Text("Reading actual runtime configuration…").foregroundStyle(Palette.muted)
                 }
                 Link("Open macOS Privacy & Security", destination: URL(string: "x-apple.systempreferences:com.apple.preference.security")!)
-                Text("Permission declarations do not grant access. macOS may attribute helper/Automation requests to the launching terminal; grant only the identity you recognize. See README for provider setup and limitations.").font(.caption).foregroundStyle(Palette.muted)
+                Text("Turning a capability on does not grant macOS permission. macOS asks separately, and names Jarvis (or the terminal, if you used the developer launcher); grant only the identity you recognize.").font(.caption).foregroundStyle(Palette.muted)
             }.padding(32).frame(maxWidth: 850, alignment: .leading)
         }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The HUD's Trust tab: what Jarvis may use, and what leaves this Mac, behind one switch.
+    private var trust: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button("Capabilities") { showingPrivacy = false }.buttonStyle(.hud(showingPrivacy ? .ghost : .secondary))
+                Button("Privacy") { showingPrivacy = true }.buttonStyle(.hud(showingPrivacy ? .secondary : .ghost))
+                Spacer()
+            }.padding(.horizontal, 32).padding(.top, 14)
+            if showingPrivacy { privacy } else { capabilities }
+        }
     }
 
     private var privacy: some View {

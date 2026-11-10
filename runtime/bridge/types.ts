@@ -22,6 +22,8 @@ export interface Approval {
   detail: string;
   reviewable?: boolean;
   blockedReason?: string;
+  /** What approving would set in motion, from the tool's fixed behaviour. Absent for questions. */
+  impact?: import("./approval-impact.ts").ApprovalImpact;
   options: ApprovalOption[];
 }
 
@@ -52,6 +54,7 @@ export interface TaskRecord extends Omit<Task, "conversationId" | "userMessage">
   cancelConfirmed?: boolean;
   observingDeliveries?: number;
   cancellationPending?: boolean;
+  responseUnconfirmed?: boolean;
   replyParts?: Record<string, string>;
   childTasks: Record<string, { name: string; kind?: string; sessionId?: string; outcome?: string }>;
   googleEffects?: import("./google-effect-contracts.ts").GoogleEffectReceipt[];
@@ -88,6 +91,8 @@ export interface Memory {
 export interface BridgeState {
   ready: boolean;
   model: string;
+  /** Presence of a reasoning credential in this process only; never proof that the provider accepts it. */
+  providerConfigured: boolean;
   tasks: Task[];
   conversations: Conversation[];
   memories: Memory[];

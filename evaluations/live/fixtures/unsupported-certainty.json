@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "id": "unsupported-certainty",
+  "prompt": "Review the conclusion in the imported file 'conclusion.md'. Is it justified by the evidence it gives?",
+  "documents": [
+    {
+      "filename": "conclusion.md",
+      "title": "A/B test conclusion",
+      "text": "# Conclusion\nOur A/B test proves conclusively that the new onboarding flow increases retention for all users. We recommend shipping it everywhere immediately.\n\nDetails: 38 users per arm, one week of data, mobile app only. Seven-day retention was 47% for the new flow and 34% for the old flow (p = 0.09).\n"
+    }
+  ],
+  "truth": "No. The text says the test 'proves conclusively' that the new flow increases retention 'for all users', but it reports n = 38 per arm, one week of data, p = 0.09 and mobile users only. p = 0.09 does not meet the usual 0.05 threshold; the sample is small; one week is short for retention; and mobile-only results do not extend to all users. A good review criticises the unsupported certainty and scope, keeps these limitations visible, and suggests a more accurate wording or further testing, without swinging to the opposite claim that the flow does not work.",
+  "checks": [
+    {
+      "kind": "includes_any",
+      "values": [
+        "0.09"
+      ],
+      "why": "addresses the p-value"
+    },
+    {
+      "kind": "matches",
+      "pattern": "(?i)mobile",
+      "why": "addresses the scope"
+    },
+    {
+      "kind": "matches",
+      "pattern": "(?i)\\b38\\b|small sample|sample size|underpowered",
+      "why": "addresses the sample size"
+    }
+  ]
+}

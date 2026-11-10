@@ -7,6 +7,8 @@ struct RuntimeState: Decodable {
     let conversations: [Conversation]
     let memories: [MemoryEntry]
     let error: String?
+    /// Whether the bridge process holds a reasoning credential. Absent from older services.
+    var providerConfigured: Bool? = nil
 }
 
 struct AgentTask: Decodable, Identifiable {
@@ -50,6 +52,19 @@ struct Approval: Decodable, Identifiable {
     var revision: Int? = nil
     var expiresAt: String? = nil
     var allowText: Bool? = nil
+    /// What approving would set in motion, as the runtime describes the tool. Absent for questions and older services.
+    var impact: ApprovalImpact? = nil
+}
+
+/// The runtime's fixed description of a tool's effect. Shown beside the exact arguments; it never decides anything.
+struct ApprovalImpact: Decodable, Equatable {
+    struct Hop: Decodable, Equatable { let label: String; let scope: String }
+    let tool: String
+    var operation: String? = nil
+    let risk: String
+    var reversible: Bool? = nil
+    let egress: [Hop]
+    let facts: [String]
 }
 
 struct ApprovalOption: Decodable, Identifiable {
@@ -63,10 +78,34 @@ struct MemoryEntry: Decodable, Identifiable {
 }
 
 enum WorkspaceTab: String, CaseIterable, Identifiable {
-    case today = "Today", assistant = "Assistant", rooms = "Rooms", workspace = "Workspace", capabilities = "Capabilities", memory = "Memory", privacy = "Privacy"
+    case deck = "Deck", today = "Today", assistant = "Assistant", rooms = "Rooms", workspace = "Workspace", capabilities = "Capabilities", memory = "Memory", privacy = "Privacy"
     var id: String { rawValue }
+    /// What the person sees. The older task-thread view is kept for existing threads, under a name that says so.
+    var title: String { self == .workspace ? "Classic threads" : rawValue }
+    /// The name on the HUD's top bar, where capabilities and privacy share one tab.
+    var hudTitle: String {
+        switch self {
+        case .deck: return "DECK"
+        case .assistant: return "THREAD"
+        case .rooms: return "ROOMS"
+        case .memory: return "MEMORY"
+        case .today: return "TODAY"
+        case .capabilities, .privacy: return "TRUST"
+        case .workspace: return "CLASSIC"
+        }
+    }
+    /// Order for the Go menu's ⌘1–⌘8: the deck and the conversation first, the older thread view last.
+    static let ordered: [WorkspaceTab] = [.deck, .assistant, .rooms, .memory, .today, .capabilities, .privacy, .workspace]
+    /// The tabs offered, in order. The deck and the Assistant tab exist only while that experience is on.
+    static func available(assistant: Bool) -> [WorkspaceTab] { ordered.filter { ($0 != .assistant && $0 != .deck) || assistant } }
+    /// The HUD's top bar. Privacy is reached inside Trust; the classic view is offered while it is the only
+    /// conversation surface, or still holds threads.
+    static func hud(assistant: Bool, classic: Bool) -> [WorkspaceTab] {
+        (assistant ? [.deck, .assistant] : []) + [.rooms, .memory, .today, .capabilities] + (classic || !assistant ? [.workspace] : [])
+    }
     var icon: String {
         switch self {
+        case .deck: return "scope"
         case .today: return "sun.max"
         case .assistant: return "waveform"
         case .rooms: return "circle.hexagongrid"
@@ -92,6 +131,15 @@ struct ConversationMessage: Decodable, Identifiable {
     let text: String
     let createdAt: String
     let taskId: String
+}
+
+/// One rule for every approval button in the app. A response already on its way, a lost connection, or an
+/// action the service marked unreviewable can never be approved; denying an unreviewable action stays possible.
+enum ApprovalGate {
+    static func allows(optionID: String, reviewable: Bool?, pending: Bool, connected: Bool) -> Bool {
+        guard !pending, connected else { return false }
+        return reviewable != false || optionID == "deny"
+    }
 }
 
 struct CapabilityState: Decodable {

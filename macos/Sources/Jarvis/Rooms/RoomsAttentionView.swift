@@ -16,7 +16,7 @@ struct RoomsAttentionView: View {
             Toggle("Pause room alerts", isOn: $model.attentionMuted).font(.caption)
                 .help("Pauses proactive speech and notifications, not workers or microphone capture. The text inbox stays available.")
             RoomsNotificationSettings(notifications: model.notifications)
-            Text("QUESTIONS · INFORMATION ONLY").font(.system(size: 9, weight: .semibold)).tracking(1.3).foregroundStyle(RoomsPalette.amber)
+            Text("QUESTIONS · INFORMATION ONLY").font(.system(size: 10, weight: .semibold)).tracking(1.3).foregroundStyle(RoomsPalette.amber)
             if model.questions.isEmpty {
                 Text("No pending clarifications. Questions will appear here with their exact room and attempt.")
                     .font(.caption).foregroundStyle(RoomsPalette.muted).lineSpacing(4)
@@ -25,7 +25,7 @@ struct RoomsAttentionView: View {
                 RoomsQuestionCard(model: model, question: question, onSpeak: onSpeakQuestion)
             }
             Rectangle().fill(RoomsPalette.line).frame(height: 1)
-            Text("APPROVALS · EXPLICIT REVIEW").font(.system(size: 9, weight: .semibold)).tracking(1.3).foregroundStyle(RoomsPalette.red)
+            Text("APPROVALS · EXPLICIT REVIEW").font(.system(size: 10, weight: .semibold)).tracking(1.3).foregroundStyle(RoomsPalette.red)
             Text("A spoken “yes” never authorizes an operation.").font(.caption).foregroundStyle(RoomsPalette.muted)
             if model.approvals.isEmpty {
                 Text("No operations awaiting approval.").font(.caption).foregroundStyle(RoomsPalette.muted)
@@ -65,7 +65,7 @@ private struct RoomsQuestionCard: View {
                 if room?.policy.attention == "quiet" { Image(systemName: "bell.slash").help("Quiet room: excluded from spoken attention") }
             }
             Text(question.question.prompt).font(.system(size: 14, weight: .medium)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            Text(RoomsStateRules.questionScope(question.target)).font(.system(size: 9, design: .monospaced)).foregroundStyle(RoomsPalette.muted).textSelection(.enabled)
+            Text(RoomsStateRules.questionScope(question.target)).font(.system(size: 10, design: .monospaced)).foregroundStyle(RoomsPalette.muted).textSelection(.enabled)
             Text("Expires \(RoomsStateRules.date(question.expiresAt)?.formatted(date: .abbreviated, time: .shortened) ?? question.expiresAt)")
                 .font(.caption2).foregroundStyle(RoomsPalette.muted)
             ForEach(question.question.choices) { choice in

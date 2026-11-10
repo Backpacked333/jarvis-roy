@@ -774,7 +774,16 @@ export async function startJarvisBridge(options: { port?: number } = {}): Promis
     cloudBroker: createCloudRuntimeBroker({ objectives, continuity: continuity.service, nativeCloud, service, cloudConversationReady: () => Boolean(process.env.AI_GATEWAY_API_KEY?.trim()) && modelBudget?.readiness().ready === true, resumeWork: async () => { await objectives!.service.resumeScheduler(); modelBudget!.resume(); }, authority: createActionAuthority(service, runtime) }),
     async close() { await modelBudget!.close(); await objectives!.service.close(); await nativeCloud!.close(); continuity!.close(); await research!.close(); await memory!.close(); await assistant!.close(); knowledge!.close(); },
   } });
-  server.once("error", () => { void shutdownBridge(server); });
+  server.once("error", (cause) => {
+    // A listen failure arrives after startup has resolved. Say why and exit non-zero so a supervisor can report it.
+    const code = (cause as NodeJS.ErrnoException | undefined)?.code;
+    const port = options.port ?? BRIDGE_PORT;
+    process.stderr.write(code === "EADDRINUSE"
+      ? `Jarvis bridge could not start: port ${port} is already in use. Quit the other Jarvis instance first.\n`
+      : `Jarvis bridge could not start: ${redactText(errorMessage(cause))}\n`);
+    process.exitCode = 1;
+    void shutdownBridge(server);
+  });
   server.on("listening", () => {
     diagnostics.record("bridge.started");
     const address = server.address();

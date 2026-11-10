@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "id": "units",
+  "prompt": "A pump moves 120 litres per minute. A tank holds 2.5 cubic metres. I calculated the fill time as 2.5 / 120 = 0.0208 minutes. Check my calculation.",
+  "documents": [],
+  "truth": "The calculation divides cubic metres by litres per minute, so the units do not match. 2.5 cubic metres is 2500 litres, and 2500 / 120 is about 20.8 minutes. A good answer identifies the unit mismatch before giving the corrected number.",
+  "checks": [
+    {
+      "kind": "includes_any",
+      "values": [
+        "2500",
+        "2,500",
+        "2 500"
+      ],
+      "why": "converts the volume"
+    },
+    {
+      "kind": "matches",
+      "pattern": "20\\.8",
+      "why": "gives the corrected time"
+    }
+  ]
+}

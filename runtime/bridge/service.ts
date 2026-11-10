@@ -3,7 +3,9 @@ import { configuredModel } from "../agent/lib/model.ts";
 import { containsCredentialLikeData, deleteMemory, listMemories } from "../agent/lib/memory.ts";
 import { BridgeError, errorMessage } from "./errors.ts";
 import { redactText } from "./redaction.ts";
+import { explainModelFailure } from "./provider-errors.ts";
 import { reviewArguments } from "./approval.ts";
+import { approvalImpact } from "./approval-impact.ts";
 import { googleEffectBinding, type GoogleEffectReceipt } from "./google-effect-contracts.ts";
 import { CONVERSATION_ID, TaskStore } from "./store.ts";
 import { HarnessApprovalSchema, type HarnessApproval } from "./harness-contracts/interactions.ts";
@@ -29,9 +31,29 @@ const MAX_ACTIVE_TASKS = 4;
 const MAX_EVENTS_PER_TASK = 100;
 const MAX_MESSAGE_LENGTH = 20_000;
 const CANCEL_TIMEOUT_MS = 15_000;
+// The native app polls state to decide readiness; a hung runtime must read as not ready, not as a hung bridge.
+const HEALTH_DEADLINE_MS = 5_000;
+
+async function withDeadline<T>(operation: Promise<T>, milliseconds: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), milliseconds); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const BLOCKED_QUESTION_TITLE = "Question blocked";
 const BLOCKED_QUESTION_DETAIL = "This question cannot be answered here. Stop the task and request a non-sensitive clarification.";
 const BLOCKED_QUESTION_REASON = "This question was blocked by the clarification safety policy.";
+const UNCONFIRMED_RESPONSE = "Response submission is unconfirmed. Do not retry this approval or answer. Stop this task and confirm cancellation before continuing; already-completed actions are not rolled back.";
+
+/** A task whose delivery failed on its own, with no Stop requested for it by anyone. */
+function failedWithoutCancellation(task: { status: TaskStatus; cancelRequested?: boolean; cancellationPending?: boolean; cancelConfirmed?: boolean }): boolean {
+  return task.status === "failed" && !task.cancelRequested && !task.cancellationPending && !task.cancelConfirmed;
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -158,7 +180,7 @@ export class JarvisService {
     let ready = false;
     let error: string | undefined;
     try {
-      const health = asRecord(await this.client.health());
+      const health = asRecord(await withDeadline(this.client.health(), HEALTH_DEADLINE_MS, "The eve runtime did not answer its health check in time."));
       ready = health.status === "ready" || health.ok === true;
       if (!ready) error = "The eve runtime is not ready.";
     } catch (cause) {
@@ -176,6 +198,7 @@ export class JarvisService {
     return {
       ready,
       model: this.model,
+      providerConfigured: Boolean(process.env.AI_GATEWAY_API_KEY?.trim()),
       tasks: this.store.values()
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
         .map(publicTask),
@@ -364,11 +387,18 @@ export class JarvisService {
       this.trackBackground(this.observeDelivery(taskId, delivery));
       return publicTask(task);
     } catch (cause) {
+      await this.store.update(taskId, (record) => {
+        const receipt = record.googleEffects?.find(item => item.interactionId === interactionId);
+        if (receipt?.status === "submitting") receipt.status = "unknown";
+        if (record.cancelConfirmed) return;
+        record.responseUnconfirmed = true;
+        record.status = "interrupted";
+        record.approvals = [];
+        record.error = `${UNCONFIRMED_RESPONSE} ${redactText(errorMessage(cause)).slice(0, 2_000)}`;
+      });
+      this.pendingOptions.get(taskId)?.clear();
       this.submittingInteractions.delete(submissionKey);
-      if (task.googleEffects?.some(item => item.interactionId === interactionId && item.status === "submitting")) {
-        await this.store.update(taskId, record => { const receipt = record.googleEffects!.find(item => item.interactionId === interactionId)!; if (receipt.status === "submitting") receipt.status = "unknown"; });
-      }
-      throw new BridgeError(redactText(errorMessage(cause)), 502);
+      throw new BridgeError(UNCONFIRMED_RESPONSE, 502);
     }
   }
 
@@ -731,6 +761,10 @@ export class JarvisService {
           if (reply) task.lateReply = redactText(reply);
           return;
         }
+        if (task.responseUnconfirmed && result.status !== "cancelled") {
+          if (reply) task.lateReply = redactText(reply);
+          return;
+        }
         if (reply !== undefined) task.reply = redactText(reply);
         if (result.status === "completed") {
           task.status = "completed";
@@ -740,9 +774,13 @@ export class JarvisService {
           task.status = "waiting";
         } else if (result.status === "failed") {
           task.status = "failed";
-          task.error = redactText(errorMessage(asRecord(result.error).message));
+          task.error = explainModelFailure(redactText(errorMessage(asRecord(result.error).message)));
+          task.approvals = [];
+        } else if (result.status === "cancelled" && failedWithoutCancellation(task)) {
+          // The delivery already failed and nobody asked to stop it; a trailing "cancelled" is not a confirmation.
           task.approvals = [];
         } else if (result.status === "cancelled") {
+          task.responseUnconfirmed = false;
           task.cancelConfirmed = true;
           task.status = Object.values(task.childTasks).some((child) => child.outcome === undefined)
             ? "interrupted" : "cancelled";
@@ -858,8 +896,14 @@ export class JarvisService {
           const outcome = stringValue(data.outcome);
           if (outcome === "completed") {
             append("Turn completed.");
+          } else if (outcome === "cancelled" && failedWithoutCancellation(task)) {
+            // Eve settles a turn it abandoned after its own failure as cancelled. Nobody asked
+            // for that: keep the failure, so the reason that follows is shown instead of erased.
+            task.turnId ??= stringValue(data.turnId);
+            append("Turn ended after the failure.");
           } else if (outcome === "cancelled") {
             task.turnId ??= stringValue(data.turnId);
+            task.responseUnconfirmed = false;
             task.cancelConfirmed = true;
             task.status = Object.values(task.childTasks).some((child) => child.outcome === undefined)
               ? "interrupted" : "cancelled";
@@ -869,7 +913,7 @@ export class JarvisService {
             append("Turn cancelled.");
           } else if (outcome === "failed") {
             if (!task.cancelConfirmed) {
-              task.error = redactText(errorMessage(asRecord(data.error).message));
+              task.error = explainModelFailure(redactText(errorMessage(asRecord(data.error).message)));
             }
             append("Turn failed.");
           }
@@ -907,7 +951,7 @@ export class JarvisService {
           break;
         }
         case "interaction.opened": {
-          if (task.cancelConfirmed) break;
+          if (task.cancelConfirmed || task.responseUnconfirmed) break;
           const interactionId = stringValue(data.interactionId);
           const request = asRecord(data.request);
           if (!interactionId) break;
@@ -947,6 +991,7 @@ export class JarvisService {
             allowText: kind === "question" && !blocked && (request.allowFreeform === true || options.length === 0),
             title: title.slice(0, 500),
             ...(review ?? {}),
+            ...(kind === "approval" && approvalImpact(callName, input) ? { impact: approvalImpact(callName, input) } : {}),
             ...(blocked ? { reviewable: false, blockedReason: BLOCKED_QUESTION_REASON } : {}),
             detail: review ? review.detail : prompt.slice(0, 8_000),
             options: visibleOptions,
@@ -1033,7 +1078,7 @@ export class JarvisService {
             const partId = stringValue(data.partId) ?? "reply";
             task.replyParts = { ...task.replyParts, [partId]: redactText(data.value) };
             const reply = Object.values(task.replyParts).join("\n");
-            if (task.cancelConfirmed) task.lateReply = reply;
+            if (task.cancelConfirmed || task.responseUnconfirmed) task.lateReply = reply;
             else task.reply = reply;
           }
           break;
@@ -1041,7 +1086,7 @@ export class JarvisService {
         case "session.ended": {
           if (data.outcome === "failed") {
             if (!task.cancelConfirmed) {
-              task.error = redactText(errorMessage(asRecord(data.error).message));
+              task.error = explainModelFailure(redactText(errorMessage(asRecord(data.error).message)));
             }
             settledInteractions.push(...task.approvals.map((approval) => approval.id));
             task.approvals = [];
@@ -1061,6 +1106,11 @@ export class JarvisService {
           }
           break;
         }
+      }
+      if (task.responseUnconfirmed) {
+        task.status = "interrupted";
+        task.approvals = [];
+        task.error = UNCONFIRMED_RESPONSE;
       }
     });
 

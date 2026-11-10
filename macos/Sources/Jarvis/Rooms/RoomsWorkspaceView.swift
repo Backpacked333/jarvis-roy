@@ -80,9 +80,9 @@ struct RoomsWorkspaceView: View {
                 Image(systemName: "circle.hexagongrid").font(.system(size: 26, weight: .ultraLight)).foregroundStyle(RoomsPalette.cyan)
                 Text("JARVIS").font(.system(size: 17, weight: .medium)).tracking(4)
             }.padding(.top, 32)
-            Text("ROOM CONTROL").font(.system(size: 8, weight: .medium)).tracking(2.8).foregroundStyle(RoomsPalette.muted).padding(.top, 9)
+            Text("ROOM CONTROL").font(.system(size: 9, weight: .medium)).tracking(2.8).foregroundStyle(RoomsPalette.muted).padding(.top, 9)
             HStack {
-                Text("YOUR ROOMS").font(.system(size: 9, weight: .semibold)).tracking(1.5).foregroundStyle(RoomsPalette.muted)
+                Text("YOUR ROOMS").font(.system(size: 10, weight: .semibold)).tracking(1.5).foregroundStyle(RoomsPalette.muted)
                 Spacer()
                 Button { creatingRoom = true } label: { Image(systemName: "plus") }
                     .buttonStyle(.plain).help("Create a room (⇧⌘N)").accessibilityLabel("Create a room")
@@ -101,7 +101,7 @@ struct RoomsWorkspaceView: View {
                 Label("Local by design", systemImage: "lock.shield").font(.system(size: 11, weight: .medium))
                 Text("Isolated work. Explicit starts.\nYour approval for host actions.").font(.system(size: 10)).foregroundStyle(RoomsPalette.muted).lineSpacing(5)
                 Rectangle().fill(RoomsPalette.line).frame(height: 1).padding(.vertical, 8)
-                Text("MAC SLEEP / SHUTDOWN\nLOCAL WORK STOPS").font(.system(size: 8, weight: .semibold)).tracking(1.1).foregroundStyle(RoomsPalette.amber).lineSpacing(5)
+                Text("MAC SLEEP / SHUTDOWN\nLOCAL WORK STOPS").font(.system(size: 9, weight: .semibold)).tracking(1.1).foregroundStyle(RoomsPalette.amber).lineSpacing(5)
             }.padding(.bottom, 24)
         }.padding(.horizontal, 20).background(RoomsPalette.panel.opacity(0.5))
     }
@@ -117,7 +117,7 @@ struct RoomsWorkspaceView: View {
                     HStack(spacing: 5) {
                         Text(room.status.capitalized)
                         if room.policy.attention == "quiet" { Image(systemName: "bell.slash") }
-                    }.font(.system(size: 9)).foregroundStyle(RoomsPalette.muted)
+                    }.font(.system(size: 10)).foregroundStyle(RoomsPalette.muted)
                 }
                 Spacer(minLength: 0)
                 if pending > 0 { Text("\(pending)").font(.system(size: 10, design: .monospaced)).foregroundStyle(RoomsPalette.amber) }
@@ -132,7 +132,7 @@ struct RoomsWorkspaceView: View {
         VStack(alignment: .leading, spacing: 19) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("CONTROL CENTER / LOCAL").font(.system(size: 8, weight: .medium, design: .monospaced)).tracking(2).foregroundStyle(RoomsPalette.muted)
+                    Text("CONTROL CENTER / LOCAL").font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(2).foregroundStyle(RoomsPalette.muted)
                     Text(model.selectedRoom?.title ?? "Your next idea starts here").font(.system(size: 23, weight: .light)).lineLimit(1)
                 }
                 Spacer()
@@ -151,7 +151,7 @@ struct RoomsWorkspaceView: View {
                         VStack(spacing: 10) {
                             HStack(spacing: 6) {
                                 Text(item.rawValue).font(.system(size: 11, weight: .medium))
-                                if item == .attention && model.questions.count + model.approvals.count > 0 { Text("\(model.questions.count + model.approvals.count)").font(.system(size: 9, design: .monospaced)).foregroundStyle(RoomsPalette.amber) }
+                                if item == .attention && model.questions.count + model.approvals.count > 0 { Text("\(model.questions.count + model.approvals.count)").font(.system(size: 10, design: .monospaced)).foregroundStyle(RoomsPalette.amber) }
                             }
                             Rectangle().fill(section == item ? RoomsPalette.cyan : .clear).frame(height: 2)
                         }.foregroundStyle(section == item ? .white : RoomsPalette.muted)
@@ -195,7 +195,7 @@ struct RoomsWorkspaceView: View {
         VStack(alignment: .leading, spacing: 18) {
             if model.isRefreshing { ProgressView("Loading durable rooms…") }
             else {
-                RoomsEmptyState(icon: "network.slash", title: "The local service is unavailable.", detail: "Start Jarvis with its launch script. Your saved rooms remain on disk; no placeholder activity is shown.")
+                RoomsEmptyState(icon: "network.slash", title: "The local service is unavailable.", detail: "Jarvis's local services are not answering. Use Retry in the banner above, or restart them in Settings. Your saved rooms remain on disk; no placeholder activity is shown.")
                 Button("Reconnect") { Task { await model.refresh() } }
             }
             Spacer()
@@ -218,7 +218,7 @@ struct RoomsWorkspaceView: View {
             Spacer()
             if let updated = model.lastUpdated { Text("Synced \(updated.formatted(date: .omitted, time: .standard))") }
             Text("LOCAL WORK DOES NOT CONTINUE THROUGH MAC SLEEP")
-        }.font(.system(size: 8, design: .monospaced)).foregroundStyle(RoomsPalette.muted).padding(.horizontal, 24).padding(.vertical, 12)
+        }.font(.system(size: 9, design: .monospaced)).foregroundStyle(RoomsPalette.muted).padding(.horizontal, 24).padding(.vertical, 12)
             .background(RoomsPalette.panel.opacity(0.5))
     }
     private func speakNextQuestion() {
@@ -308,7 +308,7 @@ private struct RoomsOverview: View {
     private func count(_ value: Int, _ label: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("\(value)").font(.system(size: 23, weight: .light, design: .monospaced)).foregroundStyle(RoomsPalette.cyan)
-            Text(label).font(.system(size: 8, weight: .medium)).tracking(1).foregroundStyle(RoomsPalette.muted)
+            Text(label).font(.system(size: 9, weight: .medium)).tracking(1).foregroundStyle(RoomsPalette.muted)
         }
     }
 }
@@ -398,7 +398,7 @@ private struct RoomsRunCard: View {
                 VStack(alignment: .leading, spacing: 7) {
                     Text("\(run.policy.maxConcurrentWorkers) concurrent workers · \(run.policy.runBudget.maxTokens) token cap · \(run.policy.runBudget.maxWallTimeMs / 1_000)s wall-time cap")
                     Text("Docker · no network · \(run.policy.sandbox.memoryMiB) MiB · \(run.policy.sandbox.cpus, specifier: "%.2f") CPU · \(run.policy.sandbox.pidsLimit) processes")
-                    Text(run.policy.sandbox.image ?? "Image was unconfigured").font(.system(size: 9, design: .monospaced)).textSelection(.enabled)
+                    Text(run.policy.sandbox.image ?? "Image was unconfigured").font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
                     Text("Host actions: exact approval cards only. Later room edits do not change this run.")
                 }.font(.caption).foregroundStyle(RoomsPalette.muted).padding(.top, 10)
             }.font(.caption).foregroundStyle(RoomsPalette.muted)
@@ -423,7 +423,7 @@ private struct RoomsRunCard: View {
             }
             Text(node.operation ?? (node.status == "queued" ? "Waiting for dependency success and budget reservation" : "No operation detail reported"))
                 .font(.caption).foregroundStyle(RoomsPalette.muted).textSelection(.enabled)
-            if let attempt = node.attemptId { Text("Attempt \(node.attemptNumber) · \(attempt)").font(.system(size: 9, design: .monospaced)).foregroundStyle(RoomsPalette.muted).textSelection(.enabled) }
+            if let attempt = node.attemptId { Text("Attempt \(node.attemptNumber) · \(attempt)").font(.system(size: 10, design: .monospaced)).foregroundStyle(RoomsPalette.muted).textSelection(.enabled) }
             if let error = node.error { Text(error).font(.caption).foregroundStyle(RoomsPalette.red).textSelection(.enabled) }
             DisclosureGroup("Usage & output references") {
                 VStack(alignment: .leading, spacing: 10) {

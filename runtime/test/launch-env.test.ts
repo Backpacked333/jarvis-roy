@@ -72,3 +72,18 @@ test("native permission disclosures distinguish local wake detection from cloud 
   assert.match(speech, /on-device speech recognition only to detect Hey Jarvis/);
   assert.match(speech, /Command transcription uses ElevenLabs/);
 });
+
+test("backend-only tuning reaches both services and never the native UI", () => {
+  const source = { JARVIS_CONTEXT_WINDOW_TOKENS: "128000", JARVIS_E5_MODEL_DIR: "/fixture/e5", JARVIS_ENABLE_OBJECTIVES: "1", JARVIS_RUNTIME_PROFILE: "cloud" };
+  for (const target of ["runtime", "bridge"]) {
+    const context = environmentFor(target, source);
+    assert.equal(context.JARVIS_CONTEXT_WINDOW_TOKENS, "128000");
+    assert.equal(context.JARVIS_E5_MODEL_DIR, target === "bridge" ? "/fixture/e5" : undefined);
+    assert.equal(context.JARVIS_ENABLE_OBJECTIVES, "1");
+    // The Mac launcher always runs the local profile; the cloud host has its own launcher.
+    assert.equal(context.JARVIS_RUNTIME_PROFILE, undefined);
+  }
+  const ui = environmentFor("ui", source);
+  assert.equal(ui.JARVIS_CONTEXT_WINDOW_TOKENS, undefined);
+  assert.equal(ui.JARVIS_E5_MODEL_DIR, undefined);
+});

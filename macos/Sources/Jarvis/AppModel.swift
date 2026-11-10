@@ -5,7 +5,7 @@ import SwiftUI
 final class AppModel: ObservableObject {
     @Published var tab: WorkspaceTab = .rooms {
         didSet {
-            if oldValue != tab { voiceStartGeneration += 1; assistant.setForeground(tab == .assistant) }
+            if oldValue != tab { voiceStartGeneration += 1; assistant.setForeground(conversationSurface) }
         }
     }
     @Published var tasks: [AgentTask] = []
@@ -25,6 +25,12 @@ final class AppModel: ObservableObject {
     @Published var capabilityState: CapabilityState?
     @Published var capabilityError: String?
     @Published var modelName = "Connecting"
+    /// Whether the bridge holds a reasoning credential; nil until it has said.
+    @Published private(set) var providerConfigured: Bool?
+    /// The approval shown on the full-window authorization lock, if one is open.
+    @Published var openDecisionID: String?
+    /// Set to ask the window to show setup, for example from a deck signal.
+    @Published var setupRequested = false
     @AppStorage("speakReplies") var speakReplies = true
     let voice: VoiceController
     let rooms: RoomsModel
@@ -45,7 +51,8 @@ final class AppModel: ObservableObject {
         self.voice = injectedVoice ?? VoiceController()
         self.rooms = RoomsModel(client: harnessClient ?? HarnessClient())
         self.assistant = AssistantModel(voice: self.voice)
-        if AssistantFeatures.assistant { self.tab = .today }
+        // Open on the Command Deck. Without the assistant experience there is nothing for the deck to talk to.
+        if AssistantFeatures.assistant { self.tab = .deck }
         voice.contextProvider = { [weak self] in self?.captureContext ?? HarnessVoiceContext() }
         voice.onUtterance = { [weak self] utterance in Task { await self?.handleUtterance(utterance) } }
         voice.onAudioLevels = { [weak self] levels in self?.rooms.updateAudioLevels(levels) }
@@ -54,7 +61,7 @@ final class AppModel: ObservableObject {
             if state == .interrupted || state == .unavailable { Task { await self?.assistant.invalidateVoiceReview() } }
         }
         voice.onCaptureStarted = { [weak self] session, generation in
-            guard let self, self.tab == .assistant else { return }
+            guard let self, self.conversationSurface else { return }
             self.assistant.captureStarted(voiceSessionID: session, generation: generation)
         }
         voice.onDictationRetained = { [weak self] utterance in self?.assistant.retainInterruptedDictation(utterance) }
@@ -84,7 +91,7 @@ final class AppModel: ObservableObject {
     }
 
     var captureContext: HarnessVoiceContext {
-        if tab == .assistant { return assistant.selectedSession?.focus.voiceContext ?? HarnessVoiceContext() }
+        if conversationSurface { return assistant.selectedSession?.focus.voiceContext ?? HarnessVoiceContext() }
         return tab == .rooms ? rooms.voiceContext : HarnessVoiceContext(roomId: nil, conversationId: selectedConversationID, question: nil)
     }
 
@@ -183,12 +190,12 @@ final class AppModel: ObservableObject {
 
     func startObserving() {
         if AssistantFeatures.assistant {
-            assistant.setForeground(tab == .assistant)
+            assistant.setForeground(conversationSurface)
             assistant.start()
         } else {
             assistant.stop()
             voice.continuousConnectionEnabled = false
-            if tab == .assistant { tab = .rooms }
+            if conversationSurface { tab = .rooms }
         }
         guard observationTask == nil else { return }
         rooms.startObserving()
@@ -234,6 +241,7 @@ final class AppModel: ObservableObject {
             isConnected = state.ready
             connectionError = state.error
             modelName = state.model
+            if providerConfigured != state.providerConfigured { providerConfigured = state.providerConfigured }
             tasks = state.tasks.sorted { $0.createdAt > $1.createdAt }
             conversations = state.conversations.sorted { $0.updatedAt > $1.updatedAt }
             memories = state.memories
@@ -318,9 +326,10 @@ final class AppModel: ObservableObject {
         defer { pendingActions.remove("voice-start") }
         voiceStartGeneration += 1
         let ticket = voiceStartGeneration
-        if tab == .assistant {
-            if assistant.selectedSession == nil { await newAssistantConversation() }
-            guard ticket == voiceStartGeneration, tab == .assistant, assistant.selectedSession != nil else { return }
+        if conversationSurface {
+            // From the deck the new conversation is opened in place: changing tab would cancel this very capture.
+            if assistant.selectedSession == nil { await newAssistantConversation(switchTab: tab == .assistant) }
+            guard ticket == voiceStartGeneration, conversationSurface, assistant.selectedSession != nil else { return }
             voiceOwner = nil
             voiceNotice = "Speech is bound to this assistant session and the displayed evidence. Say stop talking to mute replies, or cancel this task to stop work."
             await voice.startListening()
@@ -393,7 +402,7 @@ final class AppModel: ObservableObject {
     }
 
     func prepareVoiceCapture() -> Bool {
-        if tab == .assistant {
+        if conversationSurface {
             voiceOwner = nil
             guard assistant.selectedSession != nil else { voiceNotice = "Create an assistant session before starting voice."; return false }
             return true
@@ -426,14 +435,29 @@ final class AppModel: ObservableObject {
         } else { error = "That project's local conversation is not available. Refresh before opening it." }
     }
 
-    func newAssistantConversation() async {
+    func newAssistantConversation(switchTab: Bool = true) async {
         do {
             let data = try await client.request("v1/conversations", method: "POST", body: ["title": "Assistant conversation"])
             let conversation = try JSONDecoder().decode(Conversation.self, from: data)
             if !conversations.contains(where: { $0.id == conversation.id }) { conversations.insert(conversation, at: 0) }
             await assistant.open(focus: AssistantFocus(kind: .conversation, conversationId: conversation.id, roomId: nil), title: conversation.title)
-            tab = .assistant
+            if switchTab { tab = .assistant }
         } catch { self.error = error.localizedDescription }
+    }
+
+    /// The deck and the Assistant tab are two views of the same conversation: speech and typing on either go to it.
+    var conversationSurface: Bool { tab == .assistant || tab == .deck }
+
+    /// Sends what was typed on the deck's command bar to the open conversation, starting one if there is none,
+    /// then shows the thread, where the full answer is written.
+    func sendFromDeck(_ text: String) async {
+        let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty, AssistantFeatures.assistant else { return }
+        if assistant.selectedSession == nil { await newAssistantConversation(switchTab: false) }
+        guard assistant.selectedSession != nil else { return }
+        assistant.draft = message
+        await assistant.sendDraft()
+        tab = .assistant
     }
 
     func discussSelectedRoom() async {
@@ -458,13 +482,32 @@ final class AppModel: ObservableObject {
     }
 
     func stopAll() async {
+        // Voice is muted before anything is sent, so nothing more is captured or spoken while the request travels.
         muteVoice()
+        stopPhase = .requesting
         selectionRevision += 1
         await act(key: "stop-all", path: "v1/stop")
         await rooms.refresh()
+        var cloudUnconfirmed = false
         if AssistantFeatures.enabled("JARVIS_ENABLE_CLOUD", preference: "Jarvis.cloudEnabled"), RuntimeProfiles.shared.cloudProfile != nil {
             do { try await PairedCloudConnection.shared.stopCloudWork() }
-            catch { self.error = "Local stop was requested. Cloud cancellation is unconfirmed: \(error.localizedDescription)" }
+            catch { cloudUnconfirmed = true; self.error = "Local stop was requested. Cloud cancellation is unconfirmed: \(error.localizedDescription)" }
         }
+        stopPhase = Self.stopOutcome(tasks: tasks, runs: rooms.state?.runs ?? [], connected: isConnected, cloudUnconfirmed: cloudUnconfirmed)
+    }
+
+    /// Where a Stop all stands. Shown as a banner that cannot be dismissed while anything may still be running.
+    @Published private(set) var stopPhase: StopAllPhase = .idle
+
+    func dismissStopBanner() { if stopPhase == .confirmed { stopPhase = .idle } }
+
+    /// A stop is only called confirmed when nothing is left that could still be working. Being unable to reach the
+    /// service counts as unconfirmed: silence is not confirmation.
+    static func stopOutcome(tasks: [AgentTask], runs: [HarnessRun], connected: Bool, cloudUnconfirmed: Bool) -> StopAllPhase {
+        let unsettledTasks = tasks.filter(\.canCancel).count
+        let unsettledRuns = runs.filter { ["running", "paused", "waiting_question", "cancel_requested"].contains($0.status) || ($0.status == "cancelled" && !$0.cancelConfirmed) }.count
+        let pending = unsettledTasks + unsettledRuns + (cloudUnconfirmed ? 1 : 0)
+        if pending > 0 { return .unconfirmed(pending: pending) }
+        return connected ? .confirmed : .unconfirmed(pending: 1)
     }
 }

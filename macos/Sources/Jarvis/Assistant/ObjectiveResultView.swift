@@ -89,7 +89,7 @@ private struct ObjectiveResearchResultCard: View {
             }
             Text("A model critique is not independent factual or computational verification. Scholarly metadata and abstracts do not establish full-text conclusions.").font(.caption).foregroundStyle(.secondary)
             Divider()
-            Text(.init(result.deliverable.markdown)).textSelection(.enabled)
+            MarkdownBlocksView(result.deliverable.markdown)
             ForEach(Array(result.deliverable.unresolved.enumerated()), id: \.offset) { entry in Text("Unresolved: \(entry.element)").textSelection(.enabled) }
             Text(result.budgetNotice).font(.caption).foregroundStyle(.secondary)
         }.padding(18).background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 12))

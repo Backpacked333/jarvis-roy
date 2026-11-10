@@ -1,14 +1,15 @@
 import SwiftUI
 
+/// Rooms was the first screen with a palette of its own; it now takes every value from the shared theme.
 enum RoomsPalette {
-    static let background = Color(red: 0.025, green: 0.037, blue: 0.054)
-    static let panel = Color(red: 0.052, green: 0.070, blue: 0.090)
-    static let elevated = Color(red: 0.075, green: 0.098, blue: 0.122)
-    static let line = Color.white.opacity(0.10)
-    static let cyan = Color(red: 0.43, green: 0.89, blue: 0.91)
-    static let muted = Color(red: 0.65, green: 0.71, blue: 0.77)
-    static let amber = Color(red: 1.0, green: 0.76, blue: 0.43)
-    static let red = Color(red: 1.0, green: 0.48, blue: 0.49)
+    static let background = JarvisTheme.Colors.background
+    static let panel = JarvisTheme.Colors.panel
+    static let elevated = JarvisTheme.Colors.elevated
+    static let line = JarvisTheme.Colors.line
+    static let cyan = JarvisTheme.Colors.accent
+    static let muted = JarvisTheme.Colors.muted
+    static let amber = JarvisTheme.Colors.warning
+    static let red = JarvisTheme.Colors.danger
     static func status(_ status: String) -> Color {
         switch status {
         case "running", "completed", "accepted", "active", "passed": return cyan
@@ -25,7 +26,7 @@ struct RoomsPanel<Content: View>: View {
     @ViewBuilder var content: () -> Content
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if let eyebrow { Text(eyebrow.uppercased()).font(.system(size: 9, weight: .semibold)).tracking(2).foregroundStyle(RoomsPalette.cyan) }
+            if let eyebrow { Text(eyebrow.uppercased()).font(.system(size: 10, weight: .semibold)).tracking(2).foregroundStyle(RoomsPalette.cyan) }
             if !title.isEmpty { Text(title).font(.system(size: 19, weight: .medium)).foregroundStyle(.white) }
             content()
         }
@@ -86,7 +87,7 @@ struct RoomsUsageView: View {
     }
     private func metric(_ title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.system(size: 8, weight: .semibold)).tracking(1.2).foregroundStyle(RoomsPalette.muted)
+            Text(title).font(.system(size: 9, weight: .semibold)).tracking(1.2).foregroundStyle(RoomsPalette.muted)
             Text(value).font(.system(size: 14, weight: .medium, design: .monospaced)).foregroundStyle(.white)
         }
     }
@@ -135,7 +136,7 @@ struct RoomsSignalCore: View {
                 level("MIC", value: levels.inputRMS)
                 level("PLAYBACK", value: levels.playbackRMS)
             }.accessibilityHidden(true)
-            Text(state.rawValue.uppercased()).font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(3).foregroundStyle(RoomsPalette.muted)
+            Text(state.rawValue.uppercased()).font(.system(size: 10, weight: .medium, design: .monospaced)).tracking(3).foregroundStyle(RoomsPalette.muted)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Premium voice: \(state.rawValue). Input level \(Int(levels.inputRMS * 100)), playback level \(Int(levels.playbackRMS * 100)).")
@@ -143,7 +144,7 @@ struct RoomsSignalCore: View {
 
     private func level(_ label: String, value: Double) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 7, weight: .medium, design: .monospaced)).tracking(1).foregroundStyle(RoomsPalette.muted)
+            Text(label).font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(1).foregroundStyle(RoomsPalette.muted)
             ZStack(alignment: .leading) {
                 Capsule().fill(RoomsPalette.line)
                 Capsule().fill(tint).frame(width: 70 * (scenePhase == .active ? value : 0))
@@ -162,18 +163,18 @@ struct RoomsDependencyGraph: View {
                     ForEach(Array(layers.enumerated()), id: \.offset) { index, layer in
                         VStack(alignment: .leading, spacing: 10) {
                             Text(index == 0 ? "INDEPENDENT" : "STAGE \(index + 1)")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(1.5).foregroundStyle(RoomsPalette.muted)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced)).tracking(1.5).foregroundStyle(RoomsPalette.muted)
                             ForEach(layer) { node in
                                 VStack(alignment: .leading, spacing: 9) {
                                     HStack { Image(systemName: icon(node.role)).foregroundStyle(RoomsPalette.cyan); Spacer(); RoomsStatus(value: states.first(where: { $0.nodeId == node.id })?.status ?? "planned") }
                                     Text(node.title).font(.system(size: 13, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
-                                    Text(node.role.uppercased()).font(.system(size: 8)).tracking(1.5).foregroundStyle(RoomsPalette.muted)
+                                    Text(node.role.uppercased()).font(.system(size: 9)).tracking(1.5).foregroundStyle(RoomsPalette.muted)
                                     if !node.dependencies.isEmpty {
                                         Label(node.dependencies.joined(separator: " + "), systemImage: "arrow.turn.down.right")
                                             .font(.system(size: 10, design: .monospaced)).foregroundStyle(RoomsPalette.muted)
                                     }
                                     if !node.inputFrom.isEmpty {
-                                        Text("Artifact inputs: \(node.inputFrom.joined(separator: ", "))").font(.system(size: 9)).foregroundStyle(RoomsPalette.cyan)
+                                        Text("Artifact inputs: \(node.inputFrom.joined(separator: ", "))").font(.system(size: 10)).foregroundStyle(RoomsPalette.cyan)
                                     }
                                 }.padding(13).frame(width: 170, alignment: .leading)
                                     .background(RoomsPalette.elevated, in: RoundedRectangle(cornerRadius: 11))
@@ -200,7 +201,7 @@ struct RoomsDependencyGraph: View {
                 }.padding(.bottom, 5)
             }.accessibilityLabel("Dependency graph. Nodes in each stage can run independently after their dependencies succeed.")
             Text("Solid connection: immutable artifact input · dashed: dependency only")
-                .font(.system(size: 9)).foregroundStyle(RoomsPalette.muted)
+                .font(.system(size: 10)).foregroundStyle(RoomsPalette.muted)
         } else {
             Label("Invalid dependency graph. Execution must remain blocked.", systemImage: "exclamationmark.triangle").foregroundStyle(RoomsPalette.red)
         }
@@ -230,7 +231,7 @@ struct RoomsWorkerCensus: View {
         ForEach(["running", "queued", "waiting_question", "blocked", "completed", "failed"], id: \.self) { status in
             VStack(alignment: .leading, spacing: 5) {
                 Text("\(nodes.filter { $0.status == status }.count)").font(.system(size: 21, weight: .light, design: .monospaced))
-                Text(status.replacingOccurrences(of: "_", with: " ").uppercased()).font(.system(size: 7, weight: .medium)).tracking(0.5)
+                Text(status.replacingOccurrences(of: "_", with: " ").uppercased()).font(.system(size: 9, weight: .medium)).tracking(0.5)
             }.foregroundStyle(RoomsPalette.status(status)).accessibilityElement(children: .combine)
         }
     }

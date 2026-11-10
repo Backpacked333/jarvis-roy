@@ -57,6 +57,21 @@ test("Google execution requires the exact approval acknowledgement and observed 
   assert.equal(executed, 1);
 });
 
+test("lost Google approval receipt quarantines the task and effect together across restart", async t => {
+  const f = await fixture(t);
+  f.client.session.respond = async () => { throw new Error("approval receipt lost"); };
+  await assert.rejects(f.service.respond(f.task.id, "interaction-1", "approve", 1), /Do not retry/);
+  const persisted = JSON.parse(await readFile(join(f.directory, "tasks.json"), "utf8"));
+  assert.equal(persisted.tasks[0].googleEffects[0].status, "unknown");
+  assert.equal(persisted.tasks[0].responseUnconfirmed, true);
+  assert.equal(persisted.tasks[0].status, "interrupted");
+  assert.deepEqual(persisted.tasks[0].approvals, []);
+  await assert.rejects(f.service.respond(f.task.id, "interaction-1", "approve", 1), status(409));
+  const restored = await JarvisService.create({ client: new FakeEveClient(), dataDirectory: f.directory, model: "fixture/model" });
+  assert.equal(restored.taskSnapshot()[0].status, "interrupted");
+  await assert.rejects(restored.executeGoogleEffect(f.client.session.id, "call-1", input, async () => { throw new Error("must not run"); }), status(409));
+});
+
 test("ambiguous Google submission remains unknown durably and cannot be replayed after restart", async t => {
   const f = await fixture(t); await f.approve();
   await assert.rejects(f.service.executeGoogleEffect(f.client.session.id, "call-1", input, async () => { throw new Error("connection lost"); }), /connection lost/);

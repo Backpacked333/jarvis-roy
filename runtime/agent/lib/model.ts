@@ -8,8 +8,28 @@ export function configuredModel(value = process.env.JARVIS_MODEL): string {
   return value || DEFAULT_MODEL;
 }
 
+/**
+ * The local profile's application context cap. Supplying it with every
+ * selection means a build made without access to the AI Gateway catalog, or a
+ * model published after the build, can still be selected; and a provider's
+ * very large maximum window never becomes the per-turn spend ceiling.
+ */
+export const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
+const MIN_CONTEXT_WINDOW_TOKENS = 16_384;
+const MAX_CONTEXT_WINDOW_TOKENS = 2_000_000;
+
+export function configuredContextWindowTokens(value = process.env.JARVIS_CONTEXT_WINDOW_TOKENS): number {
+  const text = value?.trim();
+  if (!text) return DEFAULT_CONTEXT_WINDOW_TOKENS;
+  if (!/^[1-9][0-9]{0,8}$/.test(text)) return DEFAULT_CONTEXT_WINDOW_TOKENS;
+  const tokens = Number(text);
+  return tokens >= MIN_CONTEXT_WINDOW_TOKENS && tokens <= MAX_CONTEXT_WINDOW_TOKENS ? tokens : DEFAULT_CONTEXT_WINDOW_TOKENS;
+}
+
 export function selectModel(context: DynamicModelContext) {
-  if (process.env.JARVIS_RUNTIME_PROFILE !== "cloud") return configuredModel();
+  if (process.env.JARVIS_RUNTIME_PROFILE !== "cloud") {
+    return { model: configuredModel(), modelContextWindowTokens: configuredContextWindowTokens() };
+  }
   if (!context.turn) throw new ModelBudgetDenied();
   // Reject a known configuration failure before creating a cost reservation.
   const apiKey = process.env.AI_GATEWAY_API_KEY?.trim();

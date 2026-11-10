@@ -79,6 +79,136 @@ test("tasks persist actual approval input, response, and completed result", asyn
   assert.equal(persisted.tasks[0].status, "completed");
 });
 
+for (const kind of ["approval", "question"] as const) {
+  for (const lateStatus of ["awaiting-input", "completed", "failed"] as const) {
+    test(`lost ${kind} response stays blocked after late ${lateStatus} delivery and restart`, async (t) => {
+      const setup = await makeService();
+      t.after(setup.close);
+      const { service, client, dataDirectory } = setup;
+      const events = approvalEvents();
+      if (kind === "question") {
+        events[2] = event("interaction.opened", {
+          interactionId: "interaction-1",
+          request: { kind, title: "Choose a color", prompt: "Which color?", allowFreeform: true, options: [] },
+        }, 3);
+      }
+      client.session.initial = new FakeDelivery(events);
+      let submissions = 0;
+      client.session.respond = async () => {
+        submissions += 1;
+        // The server may have consumed the answer before its receipt was lost.
+        throw new Error("Synthetic connection lost after request admission");
+      };
+      const task = await service.createTask("Exercise response recovery without external effects.");
+      await waitFor(async () => (await service.state()).tasks[0]?.status === "waiting");
+      const answer = () => service.respond(task.id, "interaction-1", kind === "approval" ? "approve" : "", 1,
+        kind === "question" ? "Blue" : undefined);
+      await assert.rejects(answer(), (error: unknown) => error instanceof BridgeError && error.status === 502 && /Do not retry/.test(error.message));
+      const assertBlocked = async (current: JarvisService) => {
+        const record = (await current.state()).tasks[0]!;
+        assert.equal(record.status, "interrupted");
+        assert.deepEqual(record.approvals, []);
+        assert.deepEqual(record.questions, []);
+        assert.deepEqual(current.harnessApprovals(), []);
+        await assert.rejects(current.respond(task.id, "interaction-1", "approve"),
+          (error: unknown) => error instanceof BridgeError && error.status === 409);
+        await assert.rejects(current.createTask("Continue", task.conversationId),
+          (error: unknown) => error instanceof BridgeError && error.status === 409);
+      };
+      await assertBlocked(service);
+
+      client.session.initial.emit(event("turn.started", { turnId: "turn-1" }, 6));
+      client.session.initial.emit(event("interaction.opened", events[2]!.data, 7));
+      client.session.initial.emit(event("turn.paused", { turnId: "turn-1" }, 8));
+      client.session.initial.emit(event("content.completed", {
+        partId: "late-reply", kind: "text", phase: "reply", value: "Unconfirmed late output",
+      }, 9));
+      client.session.initial.emit(event("delivery.settled", { outcome: lateStatus === "completed" ? "handled" : lateStatus }, 10));
+      client.session.initial.finish({ status: lateStatus, reply: "Unconfirmed late output" });
+      await service.waitForObservedDelivery(task.id);
+      await assertBlocked(service);
+      assert.equal((await service.state()).tasks[0]?.reply, "");
+      assert.equal((await service.state()).tasks[0]?.lateReply, "Unconfirmed late output");
+      const persisted = JSON.parse(await readFile(path.join(dataDirectory, "tasks.json"), "utf8"));
+      assert.equal(persisted.tasks[0].responseUnconfirmed, true);
+      assert.equal(submissions, 1);
+
+      const restarted = await JarvisService.create({ client, dataDirectory, model: "test/model" });
+      await assertBlocked(restarted);
+      client.session.confirmCancellation = false;
+      await restarted.stop();
+      await assertBlocked(restarted);
+      client.session.confirmCancellation = true;
+      const [cancelled] = await restarted.stop();
+      assert.equal(cancelled?.status, "cancelled");
+      const afterStop = await JarvisService.create({ client, dataDirectory, model: "test/model" });
+      assert.equal((await afterStop.state()).tasks[0]?.status, "cancelled");
+      assert.equal(submissions, 1, "Stop and restart must never replay an answer");
+    });
+  }
+}
+
+test("lost response stays single-submit while the durable quarantine commit is pending", async (t) => {
+  const setup = await makeService();
+  t.after(setup.close);
+  const { service, client } = setup;
+  client.session.initial = new FakeDelivery(approvalEvents(), { status: "awaiting-input" });
+  const task = await service.createTask("Exercise slow durable response recovery.");
+  await waitFor(async () => (await service.state()).tasks[0]?.status === "waiting");
+  await service.waitForObservedDelivery(task.id);
+  let submissions = 0;
+  client.session.respond = async () => {
+    submissions += 1;
+    throw new Error("Synthetic lost receipt");
+  };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let committing = false;
+  const update = TaskStore.prototype.update;
+  t.mock.method(TaskStore.prototype, "update", async function (this: TaskStore, ...args: Parameters<typeof update>) {
+    committing = true;
+    await gate;
+    return update.apply(this, args);
+  });
+  const response = assert.rejects(service.respond(task.id, "interaction-1", "approve"),
+    (error: unknown) => error instanceof BridgeError && error.status === 502);
+  try {
+    await waitFor(async () => committing);
+    assert.equal((await service.state()).tasks[0]?.status, "waiting", "The transaction has not published yet");
+    // Observe admission synchronously; a buggy retry would itself wait on the commit gate.
+    const retry = assert.rejects(service.respond(task.id, "interaction-1", "approve"),
+      (error: unknown) => error instanceof BridgeError && error.status === 409);
+    release();
+    await Promise.all([response, retry]);
+    assert.equal(submissions, 1);
+    assert.equal((await service.state()).tasks[0]?.status, "interrupted");
+  } finally {
+    release();
+    await response;
+  }
+});
+
+test("a response rejection arriving after confirmed Stop does not reopen the cancelled task", async (t) => {
+  const setup = await makeService();
+  t.after(setup.close);
+  const { service, client } = setup;
+  client.session.initial = new FakeDelivery(approvalEvents(), { status: "awaiting-input" });
+  let rejectResponse!: (error: Error) => void;
+  client.session.respond = () => new Promise((_resolve, reject) => { rejectResponse = reject; });
+  const task = await service.createTask("Exercise Stop during an approval response.");
+  await waitFor(async () => (await service.state()).tasks[0]?.status === "waiting");
+  await service.waitForObservedDelivery(task.id);
+  const response = assert.rejects(service.respond(task.id, "interaction-1", "approve"),
+    (error: unknown) => error instanceof BridgeError && error.status === 502);
+  await waitFor(async () => rejectResponse !== undefined);
+  assert.equal((await service.cancel(task.id)).status, "cancelled");
+  rejectResponse(new Error("Synthetic late receipt failure"));
+  await response;
+  assert.equal((await service.state()).tasks[0]?.status, "cancelled");
+  const restarted = await JarvisService.create({ client, dataDirectory: setup.dataDirectory });
+  assert.equal((await restarted.state()).tasks[0]?.status, "cancelled");
+});
+
 test("cancellation waits for the eve turn-settled confirmation", async (t) => {
   const setup = await makeService();
   t.after(setup.close);

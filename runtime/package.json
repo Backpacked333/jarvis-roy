@@ -7,6 +7,8 @@
   },
   "scripts": {
     "start": "node bridge/server.ts",
+    "start:all": "node ../scripts/start-local.mjs",
+    "doctor": "node ../scripts/doctor.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "build": "eve build"

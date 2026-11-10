@@ -31,6 +31,7 @@ function isTaskRecord(value: unknown): value is TaskRecord {
     (value.sessionId === undefined || typeof value.sessionId === "string") &&
     (value.projectId === undefined || (typeof value.projectId === "string" && PROJECT_ID.test(value.projectId))) &&
     (value.lateReply === undefined || typeof value.lateReply === "string") &&
+    (value.responseUnconfirmed === undefined || typeof value.responseUnconfirmed === "boolean") &&
     (value.googleEffects === undefined || (Array.isArray(value.googleEffects) && value.googleEffects.length <= 64 &&
       value.googleEffects.every(item => GoogleEffectReceiptSchema.safeParse(item).success))) &&
     (value.replyParts === undefined || (object(value.replyParts) &&
@@ -109,7 +110,7 @@ export class TaskStore {
         if (["submitting", "dispatching"].includes(receipt.status)) receipt.status = "unknown";
         else if (["pending", "approved"].includes(receipt.status)) receipt.status = "revoked";
       }
-      if (!TERMINAL_STATUSES.has(task.status) || task.observingDeliveries || task.cancellationPending) {
+      if (!TERMINAL_STATUSES.has(task.status) || task.observingDeliveries || task.cancellationPending || task.responseUnconfirmed) {
         task.status = "interrupted";
         task.approvals = [];
         task.cancelRequested = false;

@@ -102,7 +102,8 @@ async function fixture(t: TestContext, approval = false, extractPdf?: KnowledgeO
     return JSON.parse(raw);
   }
   async function waitFor(predicate: () => boolean | Promise<boolean>) {
-    const deadline = Date.now() + 4_000;
+    // Generous on purpose: on a busy shared runner the durable state writes behind this have taken longer than four seconds.
+    const deadline = Date.now() + 15_000;
     while (!await predicate()) { assert.ok(Date.now() < deadline, `Integrated state deadline: ${JSON.stringify(service.taskSnapshot())}`); await delay(10); }
   }
   const state = async () => AssistantStateSchema.parse(await request("/v1/assistant/state"));

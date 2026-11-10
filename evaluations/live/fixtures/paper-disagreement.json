@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "id": "paper-disagreement",
+  "prompt": "Compare the two papers imported in this project and identify where they substantively disagree. Support each empirical claim with the passage it comes from.",
+  "documents": [
+    {
+      "filename": "okafor-lindqvist-2023.md",
+      "title": "Group Commit in Embedded Stores (Okafor & Lindqvist, 2023)",
+      "text": "# Group Commit in Embedded Stores\nOkafor, N. and Lindqvist, E. (2023). Proceedings of the Workshop on Embedded Data Systems.\n\n## Method\nWe modified an embedded SQL store to delay fsync and group all commits arriving within a fixed window. We tested windows of 0, 2, 4 and 8 ms on four enterprise NVMe drives, all with power-loss protection capacitors. The workload was 1 KB inserts from 16 threads.\n\n## Results\nAn 8 ms window raised throughput by a factor of 3.1 compared with per-transaction fsync. The 99th percentile commit latency rose from 4 ms to 11 ms. In 200 forced power-cut trials we observed no loss of acknowledged transactions at any window size.\n\n## Conclusion\nGroup commit with an 8 ms window is a safe default for embedded stores: durability is unaffected and throughput triples.\n"
+    },
+    {
+      "filename": "marchetti-2024.md",
+      "title": "Does Group Commit Survive Power Loss? (Marchetti et al., 2024)",
+      "text": "# Does Group Commit Survive Power Loss on Consumer Drives?\nMarchetti, G., Oyelaran, T. and Brandt, K. (2024). Journal of Practical Storage, 9(3).\n\n## Method\nWe repeated the group-commit experiment of Okafor and Lindqvist on six consumer SATA solid-state drives whose volatile write caches cannot be disabled. We used the same 1 KB insert workload and windows of 0, 2, 4 and 8 ms, and cut power 500 times per configuration.\n\n## Results\nThroughput rose by a factor of 1.4 at an 8 ms window. Tail latency increased, as in the earlier study. With windows longer than 2 ms, up to 0.7% of transactions that had been acknowledged to the client were missing after power was restored. At 2 ms or below we observed no loss.\n\n## Discussion\nThe earlier claim that durability is unaffected does not generalise. Its drives all had power-loss protection. On consumer hardware we recommend a window of at most 2 ms.\n"
+    }
+  ],
+  "truth": "The papers disagree on (1) durability: Okafor & Lindqvist say group commit leaves durability unaffected, Marchetti et al. measure up to 0.7% of acknowledged transactions lost on power failure with windows above 2 ms on consumer SATA drives with volatile write caches; (2) the size of the throughput gain: 3.1x versus 1.4x; (3) the recommended commit window: 8 ms versus no more than 2 ms. They agree that tail latency rises. Marchetti attributes the difference to hardware: Okafor tested only enterprise NVMe drives with power-loss protection. Neither paper reports results for spinning disks or for network storage, and a good answer does not invent any, nor declare one paper simply right beyond what the passages support.",
+  "checks": [
+    {
+      "kind": "includes_any",
+      "values": [
+        "3.1"
+      ],
+      "why": "reports Okafor's measured gain"
+    },
+    {
+      "kind": "includes_any",
+      "values": [
+        "1.4"
+      ],
+      "why": "reports Marchetti's measured gain"
+    },
+    {
+      "kind": "includes_any",
+      "values": [
+        "0.7"
+      ],
+      "why": "reports the measured loss rate"
+    }
+  ]
+}

@@ -50,11 +50,18 @@ struct JarvisApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = AppModel()
 
+    init() {
+        // Must run before any preference is read, including by the model created for the first window.
+        RuntimePreferences.registerFirstRunDefaults()
+        JarvisFonts.registerBundledFonts()
+    }
+
     var body: some Scene {
-        WindowGroup("Jarvis", id: "main") {
+        // One window. A group would open a second copy from the menu bar and run its start-up work again.
+        Window("Jarvis", id: "main") {
             JarvisSceneHost(model: model, delegate: delegate)
         }
-        .defaultSize(width: 1280, height: 840)
+        .defaultSize(width: 1440, height: 900)
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .newItem) {
@@ -62,6 +69,12 @@ struct JarvisApp: App {
                     .keyboardShortcut("n", modifiers: .command)
                 Button("Stop all work") { Task { await model.stopAll() } }
                     .keyboardShortcut(".", modifiers: .command)
+            }
+            CommandMenu("Go") {
+                ForEach(Array(WorkspaceTab.available(assistant: AssistantFeatures.assistant).enumerated()), id: \.element) { index, tab in
+                    Button(tab.title) { model.tab = tab }
+                        .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                }
             }
         }
         MenuBarExtra("Jarvis", systemImage: "waveform.circle") {
@@ -82,20 +95,17 @@ private struct JarvisSceneHost: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if supervisor.state != .ready {
-                HStack {
-                    if supervisor.state == .starting { ProgressView().controlSize(.small) }
-                    Text(supervisor.detail).font(.callout).textSelection(.enabled)
-                    Spacer()
-                    SettingsLink { Label("Settings", systemImage: "gearshape") }
-                    if supervisor.state == .failed {
-                        Button("Retry") { Task { await supervisor.start() } }
-                    }
-                }.padding().background(.regularMaterial)
+            if let notice = ReadinessNotice.current(state: supervisor.state, detail: supervisor.detail, failureLog: supervisor.failureLog,
+                // The app knows what it gave the services; with the developer launcher only the bridge can say.
+                providerConfigured: supervisor.externallyManaged ? model.providerConfigured : supervisor.providerConfigured) {
+                ReadinessBanner(notice: notice, addKey: { setupVisible = true },
+                                retry: { Task { await supervisor.start() } },
+                                diagnostics: { supervisor.diagnosticsReport() })
             }
-            WorkspaceView(model: model, voice: model.voice)
+            HUDShell(model: model, voice: model.voice)
         }
-        .frame(minWidth: 1050, minHeight: 720)
+        // The handoff's minimum: below this the deck's columns no longer fit beside the core.
+        .frame(minWidth: 1280, minHeight: 800)
         .preferredColorScheme(.dark)
         .task {
             await supervisor.start()
@@ -114,6 +124,9 @@ private struct JarvisSceneHost: View {
         }
         .onChange(of: supervisor.state) { _, state in
             if state == .ready { model.startObserving() }
+        }
+        .onChange(of: model.setupRequested) { _, requested in
+            if requested { setupVisible = true; model.setupRequested = false }
         }
         .onChange(of: scenePhase) { _, phase in model.setApplicationActive(phase == .active) }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)) { _ in model.muteVoice() }
