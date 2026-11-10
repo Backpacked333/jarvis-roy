@@ -1,9 +1,33 @@
 # Jarvis implementation and release status
 
 This document separates implemented source code from release acceptance for the
-voice-first research and action plan. The app remains a **source-build preview**.
-New Assistant, Knowledge, Personal Memory, Semantic Retrieval, Research and Voice Approval flags default off. No stage is
-declared released solely because its automated tests pass.
+voice-first research and action plan. The app remains a **preview**: CI now builds a
+self-contained, ad-hoc signed disk image, but nothing has been accepted on a physical Mac.
+A new installation starts with the Assistant, Knowledge and Personal Memory on; Semantic
+Retrieval, Research, Voice Approval and everything that acts on the Mac, reaches an account,
+leaves the Mac or spends unattended still default off. No stage is declared released solely
+because its automated tests pass.
+
+## Startup, packaging and HUD update
+
+- **Startup:** local model selection no longer depends on the build-time gateway catalog; a rejected
+  key fails with its reason instead of a silent cancellation; services stop themselves when the app
+  dies; service output is kept in redacted, capped logs and shown with a failed start; `npm run doctor`
+  lists what blocks a start.
+- **Packaging:** `scripts/package-macos.sh` produces a self-contained app and disk image. CI builds and
+  self-checks one for Apple silicon and one for Intel, and the Linux job proves the staged runtime runs
+  away from the checkout. Gatekeeper, Keychain and first launch on a real Mac are untested.
+- **HUD redesign (from the design handoff):** tokens, fonts and primitives; the Command Deck as home; the
+  core with the particle-face presence and a drawn-sphere fallback; the authorization lock with the
+  runtime's per-tool impact description; the Stop-all banner; the listening screen; rule-based
+  Anticipating signals. Checked only by CI builds, unit tests and rendered screenshots. The WebGL face,
+  voice, and every interaction are unverified on hardware.
+- **Not built:** operations theater, summon wheel, command palette, toasts, boot sequence, and the
+  Situation and Telemetry panels. Situation needs calendar reads through the existing per-calendar grants
+  and the native helper; Telemetry needs the runtime to record per-turn usage and latency. Both need
+  on-device or live-provider verification that was not possible in the session that added the HUD.
+- **Evaluation:** `evaluations/live/run.mjs` can run 15 of the 30 fixed tasks headlessly with a spend
+  cap and provisional machine scores. It has been dry-run only; no live run has been recorded.
 
 ## Persistent partner update
 
