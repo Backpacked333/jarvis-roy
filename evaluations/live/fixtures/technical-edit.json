@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "id": "technical-edit",
+  "prompt": "Improve the imported draft 'wal-notes-draft.md' for clarity without changing its meaning. Keep its citations.",
+  "documents": [
+    {
+      "filename": "wal-notes-draft.md",
+      "title": "Draft: WAL notes",
+      "text": "# WAL notes (draft)\n\nSo basically what was found in the study by Okafor & Lindqvist (2023) is that it is the case that when you do group commit with a window that is 8 ms long the throughput goes up really quite a lot, by a factor of 3.1, although that was on enterprise drives. However, and this is important, it was then subsequently reported by Marchetti et al. (2024) that when it comes to consumer drives there can be a loss of as much as 0.7% of transactions which had been acknowledged, if the window is longer than 2 ms, so for consumer drives we would probably want to recommend a window of 2 ms or less. It should be noted that neither of these two studies did any testing on phones at all.\n"
+    }
+  ],
+  "truth": "The revision must keep both citations (Okafor & Lindqvist 2023; Marchetti et al. 2024), both figures (3.1x and 0.7%), the 2 ms recommendation for consumer drives and the limitation that phones were not tested. It must not add claims that are not in the draft. It should be presented as a reviewable revision (ideally a draft the person can accept), not silently described.",
+  "checks": [
+    {
+      "kind": "includes_any",
+      "values": [
+        "Okafor"
+      ],
+      "why": "keeps the first citation"
+    },
+    {
+      "kind": "includes_any",
+      "values": [
+        "Marchetti"
+      ],
+      "why": "keeps the second citation"
+    },
+    {
+      "kind": "includes_any",
+      "values": [
+        "3.1"
+      ],
+      "why": "keeps the first figure"
+    },
+    {
+      "kind": "includes_any",
+      "values": [
+        "0.7"
+      ],
+      "why": "keeps the second figure"
+    }
+  ]
+}

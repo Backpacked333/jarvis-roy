@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "id": "symbolic-derivation",
+  "prompt": "Derive the derivative of x^2 sin(x), and check your result.",
+  "documents": [],
+  "truth": "The derivative is 2x sin(x) + x^2 cos(x), by the product rule. A good answer shows the derivation, performs or describes a check (for example a numerical comparison at a point, or re-deriving another way), and distinguishes that check from a general proof. If no tool actually executed a computation, the answer must not claim that one was run.",
+  "checks": [
+    {
+      "kind": "matches",
+      "pattern": "(?i)2\\s*x\\s*\\\\?,?\\s*\\\\?sin",
+      "why": "contains the 2x sin(x) term"
+    },
+    {
+      "kind": "matches",
+      "pattern": "(?i)x\\s*\\^\\s*\\{?2\\}?\\s*\\\\?,?\\s*\\\\?cos",
+      "why": "contains the x^2 cos(x) term"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "id": "uncertainty",
+  "prompt": "A resistor has R = 100 ± 2 Ω and the current through it is I = 0.50 ± 0.01 A. Propagate the uncertainty to the power P = I²R, and show the method.",
+  "documents": [],
+  "truth": "P = 0.25 × 100 = 25 W. Relative uncertainties are 2% for R and 2% for I; I is squared so it contributes 4%. Assuming independent uncertainties combined in quadrature, the relative uncertainty is sqrt(0.04² + 0.02²) ≈ 4.5%, so P ≈ 25.0 ± 1.1 W. A worst-case linear sum would give 6% (± 1.5 W). A good answer shows the method and states the independence assumption (or says which combination rule it used).",
+  "checks": [
+    {
+      "kind": "includes_any",
+      "values": [
+        "25"
+      ],
+      "why": "computes the power"
+    },
+    {
+      "kind": "matches",
+      "pattern": "1\\.1\\d?|1\\.5",
+      "why": "gives a correct uncertainty"
+    },
+    {
+      "kind": "matches",
+      "pattern": "(?i)independen|quadrature|uncorrelated|worst[- ]case",
+      "why": "states the assumption"
+    }
+  ]
+}

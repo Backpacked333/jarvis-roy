@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "id": "counterexample",
+  "prompt": "Test this conjecture: for every positive integer n, the number n² + n + 41 is prime.",
+  "documents": [],
+  "truth": "The conjecture is false. For n = 40, n² + n + 41 = 1681 = 41 × 41. (Also n = 41 gives 1763 = 41 × 43.) It does hold for n = 1 to 39. A good answer gives a verified counterexample with the factorisation.",
+  "checks": [
+    {
+      "kind": "includes_any",
+      "values": [
+        "1681",
+        "1763"
+      ],
+      "why": "gives a composite value"
+    },
+    {
+      "kind": "matches",
+      "pattern": "(?i)false|not (?:true|prime)|counter-?example|fails",
+      "why": "says the conjecture fails"
+    }
+  ]
+}

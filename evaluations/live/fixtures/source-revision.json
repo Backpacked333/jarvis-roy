@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "id": "source-revision",
+  "prompt": "Compare the two imported versions of the sync protocol specification. What changed between them, and which version states that the maximum payload is 16 MB?",
+  "documents": [
+    {
+      "filename": "sync-protocol-v1.md",
+      "title": "Sync protocol specification, version 1",
+      "text": "# Sync protocol specification — version 1 (2024-02-10)\n\n1. Clients authenticate with a signed device credential or a legacy token.\n2. The maximum payload per request is 4 MB.\n3. On a transient failure the client retries after a fixed delay of 5 seconds.\n4. Writes are applied in the order the server receives them.\n"
+    },
+    {
+      "filename": "sync-protocol-v2.md",
+      "title": "Sync protocol specification, version 2",
+      "text": "# Sync protocol specification — version 2 (2025-01-22)\n\n1. Clients authenticate with a signed device credential. Legacy tokens are no longer accepted.\n2. The maximum payload per request is 16 MB.\n3. On a transient failure the client retries with exponential backoff, starting at 1 second and capped at 60 seconds.\n4. Every write must carry an Idempotency-Key header; the server ignores a repeated key.\n5. Writes are applied in the order the server receives them.\n"
+    }
+  ],
+  "truth": "Version 2 states the 16 MB maximum payload (version 1 says 4 MB). Changes from v1 to v2: retry changed from a fixed 5 second delay to exponential backoff starting at 1 second and capped at 60 seconds; maximum payload raised from 4 MB to 16 MB; legacy token authentication removed (signed device credentials only); a required Idempotency-Key header added for writes. A correct answer attributes each statement to the right version and does not mix them up.",
+  "checks": [
+    {
+      "kind": "includes_any",
+      "values": [
+        "16"
+      ],
+      "why": "states the new limit"
+    },
+    {
+      "kind": "matches",
+      "pattern": "(?i)\\bv(?:ersion)?\\s*2\\b|second version|newer version",
+      "why": "attributes it to version 2"
+    },
+    {
+      "kind": "matches",
+      "pattern": "(?i)idempoten",
+      "why": "notes the new header"
+    },
+    {
+      "kind": "matches",
+      "pattern": "(?i)exponential|backoff",
+      "why": "notes the retry change"
+    }
+  ]
+}

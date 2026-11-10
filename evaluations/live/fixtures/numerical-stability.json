@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "id": "numerical-stability",
+  "prompt": "Compare the numerical behavior of sqrt(x+1) - sqrt(x) and 1/(sqrt(x+1) + sqrt(x)) for large x such as 1e15 and 1e16 in double precision. Which should I use, and why?",
+  "documents": [],
+  "truth": "The two expressions are algebraically equal. The first subtracts two nearly equal numbers and suffers catastrophic cancellation; at x = 1e16 in IEEE 754 double precision x+1 rounds to x, so it evaluates to exactly 0, while the true value is about 5e-9. The second form has no subtraction and stays accurate (about 1.58e-8 at 1e15 and 5e-9 at 1e16). Use the second. A good answer states the assumed environment (IEEE 754 binary64) and does not present figures as measured output unless a tool actually ran them.",
+  "checks": [
+    {
+      "kind": "matches",
+      "pattern": "(?i)cancell?ation",
+      "why": "names the cause"
+    },
+    {
+      "kind": "matches",
+      "pattern": "5(?:\\.0+)?\\s*(?:e|E|×\\s*10\\s*\\^?\\s*\\{?|\\\\times\\s*10\\s*\\^?\\s*\\{?|x\\s*10\\s*\\^?\\s*\\{?)\\s*[-−]\\s*0?9",
+      "why": "gives the correct magnitude at 1e16"
+    }
+  ]
+}

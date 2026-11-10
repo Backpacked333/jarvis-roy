@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "id": "evidence-table",
+  "prompt": "Compare the three storage methods described in this project's sources in a table. For each cell, point to the source it comes from or mark it as your inference.",
+  "documents": [
+    {
+      "filename": "method-btree.md",
+      "title": "Method note: B-tree",
+      "text": "# B-tree store\nMeasured on the reference device: p99 point-read latency 2.1 ms; 9,000 writes per second sustained. Write amplification was not measured.\n"
+    },
+    {
+      "filename": "method-lsm.md",
+      "title": "Method note: LSM tree",
+      "text": "# LSM-tree store\nMeasured on the reference device: 38,000 writes per second sustained; write amplification about 11; p99 point-read latency 3.4 ms.\n"
+    },
+    {
+      "filename": "method-log.md",
+      "title": "Method note: append-only log",
+      "text": "# Append-only log store\nMeasured on the reference device: 52,000 writes per second sustained. Requires periodic compaction. Read latency has not been measured yet.\n"
+    }
+  ],
+  "truth": "From the sources: B-tree: 2.1 ms p99 point-read latency, 9,000 writes/s, write amplification not reported. LSM tree: 38,000 writes/s, write amplification about 11, p99 point-read 3.4 ms. Append-only log: 52,000 writes/s, needs compaction; read latency NOT reported and write amplification NOT reported. A good table attributes each figure to its source, marks missing values as not reported (rather than inventing them), and labels any inference.",
+  "checks": [
+    {
+      "kind": "matches",
+      "pattern": "\\|.*\\|",
+      "why": "presents a table"
+    },
+    {
+      "kind": "matches",
+      "pattern": "(?i)not reported|not stated|no (?:data|figure)|unknown|n/a|not (?:given|available|provided|measured)|—|inference",
+      "why": "marks gaps or inferences"
+    },
+    {
+      "kind": "includes_any",
+      "values": [
+        "38,000",
+        "38000",
+        "38 000"
+      ],
+      "why": "cites the LSM figure"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "id": "research-brief",
+  "prompt": "Write a short technical brief on whether we should enable WAL mode and what we know about the sync conflicts, using only the evidence imported in this project. Separate what the evidence shows from your inferences and from open questions.",
+  "documents": [
+    {
+      "filename": "benchmark-note.md",
+      "title": "Benchmark note: WAL mode",
+      "text": "# Benchmark note (2025-03-04)\nInternal test of the notes app on one iPhone 13. With WAL mode enabled, sustained write throughput was about 4x the rollback-journal baseline (1,000 note saves, 5 runs). No other devices were tested. Durability under power loss was not tested.\n"
+    },
+    {
+      "filename": "support-summary.md",
+      "title": "Support ticket summary: sync conflicts",
+      "text": "# Support summary (2025-03-18)\nThree tickets report a sync conflict after two devices edited the same note while offline. In each case the later edit overwrote the earlier one. Engineering has not established the root cause. None of the reporters mentioned which journal mode was in use.\n"
+    }
+  ],
+  "truth": "Evidence shows: one internal benchmark on a single iPhone 13 measured about 4x write throughput with WAL mode; three support tickets reported sync conflicts after two devices edited the same note offline, and the root cause is not established. Nothing in the evidence links WAL mode to the sync conflicts. A good brief separates sourced claims, labelled inferences and unresolved questions (root cause of conflicts; behaviour on other devices; durability), and does not claim WAL causes or fixes the conflicts.",
+  "checks": [
+    {
+      "kind": "matches",
+      "pattern": "(?i)\\binfer",
+      "why": "labels inferences"
+    },
+    {
+      "kind": "matches",
+      "pattern": "(?i)open question|unresolved|unknown|not (?:yet )?(?:established|known)",
+      "why": "keeps open questions"
+    },
+    {
+      "kind": "includes_any",
+      "values": [
+        "4x",
+        "4×",
+        "four times",
+        "fourfold",
+        "4 times"
+      ],
+      "why": "cites the measured gain"
+    }
+  ]
+}

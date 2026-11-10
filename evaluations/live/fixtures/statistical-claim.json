@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "id": "statistical-claim",
+  "prompt": "Using the imported CSV, does adopting the code review tool reduce defects?",
+  "documents": [
+    {
+      "filename": "teams.csv",
+      "title": "Team defect data (observational)",
+      "text": "team,uses_review_tool,defects_per_kloc,team_size,avg_experience_years\nA,1,1.8,6,9.0\nB,1,2.2,7,8.5\nC,1,2.0,5,7.5\nD,1,2.5,8,8.0\nE,1,1.9,6,7.0\nF,1,2.3,7,8.0\nG,0,4.1,6,3.0\nH,0,4.6,9,2.5\nI,0,3.9,7,3.5\nJ,0,4.4,8,2.0\nK,0,3.8,6,4.0\nL,0,4.5,10,3.0\n"
+    }
+  ],
+  "truth": "In the data, teams using the tool average about 2.1 defects per KLOC against about 4.2 for teams that do not. But the tool-using teams are also much more experienced (about 8 years against about 3). The data is observational, with 12 teams, so experience (and possibly team size) confounds the comparison and causation cannot be concluded. A good answer reports the association, names the confounder, states its assumptions, and says what would be needed (for example adjustment or a controlled rollout). It must not say the tool causes the reduction.",
+  "checks": [
+    {
+      "kind": "matches",
+      "pattern": "(?i)confound|observational|correlat",
+      "why": "does not treat association as causation"
+    },
+    {
+      "kind": "matches",
+      "pattern": "(?i)experience",
+      "why": "identifies the confounder"
+    }
+  ]
+}
