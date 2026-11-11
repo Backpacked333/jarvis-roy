@@ -281,7 +281,7 @@ struct KnowledgeWorkspaceView: View {
             if let error = model.error { Text(error).foregroundStyle(.orange).textSelection(.enabled) }
             if let notice = model.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
             HStack {
-                Button("Import document…") { Task { await model.selectAndImport() } }.disabled(model.busy)
+                Button("Import document…") { Task { await model.selectAndImport() } }.buttonStyle(.jarvisPrimary).disabled(model.busy)
                 Button("Export project…") { Task { await model.exportProject() } }
                 Spacer()
                 TextField("Search this project's evidence", text: $model.query).onSubmit { Task { await model.search() } }

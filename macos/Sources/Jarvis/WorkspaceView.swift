@@ -4,9 +4,17 @@ import AppKit
 /// Window-level interface state shared by the shell, the menu commands and the command palette.
 @MainActor
 final class WorkspaceChrome: ObservableObject {
-    @Published var sidebarVisible = true
-    @Published var inspectorVisible = true
+    private static let sidebarKey = "Jarvis.sidebarVisible", inspectorKey = "Jarvis.activityVisible"
+    @Published var sidebarVisible: Bool { didSet { UserDefaults.standard.set(sidebarVisible, forKey: Self.sidebarKey) } }
+    @Published var inspectorVisible: Bool { didSet { UserDefaults.standard.set(inspectorVisible, forKey: Self.inspectorKey) } }
     @Published var paletteVisible = false
+
+    init() {
+        // Both panels start visible; later launches restore what you last chose.
+        let defaults = UserDefaults.standard
+        sidebarVisible = defaults.object(forKey: Self.sidebarKey) as? Bool ?? true
+        inspectorVisible = defaults.object(forKey: Self.inspectorKey) as? Bool ?? true
+    }
 }
 
 extension WorkspaceTab {
