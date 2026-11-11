@@ -92,7 +92,7 @@ private struct ObjectiveResearchResultCard: View {
             Text(.init(result.deliverable.markdown)).textSelection(.enabled)
             ForEach(Array(result.deliverable.unresolved.enumerated()), id: \.offset) { entry in Text("Unresolved: \(entry.element)").textSelection(.enabled) }
             Text(result.budgetNotice).font(.caption).foregroundStyle(.secondary)
-        }.padding(18).background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 12))
+        }.padding(18).jarvisSurface(.panel, radius: 12)
     }
 }
 private struct ObjectiveWorkerResultCard: View {
@@ -110,6 +110,6 @@ private struct ObjectiveWorkerResultCard: View {
                 }
             }
             if worker.omittedArtifacts > 0 { Text("\(worker.omittedArtifacts) additional artifacts were omitted from this package.").font(.caption).foregroundStyle(.secondary) }
-        }.padding(18).background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 12))
+        }.padding(18).jarvisSurface(.panel, radius: 12)
     }
 }

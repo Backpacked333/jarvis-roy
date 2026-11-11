@@ -172,7 +172,7 @@ private struct CloudConversationDetail: View {
             HStack(alignment: .bottom) {
                 TextField("Ask your cloud assistant…", text: $model.draft, axis: .vertical).id(model.selectedID).lineLimit(2...5)
                     .textFieldStyle(.roundedBorder).disabled(model.selectedID == nil)
-                Button("Send") { Task { await model.send() } }.buttonStyle(.borderedProminent).disabled(sendDisabled)
+                Button("Send") { Task { await model.send() } }.buttonStyle(.jarvisPrimary).disabled(sendDisabled)
             }
         }
     }
@@ -183,7 +183,7 @@ private struct CloudMessageCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(message.role == "user" ? "You" : "Jarvis").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             Text(message.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-        }.padding(14).background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 10))
+        }.padding(14).jarvisSurface(.panel, radius: 12)
     }
 }
 @MainActor
@@ -199,7 +199,7 @@ private struct CloudTaskStatusView: View {
                     Text(approval.title).font(.headline)
                     Text(approval.detail).textSelection(.enabled)
                     Button("Review with owner passkey") { model.openSecureReview() }
-                }.padding(14).background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                }.padding(14).jarvisSurface(.warning, radius: 12)
             }
             ForEach(task.questions ?? []) { question in
                 CloudQuestionCard(task: task, question: question, model: model).id("\(question.id):\(question.revision ?? 0)")
@@ -233,6 +233,6 @@ private struct CloudQuestionCard: View {
                     }
                 }
             } else { Text("Refresh to inspect this question's current revision.").font(.caption).foregroundStyle(.secondary) }
-        }.padding(14).background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 10))
+        }.padding(14).jarvisSurface(.panel, radius: 12)
     }
 }

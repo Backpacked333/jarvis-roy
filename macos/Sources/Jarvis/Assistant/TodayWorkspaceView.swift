@@ -120,85 +120,89 @@ struct TodayWorkspaceView: View {
     private struct CloudConversationTarget: Identifiable { let profileID: String, projectID: String; var id: String { profileID + ":" + projectID } }
     @State private var stopTarget: ObjectiveStopTarget?
     private struct ObjectiveStopTarget { let objective: AssistantObjective, authority: String }
+    @Environment(\.theme) private var theme
     init(app: AppModel, assistant: AssistantModel) {
         self.app = app; self.assistant = assistant
         _today = StateObject(wrappedValue: TodayModel(client: assistant.client))
     }
     private var projectID: String? { profiles.selected == .cloud ? (cloudProjectID.isEmpty ? nil : cloudProjectID) : assistant.selectedSession?.focus.projectID }
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("What would make today a good day?").font(.largeTitle.weight(.medium))
-                        Text("Keep your work, decisions, and next conversation in one place.").foregroundStyle(.secondary)
-                    }
-                    Spacer()
+        PageScroll(maxWidth: 980) {
+            PageHeader(title: greeting, subtitle: "Keep your work, decisions, and next conversation in one place.") {
+                HStack(spacing: 8) {
                     Picker("Work location", selection: Binding(get: { profiles.selected }, set: { value in
                         do { try profiles.select(value) } catch { today.error = error.localizedDescription }
                     })) {
                         Text("This Mac").tag(RuntimeProfileKind.local)
                         if profiles.cloudProfile != nil { Text("Paired cloud").tag(RuntimeProfileKind.cloud) }
-                    }.frame(width: 180)
-                    Button { setupVisible = true } label: { Label("Setup", systemImage: "checklist") }
+                    }.labelsHidden().frame(width: 140).help("Where new work runs")
+                    Button { setupVisible = true } label: { Label("Setup", systemImage: "checklist") }.buttonStyle(.jarvisCompact)
                 }
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { quickActions }
+                VStack(alignment: .leading, spacing: 10) { quickActions }
+            }
+            if let error = today.error {
+                NoticeBanner(message: error, icon: "exclamationmark.triangle", tone: .warning, onDismiss: { today.error = nil })
+            }
+            if app.approvalCount > 0 {
                 HStack(spacing: 12) {
-                    if profiles.selected == .cloud, let profile = profiles.cloudProfile {
-                        Button("Talk to cloud Jarvis") {
-                            if cloudProjectID.isEmpty { cloudProjectID = UUID().uuidString }
-                            cloudConversation = .init(profileID: profile.id, projectID: cloudProjectID)
-                        }.buttonStyle(.borderedProminent)
-                    }
-                    Button { Task { await app.startNewConversation() } } label: { Label(profiles.selected == .cloud ? "Start a local conversation" : "Start a conversation", systemImage: "waveform") }
-                        .buttonStyle(.borderedProminent).disabled(!app.isConnected)
-                    if assistant.selectedSession != nil { Button("Continue conversation") { app.tab = .assistant } }
-                    Button { memoryVisible = true } label: { Label(profiles.selected == .cloud ? "Local memory inbox" : "Memory inbox", systemImage: "brain") }
-                }
-                if let error = today.error { Text(error).foregroundStyle(.orange).textSelection(.enabled) }
-                if !AssistantFeatures.objectives {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label("Keep a goal moving", systemImage: "target").font(.headline)
-                        Text("Enable objectives in Settings to run bounded research, keep checkpoints, and bring decisions back here.").foregroundStyle(.secondary)
-                        SettingsLink { Text("Open Settings") }
-                    }.padding(20).background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 14))
-                } else {
-                    objectiveComposer
-                    if let readiness = today.readiness {
+                    Image(systemName: "hand.raised.fill").foregroundStyle(theme.warning)
+                    Text("\(app.approvalCount) \(app.approvalCount == 1 ? "action needs" : "actions need") your review")
+                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.text)
+                    Spacer()
+                    Button("Review now") { app.tab = .workspace }.buttonStyle(.jarvisPrimary)
+                }.jarvisCard(.warning, padding: 16, radius: 16)
+            }
+            if !AssistantFeatures.objectives {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Keep a goal moving", systemImage: "target").font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.text)
+                    Text("Enable objectives in Settings to run bounded research, keep checkpoints, and bring decisions back here.")
+                        .font(.system(size: 13)).foregroundStyle(theme.muted)
+                    SettingsLink { Text("Open Settings") }
+                }.jarvisCard()
+            } else {
+                objectiveComposer
+                if let readiness = today.readiness {
+                    VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Label(readiness.acceptingWork ? "Ready for bounded work" : "Work is paused", systemImage: readiness.acceptingWork ? "checkmark.circle" : "pause.circle")
+                            StatusPill(label: readiness.acceptingWork ? "Ready for bounded work" : "Work is paused",
+                                       color: readiness.acceptingWork ? theme.success : theme.warning)
                             Spacer()
                             Text("\(readiness.activeWorkers)/\(readiness.maxWorkers) workers · $\(readiness.dailyCommittedUsd, specifier: "%.2f") / $\(readiness.dailyLimitUsd, specifier: "%.0f") today")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.system(size: 12)).monospacedDigit().foregroundStyle(theme.muted)
                         }
-                        if let reason = readiness.reason { Text(reason).font(.caption).foregroundStyle(.orange) }
+                        if let reason = readiness.reason { Text(reason).font(.system(size: 12)).foregroundStyle(theme.warning) }
                         if readiness.stopped, profiles.selected == .cloud {
                             Button("Resume cloud work") { Task { await today.resumeCloudWork() } }.disabled(today.busy)
-                            Text("Allows new work after uncertain tasks are resolved. Cancelled goals and old approvals remain closed.").font(.caption).foregroundStyle(.secondary)
+                            Text("Allows new work after uncertain tasks are resolved. Cancelled goals and old approvals remain closed.").font(.system(size: 12)).foregroundStyle(theme.muted)
                         }
-                        if readiness.unknownReservations > 0 { Text("\(readiness.unknownReservations) budget reservations have uncertain outcomes. Review them before starting more work.").font(.caption).foregroundStyle(.orange) }
-                    }
-                    HStack { Text("Your objectives").font(.title2); Spacer(); Button("Refresh") { Task { await today.refresh() } } }
-                    if today.objectives.isEmpty {
-                        ContentUnavailableView("Room for your next goal", systemImage: "target", description: Text("Describe a research result you want. Review the estimate and start when ready."))
-                    }
-                    ForEach(today.objectives) { objective in
-                        let authority = TodayModel.currentAuthorityID
-                        ObjectiveCard(objective: objective, busy: today.busy,
-                            inspect: { resultTarget = .init(objectiveID: objective.id, projectID: objective.projectId, authority: authority) },
-                            openProject: { if profiles.selected == .cloud { cloudProjectID = objective.projectId } else { Task { await app.openProject(objective.projectId) } } },
-                            control: { action in
-                                if action == "stop" { stopTarget = .init(objective: objective, authority: authority) }
-                                else { Task { await today.control(objective, action: action, authority: authority) } }
-                            }, answer: { await today.answer(objective, text: $0, authority: authority) })
+                        if readiness.unknownReservations > 0 { Text("\(readiness.unknownReservations) budget reservations have uncertain outcomes. Review them before starting more work.").font(.system(size: 12)).foregroundStyle(theme.warning) }
                     }
                 }
-                if app.approvalCount > 0 {
-                    HStack {
-                        Label("\(app.approvalCount) actions need your review", systemImage: "checkmark.shield")
-                        Spacer(); Button("Review actions") { app.tab = .workspace }
-                    }.padding(20).background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+                HStack {
+                    Text("Your objectives").font(.system(size: 18, weight: .semibold)).foregroundStyle(theme.text)
+                    Spacer()
+                    Button { Task { await today.refresh() } } label: { Image(systemName: "arrow.clockwise") }
+                        .buttonStyle(.jarvisIcon).help("Refresh objectives").accessibilityLabel("Refresh objectives")
                 }
-            }.padding(32).frame(maxWidth: 1_100, alignment: .leading).frame(maxWidth: .infinity)
+                if today.objectives.isEmpty {
+                    EmptyStateView(icon: "target", title: "Room for your next goal",
+                                   detail: "Describe a research result you want. Review the estimate and start when ready.")
+                        .jarvisSurface(.panel, radius: 16)
+                }
+                ForEach(today.objectives) { objective in
+                    let authority = TodayModel.currentAuthorityID
+                    ObjectiveCard(objective: objective, busy: today.busy,
+                        inspect: { resultTarget = .init(objectiveID: objective.id, projectID: objective.projectId, authority: authority) },
+                        openProject: { if profiles.selected == .cloud { cloudProjectID = objective.projectId } else { Task { await app.openProject(objective.projectId) } } },
+                        control: { action in
+                            if action == "stop" { stopTarget = .init(objective: objective, authority: authority) }
+                            else { Task { await today.control(objective, action: action, authority: authority) } }
+                        }, answer: { await today.answer(objective, text: $0, authority: authority) })
+                }
+            }
         }
         .task(id: TodayModel.currentAuthorityID) {
             today.resetAuthority()
@@ -230,11 +234,32 @@ struct TodayWorkspaceView: View {
             Button("Keep working", role: .cancel) { stopTarget = nil }
         } message: { Text("Jarvis will request cancellation and report whether the current work actually stopped. Completed effects remain recorded.") }
     }
+    private var greeting: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        return hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
+    }
+
+    @ViewBuilder private var quickActions: some View {
+        if profiles.selected == .cloud, let profile = profiles.cloudProfile {
+            Button {
+                if cloudProjectID.isEmpty { cloudProjectID = UUID().uuidString }
+                cloudConversation = .init(profileID: profile.id, projectID: cloudProjectID)
+            } label: { Label("Talk to cloud Jarvis", systemImage: "cloud") }.buttonStyle(.jarvisPrimary)
+            Button { Task { await app.startNewConversation() } } label: { Label("Start a local conversation", systemImage: "waveform") }
+                .disabled(!app.isConnected)
+        } else {
+            Button { Task { await app.startNewConversation() } } label: { Label("Start a conversation", systemImage: "waveform") }
+                .buttonStyle(.jarvisPrimary).disabled(!app.isConnected)
+        }
+        if assistant.selectedSession != nil { Button { app.tab = .assistant } label: { Label("Continue conversation", systemImage: "arrow.uturn.forward") } }
+        Button { memoryVisible = true } label: { Label(profiles.selected == .cloud ? "Local memory inbox" : "Memory inbox", systemImage: "brain") }
+    }
+
     private var objectiveComposer: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Give Jarvis a research objective", systemImage: "target").font(.headline)
+            Label("Give Jarvis a research objective", systemImage: "target").font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.text)
             TextField("For example: Compare the evidence for these approaches and write a sourced brief", text: goalBinding, axis: .vertical).id(draftScope)
-                .lineLimit(2...5).textFieldStyle(.roundedBorder)
+                .lineLimit(2...5).font(.system(size: 14)).jarvisField()
             if profiles.selected == .cloud {
                 HStack {
                     Picker("Cloud project", selection: $cloudProjectID) {
@@ -254,11 +279,11 @@ struct TodayWorkspaceView: View {
                     guard let projectID else { return }
                     let captured = goal, scope = draftScope, capturedCeiling = ceiling, capturedEvidence = evidenceSelection
                     Task { if await today.create(projectID: projectID, goal: captured, ceiling: capturedCeiling, evidence: capturedEvidence), goalDrafts[scope] == captured { goalDrafts[scope] = "" } }
-                }.disabled(today.busy || !evidenceSelection.valid || today.readiness?.acceptingWork != true || projectID == nil || goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || goal.utf16.count > 16_000)
+                }.buttonStyle(.jarvisPrimary).disabled(today.busy || !evidenceSelection.valid || today.readiness?.acceptingWork != true || projectID == nil || goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || goal.utf16.count > 16_000)
             }
             Text("Up to 30 minutes; two workers shared across objectives. Uses permitted project sources. Estimates are separate from provider billing caps. Actions still require their own approval.")
                 .font(.caption).foregroundStyle(.secondary)
-        }.padding(20).background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 14))
+        }.jarvisCard()
     }
 }
 
@@ -266,24 +291,25 @@ struct TodayWorkspaceView: View {
 private struct ObjectiveCard: View {
     let objective: AssistantObjective, busy: Bool, inspect: () -> Void, openProject: () -> Void, control: (String) -> Void, answer: (String) async -> Bool
     @State private var response = ""
+    @Environment(\.theme) private var theme
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(objective.title).font(.headline)
-                    Text(objective.statusLabel).font(.caption).foregroundStyle(objective.needsAttention ? Color.orange : Color.secondary)
+                    Text(objective.title).font(.system(size: 15, weight: .semibold))
+                    StatusPill(label: objective.statusLabel, color: objective.needsAttention ? theme.warning : theme.muted)
                 }
                 Spacer()
-                if objective.attempts.contains(where: { $0.status == "completed" }) { Button("Read result", action: inspect) }
+                if objective.attempts.contains(where: { $0.status == "completed" }) { Button("Read result", action: inspect).buttonStyle(.jarvisPrimary) }
                 Button("Open project", action: openProject)
             }
             Text(objective.goal).lineLimit(3).textSelection(.enabled)
             if let checkpoint = objective.checkpoint { Text(checkpoint.summary).font(.callout).textSelection(.enabled); Text("Checkpoint summary · verify against the outputs").font(.caption).foregroundStyle(.secondary) }
-            if let error = objective.lastError { Text(error).font(.callout).foregroundStyle(.orange) }
-            if objective.hasUncertainWork { Text("The last work or charge could not be confirmed. Jarvis will not silently repeat it.").font(.caption).foregroundStyle(.orange) }
+            if let error = objective.lastError { Text(error).font(.callout).foregroundStyle(theme.warning) }
+            if objective.hasUncertainWork { Text("The last work or charge could not be confirmed. Jarvis will not silently repeat it.").font(.caption).foregroundStyle(theme.warning) }
             if let question = objective.question {
                 Text(question.prompt).font(.headline)
-                HStack { TextField("Your answer", text: $response); Button("Reply") { let text = response; Task { if await answer(text), response == text { response = "" } } }.disabled(busy || response.isEmpty) }
+                HStack { TextField("Your answer", text: $response).jarvisField(); Button("Reply") { let text = response; Task { if await answer(text), response == text { response = "" } } }.disabled(busy || response.isEmpty) }
             }
             DisclosureGroup("Steps and observed work") {
                 ForEach(objective.steps) { step in
@@ -304,6 +330,6 @@ private struct ObjectiveCard: View {
                 if objective.status == "paused" { Button("Resume") { control("resume") }.disabled(busy) }
                 if !objective.terminal { Button("Stop", role: .destructive) { control("stop") }.disabled(busy) }
             }
-        }.padding(20).background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 14))
+        }.jarvisCard()
     }
 }

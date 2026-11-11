@@ -53,14 +53,14 @@ struct GuidedSetupView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) { Text("Make Jarvis yours").font(.title); Text("Set up one capability at a time. You can return here from Today.").foregroundStyle(.secondary) }
-                Spacer(); Button("Done") { completed = true; clearSecrets(); dismiss() }
+                Spacer(); Button("Done") { completed = true; clearSecrets(); dismiss() }.buttonStyle(.jarvisPrimary)
             }.padding(24)
             Divider()
             HSplitView {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(Array(steps.enumerated()), id: \.offset) { index, entry in
-                        Button { step = index } label: { Label(entry.0, systemImage: entry.1).frame(maxWidth: .infinity, alignment: .leading).padding(10) }
-                            .buttonStyle(.plain).background(step == index ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                        Button { step = index } label: { Label(entry.0, systemImage: entry.1).padding(10) }
+                            .buttonStyle(JarvisRowButtonStyle(selected: step == index))
                     }
                     Spacer()
                     SettingsLink { Label("All settings", systemImage: "gearshape") }
@@ -186,14 +186,16 @@ struct GuidedSetupView: View {
             Label("Back holds the displayed revision; Follow Jarvis resumes updates", systemImage: "pin")
             Label("Stop speaking leaves background work running", systemImage: "speaker.slash")
             Label("Closing the window keeps services available; Quit stops them", systemImage: "menubar.rectangle")
+            Label("⌘K jumps to any page, conversation or action", systemImage: "magnifyingglass")
+            LegendsModeToggle().frame(maxWidth: 320)
             Button("Start a conversation") { completed = true; clearSecrets(); dismiss(); Task { await app.startNewConversation() } }
-                .buttonStyle(.borderedProminent).disabled(runtime.state != .ready)
+                .buttonStyle(.jarvisPrimary).disabled(runtime.state != .ready)
             Text("Voice starts only after explicit session consent and macOS microphone permission. Test speakers, headphones, interruption, long pauses, and device changes on this Mac before relying on hands-free use.").font(.caption).foregroundStyle(.secondary)
         }
     }
     private func setupStatus(_ title: String, value: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 6) { HStack { Text(title).font(.headline); Spacer(); Text(value).font(.caption).foregroundStyle(.secondary) }; Text(detail).font(.caption).foregroundStyle(.secondary) }
-            .padding(14).background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
+            .padding(14).jarvisSurface(.panel, radius: 12)
     }
     private func clearSecrets() { gatewayCredential = ""; voiceCredential = ""; cloudBootstrap = "" }
     private func saveCredentials() {

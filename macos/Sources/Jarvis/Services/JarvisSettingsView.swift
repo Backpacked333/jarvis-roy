@@ -30,10 +30,18 @@ struct JarvisSettingsView: View {
     @AppStorage("Jarvis.dailyBriefingHour") private var dailyBriefingHour = 9
     @AppStorage("Jarvis.dailyBriefingMinute") private var dailyBriefingMinute = 0
     @AppStorage("Jarvis.dailyBriefingProjectID") private var dailyBriefingProjectID = ""
+    @AppStorage(JarvisTheme.legendsKey) private var legendsMode = false
 
     var body: some View {
         TabView {
             Form {
+                Section("Appearance") {
+                    Toggle(isOn: $legendsMode) {
+                        Label("Legends mode", systemImage: legendsMode ? "crown.fill" : "crown")
+                    }
+                    Text("Switches every window to dark with a gold accent. With it off, Jarvis follows your system light or dark appearance. Shortcut: ⇧⌘L.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Local assistant") {
                     Label(supervisor.state.rawValue.capitalized, systemImage: supervisor.state == .ready ? "checkmark.circle" : "network")
                     Text(supervisor.detail).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)

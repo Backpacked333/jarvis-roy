@@ -141,7 +141,7 @@ private struct ContextBudgetView: View {
                 Text("Budget: \(packet.omitted.budget) · Permission: \(packet.omitted.permission) · Scope: \(packet.omitted.scope) · Duplicates: \(packet.omitted.duplicate)").font(.caption)
                 Text("Beyond retrieval limit: \(packet.omitted.availableBeyondLimit) · Missing pins: \(packet.omitted.pinsMissing)").font(.caption)
             }
-        }.padding(16).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+        }.padding(16).jarvisSurface(.panel, radius: 12)
     }
 }
 
@@ -175,6 +175,6 @@ private struct ContextSelectionView: View {
                     Text("Selected as context; factual claims still require verification.").font(.caption).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
             }
-        }.padding(16).background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 10))
+        }.padding(16).jarvisSurface(.panel, radius: 12)
     }
 }

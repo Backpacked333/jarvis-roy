@@ -123,7 +123,7 @@ struct ResearchWorkspaceView: View {
                             if !run.settled { Button("Cancel") { Task { await model.cancel(run) } } }
                             if run.deliverableId != nil { Button("Read result and critique") { Task { await model.inspect(run) } } }
                         }
-                    }.padding(12).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+                    }.padding(12).jarvisSurface(.panel, radius: 12)
                 }
                 if let result = model.result {
                     Divider()
@@ -135,7 +135,7 @@ struct ResearchWorkspaceView: View {
                             Text("\(issue.severity.capitalized)\(issue.claimIndex.map { " · claim \($0 + 1)" } ?? ""): \(issue.explanation)").textSelection(.enabled)
                         }
                         Text("A separate model reviewed this draft. Factual verification still depends on the cited evidence and recorded checks.").font(.caption).foregroundStyle(.secondary)
-                    }.padding(14).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+                    }.padding(14).jarvisSurface(.panel, radius: 12)
                     Text(.init(result.deliverable.markdown)).textSelection(.enabled)
                     if !result.deliverable.unresolved.isEmpty {
                         Text("Unresolved questions").font(.headline)

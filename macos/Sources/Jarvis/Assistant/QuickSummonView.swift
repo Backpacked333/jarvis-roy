@@ -51,7 +51,7 @@ private struct QuickSummonView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Label("Ask Jarvis", systemImage: "waveform.circle.fill").font(.title2)
+                Label("Ask Jarvis", systemImage: "waveform.circle.fill").font(.title2.weight(.semibold))
                 Spacer()
                 Button("Workspace", action: openWorkspace).keyboardShortcut("o", modifiers: [.command])
             }
@@ -76,18 +76,19 @@ private struct QuickSummonView: View {
                             Button { captureStarted(); app.tab = .assistant; Task { await app.startManualListening() } } label: { Label("Speak", systemImage: "mic") }
                                 .disabled(!voice.cloudConsentGranted)
                         }
-                        if !voice.cloudConsentGranted { Text("Enable voice in the workspace").font(.caption).foregroundStyle(.secondary) }
+                        if !voice.cloudConsentGranted { Text("Turn on cloud voice from the Voice menu in the main window").font(.caption).foregroundStyle(.secondary) }
                         Spacer()
-                        Button("Send", action: send).buttonStyle(.borderedProminent)
+                        Button("Send", action: send).buttonStyle(.jarvisPrimary)
                             .disabled(assistant.submitting || assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
             } else {
                 Text("Open your workspace to continue a conversation. Enable the assistant experience in Settings for quick text and voice turns.").foregroundStyle(.secondary)
-                Button("Open workspace", action: openWorkspace).buttonStyle(.borderedProminent)
+                Button("Open workspace", action: openWorkspace).buttonStyle(.jarvisPrimary)
             }
         }.padding(24).frame(width: 572).background(.regularMaterial)
             .onAppear { focused = true }
+            .jarvisWorkspaceRoot()
     }
     private func send() {
         app.tab = .assistant

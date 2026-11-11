@@ -3,31 +3,32 @@ import AppKit
 import UniformTypeIdentifiers
 
 struct RoomsArtifactsView: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var model: RoomsModel
     @State private var selected: RoomsArtifactSelection?
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Immutable artifact shelf").font(.system(size: 23, weight: .light))
             Text("Files are sealed snapshots, not live worker folders. Downloaded bytes are checked against their manifest hash. HTML is displayed only as source.")
-                .font(.system(size: 12)).foregroundStyle(RoomsPalette.muted).lineSpacing(4)
+                .font(.system(size: 12)).foregroundStyle(theme.muted).lineSpacing(4)
             if model.artifacts.isEmpty {
                 RoomsPanel(title: "") { RoomsEmptyState(icon: "shippingbox", title: "Nothing fabricated. Nothing here yet.", detail: "Completed worker output and inert checkpoints will appear here only after the runtime seals real files.") }
             }
             ForEach(model.artifacts) { artifact in
-                RoomsPanel(title: artifact.nodeId, eyebrow: "SEALED OUTPUT · \(artifact.files.count) FILES") {
-                    HStack { RoomsStatus(value: artifact.verification); Spacer(); Text(artifact.createdAt).font(.caption2).foregroundStyle(RoomsPalette.muted) }
+                RoomsPanel(title: artifact.nodeId, eyebrow: "Sealed output · \(artifact.files.count) files") {
+                    HStack { RoomsStatus(value: artifact.verification); Spacer(); Text(artifact.createdAt).font(.caption2).foregroundStyle(theme.muted) }
                     Text(artifact.verificationSummary).font(.caption).textSelection(.enabled)
                     ForEach(artifact.files) { file in
                         Button { selected = .init(artifact: artifact, path: file.path) } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: "doc.text").foregroundStyle(RoomsPalette.cyan)
+                                Image(systemName: "doc.text").foregroundStyle(theme.accentText)
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(file.path).font(.system(size: 12, weight: .medium, design: .monospaced))
-                                    Text("\(file.mediaType) · \(file.bytes) bytes").font(.caption2).foregroundStyle(RoomsPalette.muted)
+                                    Text("\(file.mediaType) · \(file.bytes) bytes").font(.caption2).foregroundStyle(theme.muted)
                                 }
                                 Spacer()
-                                Image(systemName: "arrow.up.right").foregroundStyle(RoomsPalette.muted)
-                            }.padding(12).background(RoomsPalette.elevated, in: RoundedRectangle(cornerRadius: 8))
+                                Image(systemName: "arrow.up.right").foregroundStyle(theme.muted)
+                            }.padding(12).background(theme.elevated, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }.buttonStyle(.plain).accessibilityLabel("Inspect source or download \(file.path)")
                     }
                     DisclosureGroup("Provenance & content hashes") {
@@ -39,13 +40,13 @@ struct RoomsArtifactsView: View {
                             ForEach(artifact.inputDigests, id: \.self) { provenance("Upstream snapshot", $0) }
                             ForEach(artifact.files) { provenance($0.path, $0.sha256) }
                         }.padding(.top, 10)
-                    }.font(.caption).foregroundStyle(RoomsPalette.muted)
+                    }.font(.caption).foregroundStyle(theme.muted)
                 }
             }
         }.sheet(item: $selected) { selection in RoomsArtifactInspector(model: model, selection: selection) }
     }
     private func provenance(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) { Text(label); Text(value).font(.system(size: 10, design: .monospaced)).textSelection(.enabled) }
+        VStack(alignment: .leading, spacing: 3) { Text(label); Text(value).font(.system(size: 11, design: .monospaced)).textSelection(.enabled) }
     }
 }
 
@@ -56,6 +57,7 @@ private struct RoomsArtifactSelection: Identifiable {
 }
 
 private struct RoomsArtifactInspector: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var model: RoomsModel
     let selection: RoomsArtifactSelection
     @State private var data: Data?
@@ -69,7 +71,7 @@ private struct RoomsArtifactInspector: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(selection.path).font(.headline).textSelection(.enabled)
-                    Text("UNTRUSTED SOURCE · NEVER EXECUTED").font(.system(size: 9, weight: .semibold)).tracking(1.5).foregroundStyle(RoomsPalette.amber)
+                    Text("Untrusted source · never executed").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.warning)
                 }
                 Spacer()
                 Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -84,15 +86,15 @@ private struct RoomsArtifactInspector: View {
                 ScrollView([.horizontal, .vertical]) {
                     Text(verbatim: text).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .topLeading).padding(18)
-                }.background(RoomsPalette.background, in: RoundedRectangle(cornerRadius: 12))
+                }.background(theme.trough, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             } else {
                 RoomsEmptyState(icon: "doc", title: "Verified download; no inline preview", detail: "Binary files and source files over 256 KiB are not rendered. Save a copy to inspect in a separate application.")
                 Spacer()
             }
-            if saved { Label("Copy saved. It was not opened or executed.", systemImage: "checkmark.shield").font(.caption).foregroundStyle(RoomsPalette.cyan) }
+            if saved { Label("Copy saved. It was not opened or executed.", systemImage: "checkmark.shield").font(.caption).foregroundStyle(theme.accentText) }
             Text("Saving a file does not verify its safety. Inspect generated code before executing it; keep execution isolated.")
-                .font(.caption).foregroundStyle(RoomsPalette.muted)
-        }.padding(24).frame(width: 800, height: 650).background(RoomsPalette.panel).preferredColorScheme(.dark)
+                .font(.caption).foregroundStyle(theme.muted)
+        }.padding(24).frame(width: 800, height: 650).background(theme.background).jarvisThemed()
             .task { await load() }
     }
     private func load() async {

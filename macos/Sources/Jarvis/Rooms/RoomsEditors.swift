@@ -17,21 +17,22 @@ struct RoomsPlanReuseView: View {
                 .font(.caption).foregroundStyle(.secondary)
             Text("Source: \(plan.id) · revision \(plan.revision)").font(.caption.monospaced()).textSelection(.enabled)
             TextField("Goal for the new draft", text: $goal, axis: .vertical).lineLimit(5...12).textFieldStyle(.roundedBorder)
-            if let error = model.error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error = model.error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
             HStack {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Author new draft") {
                     let capturedGoal = goal
                     Task { if await model.authorGoal(capturedGoal, roomId: plan.roomId) { dismiss() } }
-                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                }.buttonStyle(.jarvisPrimary).keyboardShortcut(.defaultAction)
                     .disabled(!model.canMutate || model.pendingActions.contains("author:\(plan.roomId)") || goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-        }.padding(28).frame(width: 560)
+        }.padding(28).frame(width: 560).jarvisThemed()
     }
 }
 
 struct RoomsRoomEditor: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var model: RoomsModel
     let room: HarnessRoom?
     @State private var title: String
@@ -55,12 +56,12 @@ struct RoomsRoomEditor: View {
                     Text(room == nil ? "Create a room" : "Room policy").font(.title2)
                     Text(room.map { "Editing room revision \($0.revision). Existing runs keep their policy snapshot." }
                          ?? "A durable scope for plans, workers, questions and artifacts.")
-                        .font(.caption).foregroundStyle(RoomsPalette.muted)
+                        .font(.caption).foregroundStyle(theme.muted)
                 }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(saving ? "Saving…" : "Save room") { save() }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .buttonStyle(.jarvisPrimary).keyboardShortcut(.defaultAction)
                     .disabled(saving || !model.canMutate || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }.padding(24)
             Divider()
@@ -101,11 +102,11 @@ struct RoomsRoomEditor: View {
                     number("Artifact file limit", value: $policy.sandbox.maxArtifactFiles)
                     number("Log byte limit", value: $policy.sandbox.maxLogBytes)
                     Text("No host-code fallback, secret mounts or worker network. Configuring a digest does not download or provision an image.")
-                        .font(.caption).foregroundStyle(RoomsPalette.amber)
+                        .font(.caption).foregroundStyle(theme.warning)
                 }
             }.formStyle(.grouped)
-            if let error = model.error { Text(error).font(.caption).foregroundStyle(RoomsPalette.red).textSelection(.enabled).padding(16) }
-        }.frame(width: 720, height: 760).background(RoomsPalette.background).preferredColorScheme(.dark)
+            if let error = model.error { Text(error).font(.caption).foregroundStyle(theme.danger).textSelection(.enabled).padding(16) }
+        }.frame(width: 720, height: 760).background(theme.background).jarvisThemed()
             .interactiveDismissDisabled(saving)
     }
     private func number(_ title: String, value: Binding<Int>) -> some View {
@@ -124,6 +125,7 @@ struct RoomsRoomEditor: View {
 }
 
 struct RoomsBudgetEditor: View {
+    @Environment(\.theme) private var theme
     @Binding var budget: HarnessBudgetLimits
     var body: some View {
         TextField("Steps (1–100)", value: $budget.maxSteps, format: .number.grouping(.never))
@@ -138,11 +140,12 @@ struct RoomsBudgetEditor: View {
             TextField("Estimated USD threshold", value: Binding(get: { budget.estimatedUsdLimit ?? 0 }, set: { budget.estimatedUsdLimit = $0 }), format: .number)
         }
         Text("Dollar thresholds are estimates, not hard provider billing caps. Unknown usage keeps conservative reservations.")
-            .font(.caption).foregroundStyle(RoomsPalette.muted)
+            .font(.caption).foregroundStyle(theme.muted)
     }
 }
 
 struct RoomsPlanEditor: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var model: RoomsModel
     let plan: HarnessPlan
     @State private var draft: HarnessPlanDraft
@@ -158,14 +161,14 @@ struct RoomsPlanEditor: View {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Edit the plan").font(.title2)
-                    Text("Revision \(plan.revision) · saving does not accept or start work").font(.caption).foregroundStyle(RoomsPalette.muted)
+                    Text("Revision \(plan.revision) · saving does not accept or start work").font(.caption).foregroundStyle(theme.muted)
                 }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(saving ? "Saving…" : "Save draft") {
                     saving = true
                     Task { let ok = await model.savePlan(plan, draft: draft); saving = false; if ok { dismiss() } }
-                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                }.buttonStyle(.jarvisPrimary).keyboardShortcut(.defaultAction)
                     .disabled(saving || !model.canMutate || draft.nodes.isEmpty || draft.goal.isEmpty)
             }.padding(24)
             ScrollView {
@@ -184,10 +187,10 @@ struct RoomsPlanEditor: View {
                     }
                     Button { addNode() } label: { Label("Add a worker node", systemImage: "plus") }
                         .disabled(draft.nodes.count >= (model.state?.rooms.first(where: { $0.id == plan.roomId })?.policy.maxNodes ?? 32))
-                    if let error = model.error { Text(error).font(.caption).foregroundStyle(RoomsPalette.red).textSelection(.enabled) }
+                    if let error = model.error { Text(error).font(.caption).foregroundStyle(theme.danger).textSelection(.enabled) }
                 }.padding(24)
             }
-        }.frame(width: 820, height: 760).background(RoomsPalette.background).preferredColorScheme(.dark)
+        }.frame(width: 820, height: 760).background(theme.background).jarvisThemed()
             .interactiveDismissDisabled(saving)
     }
     private func addNode() {
@@ -203,6 +206,7 @@ struct RoomsPlanEditor: View {
 }
 
 private struct RoomsNodeEditor: View {
+    @Environment(\.theme) private var theme
     @Binding var node: HarnessPlanNode
     let nodes: [HarnessPlanNode]
     let onDelete: () -> Void
@@ -218,7 +222,7 @@ private struct RoomsNodeEditor: View {
             }
             TextField("Instructions", text: $node.instructions, axis: .vertical).lineLimit(3...10)
             if nodes.count > 1 {
-                Text("Dependencies & immutable input snapshots").font(.caption).foregroundStyle(RoomsPalette.muted)
+                Text("Dependencies & immutable input snapshots").font(.caption).foregroundStyle(theme.muted)
                 ForEach(nodes.filter { $0.id != node.id }) { other in
                     HStack {
                         Toggle("Wait for \(other.title)", isOn: Binding(

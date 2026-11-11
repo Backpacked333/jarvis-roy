@@ -49,6 +49,23 @@ The development launcher remains available: `./scripts/run-macos.sh` uses shell 
 
 In the app, choose **New conversation**, then type a message. To try the new workspace, enable **Voice-first assistant** in Settings, restart services and select Assistant. Enable **Project knowledge and read grants** separately to import sources for the selected project. Cloud sharing starts off for each grant. Ask to save a preference and inspect its approval. Keep unrelated work in separate projects.
 
+### Finding your way around
+
+The sidebar holds every page and your conversations; search filters them by title and message text. **Chat** is the conversation page: anything waiting on your approval or answer appears in the thread itself, and **Activity** on the right lists that conversation's tasks. The **Voice** button in the top bar shows the voice state and opens every voice permission and control. Live captures show where the speech will be sent before anything is submitted.
+
+| Shortcut | Action |
+| --- | --- |
+| ⌘K | Jump to a page, conversation or action |
+| ⌘1 – ⌘7 | Today, Assistant, Rooms, Chat, Capabilities, Memory, Privacy |
+| ⌘N | New conversation |
+| ⌘. | Stop all work |
+| ⌃⌘S / ⌥⌘I | Show or hide the sidebar / Activity |
+| ⇧⌘L | Legends mode |
+
+**Legends mode** switches every window to dark with a gold accent. Turn it on from the sidebar, the View menu, the menu bar item, ⌘K or **Settings → General → Appearance**. With it off, Jarvis follows your system light or dark appearance.
+
+The floating controls (sidebar, composer, capture bar, ⌘K panel) use the system Liquid Glass material when the app is built with Xcode 26 or newer and run on macOS 26 or newer. Earlier systems get a frosted material instead. Reduce Transparency, Increase Contrast and Reduce Motion are respected.
+
 ### Room worker setup and first run
 
 Install a maintained Docker engine yourself, start it, then run `./scripts/setup-workers.sh`. This creates the trusted Python controller venv and checks pinned dependencies; it does not pull images or start workers. Choose the exact platform digest in [worker setup](runtime/workers/README.md), explicitly run `docker pull "$JARVIS_WORKER_IMAGE"`, and save the immutable image in **Settings → Diagnostics → Isolated analysis workers**, or export `JARVIS_WORKER_IMAGE` for the development launcher. The app discovers the local venv and Docker binary. Missing prerequisites fail closed, not through a host executor.
