@@ -6,6 +6,7 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 1
 fi
 xcode-select -p >/dev/null
+swift --version 2>&1 | head -n 1
 swift build --package-path "$ROOT/macos-control" -c release \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$ROOT/macos-control/Info.plist"
 HELPER_BIN="$(swift build --package-path "$ROOT/macos-control" -c release --show-bin-path)"
