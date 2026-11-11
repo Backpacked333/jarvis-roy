@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var quitting = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        JarvisTheme.applyStoredAppearance()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         shortcut.action = { [weak self] in
@@ -49,10 +50,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct JarvisApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = AppModel()
+    @StateObject private var chrome = WorkspaceChrome()
+    @AppStorage(JarvisTheme.legendsKey) private var legendsMode = false
 
     var body: some Scene {
         WindowGroup("Jarvis", id: "main") {
-            JarvisSceneHost(model: model, delegate: delegate)
+            JarvisSceneHost(model: model, chrome: chrome, delegate: delegate)
         }
         .defaultSize(width: 1280, height: 840)
         .windowStyle(.hiddenTitleBar)
@@ -63,16 +66,36 @@ struct JarvisApp: App {
                 Button("Stop all work") { Task { await model.stopAll() } }
                     .keyboardShortcut(".", modifiers: .command)
             }
+            CommandGroup(after: .sidebar) {
+                Button(chrome.sidebarVisible ? "Hide Sidebar" : "Show Sidebar") { chrome.sidebarVisible.toggle() }
+                    .keyboardShortcut("s", modifiers: [.control, .command])
+                Button(chrome.inspectorVisible ? "Hide Activity" : "Show Activity") { chrome.inspectorVisible.toggle() }
+                    .keyboardShortcut("i", modifiers: [.option, .command])
+                Toggle("Legends Mode", isOn: $legendsMode)
+                    .keyboardShortcut("l", modifiers: [.shift, .command])
+                Divider()
+            }
+            CommandMenu("Go") {
+                Button("Jump to…") { chrome.paletteVisible.toggle() }
+                    .keyboardShortcut("k", modifiers: .command)
+                Divider()
+                ForEach(WorkspaceTab.allCases) { tab in
+                    Button(tab.title) { model.tab = tab }
+                        .keyboardShortcut(KeyEquivalent(Character(String(tab.shortcutNumber))), modifiers: .command)
+                        .disabled(tab == .assistant && !AssistantFeatures.assistant)
+                }
+            }
         }
         MenuBarExtra("Jarvis", systemImage: "waveform.circle") {
             JarvisMenu(model: model, summon: { delegate.summon?() })
         }
-        Settings { JarvisSettingsView(assistant: model.assistant) }
+        Settings { JarvisSettingsView(assistant: model.assistant).jarvisThemed() }
     }
 }
 
 private struct JarvisSceneHost: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var chrome: WorkspaceChrome
     let delegate: AppDelegate
     @ObservedObject private var supervisor = RuntimeSupervisor.shared
     @Environment(\.openWindow) private var openWindow
@@ -81,22 +104,11 @@ private struct JarvisSceneHost: View {
     @State private var setupVisible = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            if supervisor.state != .ready {
-                HStack {
-                    if supervisor.state == .starting { ProgressView().controlSize(.small) }
-                    Text(supervisor.detail).font(.callout).textSelection(.enabled)
-                    Spacer()
-                    SettingsLink { Label("Settings", systemImage: "gearshape") }
-                    if supervisor.state == .failed {
-                        Button("Retry") { Task { await supervisor.start() } }
-                    }
-                }.padding().background(.regularMaterial)
+        WorkspaceView(model: model, voice: model.voice, chrome: chrome)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if supervisor.state != .ready { SupervisorStatusBar(supervisor: supervisor) }
             }
-            WorkspaceView(model: model, voice: model.voice)
-        }
-        .frame(minWidth: 1050, minHeight: 720)
-        .preferredColorScheme(.dark)
+            .frame(minWidth: 980, minHeight: 680)
         .task {
             await supervisor.start()
             if supervisor.state == .ready { model.startObserving() }
@@ -117,6 +129,29 @@ private struct JarvisSceneHost: View {
         }
         .onChange(of: scenePhase) { _, phase in model.setApplicationActive(phase == .active) }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)) { _ in model.muteVoice() }
+        .jarvisWorkspaceRoot()
+    }
+}
+
+/// Shown along the bottom of the window while the local services are starting or have failed.
+private struct SupervisorStatusBar: View {
+    @ObservedObject var supervisor: RuntimeSupervisor
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if supervisor.state == .starting { ProgressView().controlSize(.small) }
+            else { Image(systemName: supervisor.state == .failed ? "exclamationmark.triangle.fill" : "bolt.horizontal.circle").foregroundStyle(supervisor.state == .failed ? theme.danger : theme.warning) }
+            Text(supervisor.detail).font(.system(size: 12)).foregroundStyle(theme.text).textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            SettingsLink { Label("Settings", systemImage: "gearshape") }.buttonStyle(.jarvisCompact)
+            if supervisor.state == .failed {
+                Button("Retry") { Task { await supervisor.start() } }.buttonStyle(.jarvisCompactPrimary)
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .background(theme.panel)
+        .overlay(alignment: .top) { Rectangle().fill(theme.line).frame(height: 1) }
     }
 }
 
@@ -125,6 +160,7 @@ private struct JarvisMenu: View {
     let summon: () -> Void
     @ObservedObject private var supervisor = RuntimeSupervisor.shared
     @Environment(\.openWindow) private var openWindow
+    @AppStorage(JarvisTheme.legendsKey) private var legendsMode = false
 
     var body: some View {
         Text("Jarvis · \(supervisor.state.rawValue.capitalized)")
@@ -141,6 +177,7 @@ private struct JarvisMenu: View {
         Button("Mute voice") { model.muteVoice() }
         Button("Stop all work") { Task { await model.stopAll() } }
         Divider()
+        Toggle("Legends Mode", isOn: $legendsMode)
         SettingsLink { Text("Settings…") }
         Button("Quit Jarvis") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }

@@ -19,7 +19,7 @@ struct PresentationDraftEditor: View {
             }
             if editing {
                 TextEditor(text: $bodyText).font(.body).frame(minHeight: 240)
-                    .padding(8).background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(8).jarvisSurface(.panel, radius: 12)
                 HStack {
                     Text("Editing revision \(presentation.revision). Saving creates a new revision.").font(.caption).foregroundStyle(.secondary)
                     Spacer(); Button("Discard edits") { editing = false }.disabled(saving)

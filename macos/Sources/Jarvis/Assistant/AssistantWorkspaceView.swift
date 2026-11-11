@@ -9,169 +9,227 @@ struct AssistantWorkspaceView: View {
     @State private var memoryVisible = false
     @State private var contextVisible = false
     @State private var contextUsed: ContextUsedTarget?
+    @Environment(\.theme) private var theme
+
+    private var sendDisabled: Bool {
+        assistant.submitting || assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || assistant.selectedSession == nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(assistant.selectedSession?.title ?? "Talk through your next idea")
-                        .font(.title2.weight(.medium))
-                    Text(assistant.connected ? "A shared workspace for conversation, evidence, and action" : "Connecting to your local assistant")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
+            HStack(spacing: 8) {
                 Menu {
                     ForEach(assistant.sessions) { session in
                         Button(String(session.title.prefix(30))) { assistant.selectSession(session.id) }
                     }
                     Divider()
                     Button("New assistant conversation") { Task { await model.newAssistantConversation() } }
-                } label: { Label("Sessions", systemImage: "bubble.left.and.bubble.right") }
+                } label: {
+                    Label(assistant.selectedSession?.title ?? "Choose a session", systemImage: "bubble.left.and.bubble.right")
+                }
+                .menuStyle(.borderlessButton).fixedSize()
+                .help("Switch session or start a new one")
+                if !assistant.connected {
+                    StatusPill(label: "Connecting", color: theme.warning, working: true)
+                }
+                Spacer(minLength: 8)
                 if AssistantFeatures.knowledge {
                     Button { knowledgeVisible.toggle() } label: { Label("Knowledge", systemImage: "books.vertical") }
+                        .buttonStyle(.jarvisCompact)
                         .disabled(assistant.selectedSession?.focus.projectID == nil)
                 }
                 Button { memoryVisible.toggle() } label: { Label("Memory", systemImage: "brain") }
+                    .buttonStyle(.jarvisCompact)
                 if AssistantFeatures.knowledge || AssistantFeatures.memory {
                     Button { contextVisible.toggle() } label: { Label("Context", systemImage: "list.bullet.rectangle") }
+                        .buttonStyle(.jarvisCompact)
                         .disabled(assistant.selectedSession?.focus.projectID == nil)
                 }
-            }.padding(22)
-            Divider()
-            if let error = assistant.error { Text(error).foregroundStyle(.orange).font(.callout).padding(12).frame(maxWidth: .infinity, alignment: .leading) }
-            if let notice = assistant.notice { Text(notice).font(.callout).foregroundStyle(.secondary).padding(.horizontal, 22).padding(.top, 8) }
+            }.padding(.horizontal, 22).padding(.top, 4).padding(.bottom, 10)
+            if let error = assistant.error {
+                NoticeBanner(message: error, icon: "exclamationmark.triangle", tone: .warning, onDismiss: { assistant.error = nil })
+                    .padding(.horizontal, 22).padding(.bottom, 8)
+            }
+            if let notice = assistant.notice {
+                NoticeBanner(message: notice, icon: "info.circle", tone: .info, onDismiss: { assistant.notice = nil })
+                    .padding(.horizontal, 22).padding(.bottom, 8)
+            }
             HSplitView {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
+                    LazyVStack(alignment: .leading, spacing: 12) {
                         if !assistant.visiblePinnedPresentations.isEmpty {
-                            Text("Pinned revisions").font(.caption).foregroundStyle(.secondary)
+                            SectionHeader(title: "Pinned revisions")
                             ForEach(assistant.visiblePinnedPresentations) { presentation in
                                 Button { assistant.selectPinnedPresentation(presentation.id) } label: {
                                     Label("\(presentation.title) · r\(presentation.revision)", systemImage: "pin.fill").lineLimit(2)
-                                }.buttonStyle(.bordered)
+                                        .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.text)
+                                        .padding(.horizontal, 10).padding(.vertical, 8)
+                                }.buttonStyle(JarvisRowButtonStyle(selected: assistant.selectedPresentation?.id == presentation.id))
                             }
                         }
                         if assistant.visibleTurns.isEmpty {
-                            ContentUnavailableView("Start with a question", systemImage: "waveform",
-                                description: Text("Discuss a paper, compare evidence, plan work, or prepare an action. Sources and results will appear alongside the conversation."))
+                            EmptyStateView(icon: "waveform", title: "Start with a question",
+                                detail: "Discuss a paper, compare evidence, plan work, or prepare an action. Sources and results will appear alongside the conversation.")
                         }
                         ForEach(assistant.visibleTurns) { turn in
                             VStack(alignment: .leading, spacing: 8) {
-                                Text(turn.text).font(.body).textSelection(.enabled)
-                                HStack {
-                                    Text(turn.intent == "side_question" ? "Side conversation" : turn.status.capitalized)
-                                    if !turn.isSettled { ProgressView().controlSize(.small) }
-                                }.font(.caption).foregroundStyle(.secondary)
-                                if let error = turn.error { Text(error).font(.caption).foregroundStyle(.orange) }
-                                if let taskID = turn.taskId, let project = turn.capturedFocus.projectID, AssistantFeatures.knowledge || AssistantFeatures.memory {
-                                    Button("Context used") { contextUsed = .init(id: taskID, projectID: project) }.font(.caption)
+                                Text(turn.text).font(.system(size: 14)).lineSpacing(3).foregroundStyle(theme.text).textSelection(.enabled)
+                                HStack(spacing: 8) {
+                                    StatusPill(label: turn.intent == "side_question" ? "Side conversation" : turn.status.capitalized,
+                                               color: turn.isSettled ? theme.muted : theme.accentText, working: !turn.isSettled)
+                                    if let taskID = turn.taskId, let project = turn.capturedFocus.projectID, AssistantFeatures.knowledge || AssistantFeatures.memory {
+                                        Button("Context used") { contextUsed = .init(id: taskID, projectID: project) }.buttonStyle(.jarvisGhost)
+                                    }
                                 }
+                                if let error = turn.error { Text(error).font(.system(size: 12)).foregroundStyle(theme.warning).textSelection(.enabled) }
                                 ForEach(assistant.visiblePresentations.filter { $0.turnId == turn.id }) { presentation in
                                     Button { assistant.selectPresentation(presentation.id) } label: {
-                                        Label(presentation.title.isEmpty ? presentation.content.kind.rawValue.capitalized : presentation.title,
-                                              systemImage: icon(presentation.content.kind))
-                                            .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-                                    }.buttonStyle(.bordered)
+                                        HStack(spacing: 10) {
+                                            Image(systemName: icon(presentation.content.kind)).foregroundStyle(theme.accentText).frame(width: 18)
+                                            Text(presentation.title.isEmpty ? presentation.content.kind.rawValue.capitalized : presentation.title)
+                                                .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.text)
+                                                .lineLimit(2).multilineTextAlignment(.leading)
+                                            Spacer(minLength: 4)
+                                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.faint)
+                                        }.padding(.horizontal, 10).padding(.vertical, 8)
+                                    }
+                                    .buttonStyle(JarvisRowButtonStyle(selected: assistant.selectedPresentation?.id == presentation.id))
+                                    .background(theme.elevated, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .help("Open on the working surface")
                                 }
-                            }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+                            }.jarvisCard(padding: 14, radius: 14)
                         }
                         ForEach(assistant.visibleProposals) { proposal in
                             VStack(alignment: .leading, spacing: 10) {
-                                Label("Review exact action", systemImage: "checkmark.shield").font(.headline)
-                                Text(proposal.action.toolName).font(.subheadline)
-                                Text(proposal.action.reviewText).font(.callout).textSelection(.enabled)
-                                Text(proposal.status.replacingOccurrences(of: "_", with: " ")).font(.caption).foregroundStyle(.secondary)
+                                Label("Review exact action", systemImage: "checkmark.shield").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.warning)
+                                Text(proposal.action.toolName).font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.text)
+                                Text(proposal.action.reviewText).font(.system(size: 13)).foregroundStyle(theme.text).textSelection(.enabled)
+                                Text(proposal.status.replacingOccurrences(of: "_", with: " ")).font(.system(size: 12)).foregroundStyle(theme.muted)
                                 if let challenge = proposal.challenge, proposal.status == "awaiting_confirmation" {
-                                    Text("Say: \(challenge)").font(.headline).foregroundStyle(.cyan)
+                                    Text("Say: \(challenge)").font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accentText)
                                 }
                                 Button("Read and confirm by voice") { Task { await assistant.readProposal(proposal) } }
                                     .disabled(!["proposed", "reviewed"].contains(proposal.status) || !voice.cloudConsentGranted)
-                            }.padding(14).background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                            }.jarvisCard(.warning, padding: 14, radius: 14)
                         }
                         ForEach(model.tasks.filter { task in assistant.visibleTurns.contains { $0.taskId == task.id } }) { task in
                             ForEach(task.approvals) { approval in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(approval.title).font(.headline)
-                                    Text(approval.detail).font(.callout).textSelection(.enabled)
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Label("Your approval", systemImage: "hand.raised.fill").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.warning)
+                                    Text(approval.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.text)
+                                    Text(approval.detail).font(.system(size: 12, design: .monospaced)).foregroundStyle(theme.text).textSelection(.enabled)
+                                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(theme.trough, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                                     HStack {
                                         ForEach(approval.options) { option in
                                             Button(option.label) {
                                                 Task { await model.act(key: approval.id, path: "v1/tasks/\(task.id)/respond",
                                                     body: ["interactionId": approval.id, "optionId": option.id, "expectedRevision": String(approval.revision ?? 0)]) }
-                                            }
+                                            }.buttonStyle(JarvisButtonStyle(kind: option.id == "approve" ? .primary : .secondary))
                                             if AssistantFeatures.voiceApproval, option.id == "approve" {
                                                 Button("Review by voice") { Task { await assistant.createVoiceProposal(task: task, approval: approval, option: option) } }
                                             }
                                         }
                                     }
-                                }.padding(14).background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                                }.jarvisCard(.warning, padding: 14, radius: 14)
                             }
                         }
-                    }.padding(18)
-                }.frame(minWidth: 250, idealWidth: 350, maxWidth: 470)
+                    }.padding(.leading, 22).padding(.trailing, 10).padding(.bottom, 16)
+                }.frame(minWidth: 270, idealWidth: 360, maxWidth: 480)
                 VStack(spacing: 0) {
-                    HStack {
-                        Button { assistant.goBack() } label: { Label("Back", systemImage: "chevron.left") }.disabled(!assistant.canGoBack)
+                    HStack(spacing: 8) {
+                        Button { assistant.goBack() } label: { Image(systemName: "chevron.left") }
+                            .buttonStyle(.jarvisIcon).disabled(!assistant.canGoBack).help("Back").accessibilityLabel("Back")
                         if !assistant.followingPresentation {
-                            Button("Follow Jarvis") { assistant.followPresentations() }.help("Let new results update the working surface")
-                            if assistant.hasPresentationUpdate { Button("Show update") { assistant.showPresentationUpdate() } }
+                            Button("Follow Jarvis") { assistant.followPresentations() }.buttonStyle(.jarvisCompact).help("Let new results update the working surface")
+                            if assistant.hasPresentationUpdate { Button("Show update") { assistant.showPresentationUpdate() }.buttonStyle(.jarvisCompactPrimary) }
                         }
                         Spacer()
                         if let selected = assistant.selectedPresentation {
+                            Text("Revision \(selected.revision)").font(.system(size: 11)).foregroundStyle(theme.muted)
                             if let text = selected.content.markdown {
-                                Button("Read aloud") { voice.speak(text, context: selected.capturedFocus.voiceContext) }
+                                Button { voice.speak(text, context: selected.capturedFocus.voiceContext) } label: { Image(systemName: "speaker.wave.2") }
+                                    .buttonStyle(.jarvisIcon).help("Read aloud").accessibilityLabel("Read aloud")
                                     .disabled(!voice.cloudConsentGranted || voice.captureInProgress || voice.dictationActive)
                             }
-                            Text("Revision \(selected.revision)").font(.caption).foregroundStyle(.secondary)
                             Button { assistant.togglePin(selected.id) } label: {
-                                Label(assistant.pinned.contains(selected.id) ? "Unpin" : "Pin", systemImage: assistant.pinned.contains(selected.id) ? "pin.fill" : "pin")
+                                Image(systemName: assistant.pinned.contains(selected.id) ? "pin.fill" : "pin")
                             }
+                            .buttonStyle(JarvisIconButtonStyle(active: assistant.pinned.contains(selected.id)))
+                            .help(assistant.pinned.contains(selected.id) ? "Unpin" : "Pin this revision")
+                            .accessibilityLabel(assistant.pinned.contains(selected.id) ? "Unpin" : "Pin")
                         }
-                    }.padding(12)
-                    Divider()
+                    }.padding(.horizontal, 12).frame(height: 44)
+                    Rectangle().fill(theme.line).frame(height: 1)
                     ScrollView {
                         if let selected = assistant.selectedPresentation { AssistantPresentationView(presentation: selected, assistant: assistant, rooms: model.rooms).id("\(selected.id):\(selected.revision)").padding(24) }
-                        else { ContentUnavailableView("Your working surface", systemImage: "rectangle.3.group", description: Text("Ask Jarvis to explain, compare, calculate, or draft. Select a card to explore its evidence and details.")) }
+                        else {
+                            EmptyStateView(icon: "rectangle.3.group", title: "Your working surface",
+                                detail: "Ask Jarvis to explain, compare, calculate, or draft. Select a card to explore its evidence and details.")
+                                .padding(.top, 60)
+                        }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                }.frame(minWidth: 330)
-            }
-            Divider()
-            VStack(spacing: 10) {
-                if let selection = assistant.visualSelection {
-                    HStack { Label(selection.label, systemImage: "scope"); Text("Bound to displayed revision").foregroundStyle(.secondary); Spacer(); Button("Clear") { assistant.selectVisual(nil) } }.font(.caption)
                 }
-                HStack {
+                .frame(minWidth: 330)
+                .jarvisSurface(.panel, radius: 18)
+                .padding(.trailing, 8).padding(.leading, 4)
+            }
+            VStack(spacing: 8) {
+                if let selection = assistant.visualSelection {
+                    HStack(spacing: 8) {
+                        Label(selection.label, systemImage: "scope").foregroundStyle(theme.accentText)
+                        Text("Bound to displayed revision").foregroundStyle(theme.muted)
+                        Spacer()
+                        Button("Clear") { assistant.selectVisual(nil) }.buttonStyle(.jarvisGhost)
+                    }.font(.system(size: 12)).padding(.horizontal, 6)
+                }
+                if voice.isListening || voice.dictationActive {
+                    Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript).font(.system(size: 12)).foregroundStyle(theme.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 6)
+                }
+                HStack(alignment: .bottom, spacing: 10) {
+                    Button { Task { await model.startManualListening() } } label: {
+                        Image(systemName: "mic.fill").font(.system(size: 16, weight: .medium)).foregroundStyle(theme.text)
+                            .frame(width: 46, height: 46).contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .jarvisGlass(Circle(), interactive: true)
+                    .disabled(!voice.cloudConsentGranted || assistant.selectedSession == nil || voice.dictationActive)
+                    .help(voice.cloudConsentGranted ? "Speak to this session" : "Turn on cloud voice to speak")
+                    .accessibilityLabel("Speak")
+                    TextField("Ask Jarvis, or continue by voice…", text: $assistant.draft, axis: .vertical).id(assistant.selectedSessionID)
+                        .disabled(assistant.selectedSession == nil)
+                        .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...5).foregroundStyle(theme.text)
+                        .onSubmit { Task { await assistant.sendDraft() } }
+                        .padding(.horizontal, 18).padding(.vertical, 14).frame(minHeight: 46)
+                        .jarvisGlass(RoundedRectangle(cornerRadius: 23, style: .continuous))
+                    Button { Task { await assistant.sendDraft() } } label: {
+                        Image(systemName: "arrow.up").font(.system(size: 16, weight: .bold)).foregroundStyle(theme.onAccent)
+                            .frame(width: 46, height: 46).background(theme.accentFill, in: Circle()).contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(sendDisabled).opacity(sendDisabled ? 0.4 : 1)
+                    .help("Send (Return)")
+                    .accessibilityLabel("Send assistant request")
+                }
+                HStack(spacing: 8) {
                     Picker("Next turn", selection: $assistant.intent) {
                         Text("Continue").tag("continue")
                         Text("Ask alongside work").tag("side_question")
                         Text("Propose goal change").tag("redirect_work")
-                    }.labelsHidden().frame(maxWidth: 230)
+                    }.labelsHidden().frame(maxWidth: 200).help("How the next message relates to the work in progress")
                     Picker("Capture", selection: $voice.captureMode) {
                         ForEach(VoiceCaptureMode.allCases) { mode in Text(mode.title).tag(mode) }
-                    }.labelsHidden().frame(maxWidth: 220).disabled(voice.captureInProgress || voice.dictationActive)
+                    }.labelsHidden().frame(maxWidth: 200).disabled(voice.captureInProgress || voice.dictationActive).help("How speech is captured")
                     VoicePauseSettingsView(mode: voice.captureMode)
                     Spacer()
-                    if voice.dictationPaused { Button("Continue dictation") { Task { await voice.continueDictation() } } }
-                    if voice.isListening {
-                        Button("Still thinking") { voice.holdConversationPause() }
-                    }
-                    if voice.isListening || voice.dictationActive { Button("Finish") { voice.finishListening() } }
-                    Button { Task { await model.startManualListening() } } label: { Label("Speak", systemImage: "mic.fill") }
-                        .disabled(!voice.cloudConsentGranted || assistant.selectedSession == nil || voice.dictationActive)
+                    if voice.dictationPaused { Button("Continue dictation") { Task { await voice.continueDictation() } }.buttonStyle(.jarvisCompact) }
+                    if voice.isListening { Button("Still thinking") { voice.holdConversationPause() }.buttonStyle(.jarvisCompact) }
+                    if voice.isListening || voice.dictationActive { Button("Finish") { voice.finishListening() }.buttonStyle(.jarvisCompactPrimary) }
                     Button("Stop speaking") { assistant.muteNarration(); voice.stopSpeaking(); Task { await assistant.invalidateVoiceReview() } }
+                        .buttonStyle(.jarvisCompact)
                 }
-                HStack(alignment: .bottom) {
-                    TextField("Ask Jarvis, or continue by voice…", text: $assistant.draft, axis: .vertical).id(assistant.selectedSessionID)
-                        .disabled(assistant.selectedSession == nil)
-                        .textFieldStyle(.plain).lineLimit(1...5).padding(12)
-                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-                    Button { Task { await assistant.sendDraft() } } label: { Image(systemName: "arrow.up.circle.fill").font(.title) }
-                        .buttonStyle(.plain).disabled(assistant.submitting || assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || assistant.selectedSession == nil)
-                        .accessibilityLabel("Send assistant request")
-                }
-                if voice.isListening || voice.dictationActive { Text(voice.transcript.isEmpty ? "Listening…" : voice.transcript).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
-            }.padding(18)
+            }.padding(.horizontal, 22).padding(.top, 10).padding(.bottom, 12)
         }
         .sheet(isPresented: $knowledgeVisible) {
             if let project = assistant.selectedSession?.focus.projectID {
@@ -215,7 +273,7 @@ private struct AssistantPresentationView: View {
     private var content: AssistantPresentationContent { presentation.content }
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(presentation.title).font(.title2.weight(.medium))
+            Text(presentation.title).font(.system(size: 20, weight: .semibold))
             switch content.kind {
             case .text:
                 Text(.init(content.markdown ?? "")).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
@@ -232,7 +290,7 @@ private struct AssistantPresentationView: View {
                         }
                         Text(passage.text).textSelection(.enabled)
                         Text("Evidence \(passage.id)").font(.caption2.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                    }.padding(14).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+                    }.jarvisCard(.elevated, padding: 14, radius: 12)
                 }
             case .draft:
                 Label(content.format == "email" ? "Email draft" : "Document draft", systemImage: content.format == "email" ? "envelope" : "doc.text")
@@ -248,7 +306,7 @@ private struct AssistantPresentationView: View {
                         Text(source.excerpt).textSelection(.enabled)
                         Text(source.url).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                         Text("\(source.status.capitalized) · \(source.retrievedAt)").font(.caption2).foregroundStyle(.secondary)
-                    }.padding(14).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+                    }.jarvisCard(.elevated, padding: 14, radius: 12)
                 }
             case .code:
                 Text(content.verification == "passed" ? "Checks passed" : "Verification: \(content.verification ?? "unverified")").font(.caption).foregroundStyle(.secondary)

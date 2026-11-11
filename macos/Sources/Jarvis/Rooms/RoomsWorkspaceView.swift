@@ -5,6 +5,7 @@ private enum RoomsWorkspaceSection: String, CaseIterable {
 }
 
 struct RoomsWorkspaceView: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var model: RoomsModel
     let onVoiceContext: (HarnessVoiceContext) -> Void
     let onSpeakQuestion: (HarnessQuestion) -> Void
@@ -19,28 +20,28 @@ struct RoomsWorkspaceView: View {
     var body: some View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
-                roomRail.frame(width: geometry.size.width < 900 ? 175 : 218)
-                Rectangle().fill(RoomsPalette.line).frame(width: 1)
+                roomRail.frame(width: geometry.size.width < 900 ? 190 : 232)
+                    .padding(.leading, 16).padding(.bottom, 8)
                 VStack(spacing: 0) {
                     header
                     if let error = model.error { errorBanner(error) }
                     if model.state == nil {
-                        initialState.padding(32)
+                        initialState.padding(28)
                     } else {
                         HStack(alignment: .top, spacing: 0) {
                             ScrollView {
-                                VStack(alignment: .leading, spacing: 24) {
+                                VStack(alignment: .leading, spacing: 20) {
                                     if !model.isConnected { disconnectedBanner }
                                     if let state = model.state, !state.ready {
-                                        Label("Reconciling saved work. Controls remain unavailable until the service is ready.", systemImage: "clock.badge.exclamationmark")
-                                            .font(.caption).foregroundStyle(RoomsPalette.amber)
+                                        NoticeBanner(message: "Reconciling saved work. Controls remain unavailable until the service is ready.", icon: "clock.badge.exclamationmark", tone: .warning)
                                     }
                                     content
-                                }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
+                                }.padding(.horizontal, 22).padding(.top, 16).padding(.bottom, 24).frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            if geometry.size.width >= 1240 && section != .attention {
-                                Rectangle().fill(RoomsPalette.line).frame(width: 1)
-                                ScrollView { attention.padding(22) }.frame(width: 316).background(RoomsPalette.panel.opacity(0.35))
+                            if geometry.size.width >= 1180 && section != .attention {
+                                ScrollView { attention.padding(18) }.frame(width: 316)
+                                    .jarvisSurface(.panel, radius: 18)
+                                    .padding(.trailing, 8).padding(.bottom, 8).padding(.top, 16)
                             }
                         }
                     }
@@ -48,7 +49,6 @@ struct RoomsWorkspaceView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(RoomsPalette.background).foregroundStyle(.white).tint(RoomsPalette.cyan).preferredColorScheme(.dark)
         .onAppear {
             if observationOwnership == .workspace {
                 model.setApplicationActive(scenePhase == .active)
@@ -76,91 +76,74 @@ struct RoomsWorkspaceView: View {
 
     private var roomRail: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 9) {
-                Image(systemName: "circle.hexagongrid").font(.system(size: 26, weight: .ultraLight)).foregroundStyle(RoomsPalette.cyan)
-                Text("JARVIS").font(.system(size: 17, weight: .medium)).tracking(4)
-            }.padding(.top, 32)
-            Text("ROOM CONTROL").font(.system(size: 8, weight: .medium)).tracking(2.8).foregroundStyle(RoomsPalette.muted).padding(.top, 9)
             HStack {
-                Text("YOUR ROOMS").font(.system(size: 9, weight: .semibold)).tracking(1.5).foregroundStyle(RoomsPalette.muted)
+                Text("Your rooms").font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.text)
                 Spacer()
                 Button { creatingRoom = true } label: { Image(systemName: "plus") }
-                    .buttonStyle(.plain).help("Create a room (⇧⌘N)").accessibilityLabel("Create a room")
+                    .buttonStyle(JarvisIconButtonStyle(size: 26, active: true)).help("Create a room (⇧⌘N)").accessibilityLabel("Create a room")
                     .keyboardShortcut("n", modifiers: [.command, .shift]).disabled(!model.canMutate)
-            }.padding(.top, 40).padding(.bottom, 16)
+            }.padding(.bottom, 10)
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 3) {
                     ForEach(model.state?.rooms ?? []) { room in roomButton(room) }
                     if model.state?.rooms.isEmpty == true {
-                        Text("Rooms you create persist here across restarts.").font(.caption).foregroundStyle(RoomsPalette.muted).lineSpacing(4).padding(.vertical, 12)
+                        Text("Rooms you create persist here across restarts.").font(.system(size: 12)).foregroundStyle(theme.muted).lineSpacing(3).padding(.vertical, 10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-            }
-            Spacer(minLength: 18)
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Local by design", systemImage: "lock.shield").font(.system(size: 11, weight: .medium))
-                Text("Isolated work. Explicit starts.\nYour approval for host actions.").font(.system(size: 10)).foregroundStyle(RoomsPalette.muted).lineSpacing(5)
-                Rectangle().fill(RoomsPalette.line).frame(height: 1).padding(.vertical, 8)
-                Text("MAC SLEEP / SHUTDOWN\nLOCAL WORK STOPS").font(.system(size: 8, weight: .semibold)).tracking(1.1).foregroundStyle(RoomsPalette.amber).lineSpacing(5)
-            }.padding(.bottom, 24)
-        }.padding(.horizontal, 20).background(RoomsPalette.panel.opacity(0.5))
+            }.scrollIndicators(.never)
+            Spacer(minLength: 12)
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Local by design", systemImage: "lock.shield").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                Text("Isolated work, explicit starts, and your approval for host actions.").font(.system(size: 11)).foregroundStyle(theme.muted).lineSpacing(2)
+                Label("Local work stops when this Mac sleeps or shuts down.", systemImage: "moon.zzz").font(.system(size: 11)).foregroundStyle(theme.warning)
+            }.fixedSize(horizontal: false, vertical: true)
+        }.padding(14).jarvisSurface(.panel, radius: 18)
     }
 
     private func roomButton(_ room: HarnessRoom) -> some View {
         let selected = model.selectedRoomId == room.id
         let pending = model.questions.filter { $0.target.roomId == room.id }.count
         return Button { model.selectedRoomId = room.id } label: {
-            HStack(alignment: .top, spacing: 10) {
-                RoundedRectangle(cornerRadius: 2).fill(selected ? RoomsPalette.cyan : RoomsPalette.muted.opacity(0.3)).frame(width: 3, height: 28)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(room.title).font(.system(size: 12, weight: .medium)).lineLimit(2)
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(room.title).font(.system(size: 13, weight: selected ? .semibold : .regular)).foregroundStyle(theme.text).lineLimit(2).multilineTextAlignment(.leading)
                     HStack(spacing: 5) {
                         Text(room.status.capitalized)
                         if room.policy.attention == "quiet" { Image(systemName: "bell.slash") }
-                    }.font(.system(size: 9)).foregroundStyle(RoomsPalette.muted)
+                    }.font(.system(size: 11)).foregroundStyle(theme.muted)
                 }
                 Spacer(minLength: 0)
-                if pending > 0 { Text("\(pending)").font(.system(size: 10, design: .monospaced)).foregroundStyle(RoomsPalette.amber) }
-            }.padding(.vertical, 13).padding(.horizontal, 10).frame(maxWidth: .infinity, alignment: .leading)
-                .background(selected ? RoomsPalette.cyan.opacity(0.075) : .clear, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? RoomsPalette.cyan.opacity(0.18) : .clear))
-        }.buttonStyle(.plain).accessibilityLabel("\(room.title), \(room.status), \(pending) pending questions")
+                if pending > 0 { CountBadge(count: pending) }
+            }.padding(.vertical, 8).padding(.horizontal, 10)
+        }.buttonStyle(JarvisRowButtonStyle(selected: selected)).accessibilityLabel("\(room.title), \(room.status), \(pending) pending questions")
             .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 19) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("CONTROL CENTER / LOCAL").font(.system(size: 8, weight: .medium, design: .monospaced)).tracking(2).foregroundStyle(RoomsPalette.muted)
-                    Text(model.selectedRoom?.title ?? "Your next idea starts here").font(.system(size: 23, weight: .light)).lineLimit(1)
-                }
-                Spacer()
-                Circle().fill(model.isConnected ? RoomsPalette.cyan : RoomsPalette.amber).frame(width: 6, height: 6).accessibilityHidden(true)
-                Text(model.isConnected ? "Bridge connected" : "Bridge offline").font(.system(size: 10)).foregroundStyle(RoomsPalette.muted)
-                Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
-                    .accessibilityLabel("Refresh rooms").keyboardShortcut("r", modifiers: .command).disabled(model.isRefreshing)
-                if let room = model.selectedRoom {
-                    Button { editingRoom = room } label: { Label("Policy", systemImage: "slider.horizontal.3") }
-                        .disabled(!model.canMutate)
-                }
-            }
-            HStack(spacing: 22) {
+        HStack(spacing: 10) {
+            HStack(spacing: 2) {
                 ForEach(RoomsWorkspaceSection.allCases, id: \.self) { item in
                     Button { section = item } label: {
-                        VStack(spacing: 10) {
-                            HStack(spacing: 6) {
-                                Text(item.rawValue).font(.system(size: 11, weight: .medium))
-                                if item == .attention && model.questions.count + model.approvals.count > 0 { Text("\(model.questions.count + model.approvals.count)").font(.system(size: 9, design: .monospaced)).foregroundStyle(RoomsPalette.amber) }
-                            }
-                            Rectangle().fill(section == item ? RoomsPalette.cyan : .clear).frame(height: 2)
-                        }.foregroundStyle(section == item ? .white : RoomsPalette.muted)
-                    }.buttonStyle(.plain).accessibilityAddTraits(section == item ? [.isSelected] : [])
+                        HStack(spacing: 6) {
+                            Text(item.rawValue).font(.system(size: 12, weight: section == item ? .semibold : .medium))
+                                .foregroundStyle(section == item ? theme.text : theme.muted)
+                            if item == .attention && model.questions.count + model.approvals.count > 0 { CountBadge(count: model.questions.count + model.approvals.count) }
+                        }.padding(.horizontal, 12).frame(height: 28)
+                    }.buttonStyle(JarvisRowButtonStyle(selected: section == item, cornerRadius: 14)).fixedSize()
+                        .accessibilityAddTraits(section == item ? [.isSelected] : [])
                 }
-                Spacer(minLength: 0)
+            }.padding(3).background(theme.trough, in: Capsule())
+            Spacer(minLength: 8)
+            StatusPill(label: model.isConnected ? "Bridge connected" : "Bridge offline", color: model.isConnected ? theme.success : theme.warning)
+            Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
+                .buttonStyle(.jarvisIcon).help("Refresh rooms (⌘R)")
+                .accessibilityLabel("Refresh rooms").keyboardShortcut("r", modifiers: .command).disabled(model.isRefreshing)
+            if let room = model.selectedRoom {
+                Button { editingRoom = room } label: { Label("Policy", systemImage: "slider.horizontal.3") }
+                    .buttonStyle(.jarvisCompact).disabled(!model.canMutate)
             }
-        }.padding(.horizontal, 28).padding(.top, 24)
-            .overlay(alignment: .bottom) { Rectangle().fill(RoomsPalette.line).frame(height: 1) }
+        }.padding(.horizontal, 22).padding(.top, 4)
     }
 
     @ViewBuilder private var content: some View {
@@ -180,7 +163,7 @@ struct RoomsWorkspaceView: View {
         } else {
             RoomsPanel(title: "", eyebrow: "ROOM TO BUILD") {
                 RoomsEmptyState(icon: "square.stack.3d.up", title: "Give an idea its own room.", detail: "Set a scope and limits. Describe the outcome. Review the plan, then start real isolated workers. Jarvis asks when it needs you.")
-                Button("Create your first room") { creatingRoom = true }.buttonStyle(.borderedProminent).disabled(!model.canMutate)
+                Button("Create your first room") { creatingRoom = true }.buttonStyle(.jarvisPrimary).disabled(!model.canMutate)
             }
         }
     }
@@ -202,24 +185,18 @@ struct RoomsWorkspaceView: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
     private var disconnectedBanner: some View {
-        Label("Read-only saved snapshot. Reconnect before issuing controls or answers.", systemImage: "wifi.slash")
-            .font(.caption).foregroundStyle(RoomsPalette.amber)
+        NoticeBanner(message: "Read-only saved snapshot. Reconnect before issuing controls or answers.", icon: "wifi.slash", tone: .warning)
     }
     private func errorBanner(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.triangle")
-            Text(message).font(.caption).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            Button { model.clearError() } label: { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("Dismiss error")
-        }.padding(14).foregroundStyle(RoomsPalette.amber).background(RoomsPalette.amber.opacity(0.07))
+        NoticeBanner(message: message, icon: "exclamationmark.triangle", tone: .warning, onDismiss: { model.clearError() })
+            .padding(.horizontal, 22).padding(.top, 10)
     }
     private var footer: some View {
         HStack(spacing: 12) {
-            Text("NO NETWORK IN WORKERS").tracking(1)
+            Label("No network in workers", systemImage: "network.slash")
             Spacer()
             if let updated = model.lastUpdated { Text("Synced \(updated.formatted(date: .omitted, time: .standard))") }
-            Text("LOCAL WORK DOES NOT CONTINUE THROUGH MAC SLEEP")
-        }.font(.system(size: 8, design: .monospaced)).foregroundStyle(RoomsPalette.muted).padding(.horizontal, 24).padding(.vertical, 12)
-            .background(RoomsPalette.panel.opacity(0.5))
+        }.font(.system(size: 11)).foregroundStyle(theme.faint).padding(.horizontal, 22).padding(.vertical, 8)
     }
     private func speakNextQuestion() {
         guard model.onQuestionAttention == nil, scenePhase == .active, let question = model.nextSpokenQuestion() else { return }
@@ -236,6 +213,7 @@ struct RoomsWorkspaceView: View {
 }
 
 private struct RoomsOverview: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var model: RoomsModel
     let room: HarnessRoom
     private var goal: Binding<String> {
@@ -253,35 +231,34 @@ private struct RoomsOverview: View {
             }
             if model.state?.worker.available == false {
                 HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "shippingbox").foregroundStyle(RoomsPalette.amber)
+                    Image(systemName: "shippingbox").foregroundStyle(theme.warning)
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Workers unavailable").font(.system(size: 13, weight: .medium))
                         Text(model.state?.worker.reason ?? "Configure a digest-pinned local Docker image. There is no host execution fallback.")
-                            .font(.caption).foregroundStyle(RoomsPalette.muted)
-                        Text("You can still create rooms and draft plans when the planning service is ready.").font(.caption).foregroundStyle(RoomsPalette.muted)
+                            .font(.caption).foregroundStyle(theme.muted)
+                        Text("You can still create rooms and draft plans when the planning service is ready.").font(.caption).foregroundStyle(theme.muted)
                     }
                     Spacer()
-                }.padding(18).background(RoomsPalette.amber.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+                }.jarvisCard(.warning, padding: 16, radius: 14)
             }
             RoomsPanel(title: "What should this room build?", eyebrow: "01 / DESCRIBE THE OUTCOME") {
                 TextField("Describe the outcome, constraints and deliverables…", text: goal, axis: .vertical)
-                    .lineLimit(3...8).textFieldStyle(.plain).font(.system(size: 14)).padding(14)
-                    .background(RoomsPalette.background, in: RoundedRectangle(cornerRadius: 10)).accessibilityLabel("Room goal")
+                    .lineLimit(3...8).font(.system(size: 14)).jarvisField().accessibilityLabel("Room goal")
                 HStack {
-                    Text("Draft → review & accept → explicit start").font(.system(size: 10)).foregroundStyle(RoomsPalette.muted)
+                    Text("Draft → review & accept → explicit start").font(.system(size: 11)).foregroundStyle(theme.muted)
                     Spacer()
                     Button { model.submitGoalDraft(roomId: room.id) } label: { Label("Draft a plan", systemImage: "arrow.up.right") }
-                        .buttonStyle(.borderedProminent).keyboardShortcut(.return, modifiers: .command)
+                        .buttonStyle(.jarvisPrimary).keyboardShortcut(.return, modifiers: .command)
                         .disabled(!model.canMutate || room.status != "active" || model.pendingActions.contains("author:\(room.id)") || goal.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                if let transcript = model.lastVoiceGoal { Text("Last captured voice goal: \(transcript)").font(.caption).foregroundStyle(RoomsPalette.muted).textSelection(.enabled) }
+                if let transcript = model.lastVoiceGoal { Text("Last captured voice goal: \(transcript)").font(.caption).foregroundStyle(theme.muted).textSelection(.enabled) }
             }
             ForEach(model.authorings) { authoring in
                 RoomsPanel(title: "Plan authoring", eyebrow: authoring.id) {
                     HStack { RoomsStatus(value: authoring.status); Spacer(); if ["authoring", "waiting_question"].contains(authoring.status) { Button("Cancel planning") { Task { await model.cancelAuthoring(authoring) } }.disabled(!model.canMutate || model.pendingActions.contains("authoring:\(authoring.id)")) } }
                     Text(authoring.goal).font(.caption).textSelection(.enabled)
                     RoomsUsageView(usage: authoring.usage)
-                    if let error = authoring.error { Text(error).font(.caption).foregroundStyle(RoomsPalette.red) }
+                    if let error = authoring.error { Text(error).font(.caption).foregroundStyle(theme.danger) }
                 }
             }
         }
@@ -290,16 +267,16 @@ private struct RoomsOverview: View {
     private var heroCopy: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(waiting > 0 ? "Your judgment.\nTheir next step." : running > 0 ? "Ideas in motion.\nYou stay in control." : "Room to think.\nSpace to build.")
-                .font(.system(size: 33, weight: .light)).tracking(-0.7).lineSpacing(3)
+                .font(.system(size: 28, weight: .semibold)).lineSpacing(2).foregroundStyle(theme.text)
             Text(room.description.isEmpty ? "A persistent workspace for bounded, independent agents." : room.description)
-                .font(.system(size: 12)).foregroundStyle(RoomsPalette.muted).lineSpacing(4).lineLimit(4)
+                .font(.system(size: 12)).foregroundStyle(theme.muted).lineSpacing(4).lineLimit(4)
             HStack(spacing: 22) {
-                count(running, "RUNNING")
-                count(waiting, "QUESTIONS")
-                count(model.artifacts.count, "SNAPSHOTS")
+                count(running, "Running")
+                count(waiting, "Questions")
+                count(model.artifacts.count, "Snapshots")
             }
             Text(model.voiceState == .unavailable ? "Premium voice unavailable · text remains ready" : "Premium voice · \(model.voiceState.rawValue) · real audio levels only")
-                .font(.system(size: 10)).foregroundStyle(RoomsPalette.muted)
+                .font(.system(size: 11)).foregroundStyle(theme.muted)
             if model.focusedQuestion != nil {
                 Button("Clear question voice target") { model.clearQuestionFocus() }.font(.caption)
             }
@@ -307,13 +284,14 @@ private struct RoomsOverview: View {
     }
     private func count(_ value: Int, _ label: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("\(value)").font(.system(size: 23, weight: .light, design: .monospaced)).foregroundStyle(RoomsPalette.cyan)
-            Text(label).font(.system(size: 8, weight: .medium)).tracking(1).foregroundStyle(RoomsPalette.muted)
+            Text("\(value)").font(.system(size: 22, weight: .semibold)).monospacedDigit().foregroundStyle(theme.accentText)
+            Text(label).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.muted)
         }
     }
 }
 
 private struct RoomsPlanCard: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var model: RoomsModel
     let plan: HarnessPlan
     let onEdit: (HarnessPlan) -> Void
@@ -323,7 +301,7 @@ private struct RoomsPlanCard: View {
     private var policyMatches: Bool { model.state?.rooms.first(where: { $0.id == plan.roomId })?.policy.revision == plan.policyRevision }
     var body: some View {
         RoomsPanel(title: plan.status == "accepted" ? "Reusable accepted plan" : "The plan", eyebrow: plan.status == "draft" ? "02 / REVIEW BEFORE ACCEPTING" : "03 / ACCEPTED · NOT AUTO-STARTED") {
-            HStack { RoomsStatus(value: plan.status); Text("Revision \(plan.revision) · policy \(plan.policyRevision)").font(.caption).foregroundStyle(RoomsPalette.muted); Spacer() }
+            HStack { RoomsStatus(value: plan.status); Text("Revision \(plan.revision) · policy \(plan.policyRevision)").font(.caption).foregroundStyle(theme.muted); Spacer() }
             Text(plan.goal).font(.system(size: 14)).textSelection(.enabled)
             RoomsDependencyGraph(nodes: plan.nodes)
             DisclosureGroup("Inspect worker instructions, outputs & budgets") {
@@ -332,23 +310,23 @@ private struct RoomsPlanCard: View {
                         VStack(alignment: .leading, spacing: 7) {
                             Text(node.title).font(.headline)
                             Text(node.instructions).font(.caption).textSelection(.enabled)
-                            Text("Outputs: \(node.outputPaths.joined(separator: ", "))").font(.caption).foregroundStyle(RoomsPalette.cyan)
-                            Text("\(node.limits.maxSteps) steps · \(node.limits.maxModelCalls) calls · \(node.limits.maxTokens) tokens · \(node.limits.maxWallTimeMs / 1_000)s").font(.caption2).foregroundStyle(RoomsPalette.muted)
+                            Text("Outputs: \(node.outputPaths.joined(separator: ", "))").font(.caption).foregroundStyle(theme.accentText)
+                            Text("\(node.limits.maxSteps) steps · \(node.limits.maxModelCalls) calls · \(node.limits.maxTokens) tokens · \(node.limits.maxWallTimeMs / 1_000)s").font(.caption2).foregroundStyle(theme.muted)
                         }
                     }
-                    if let digest = plan.digest { Text("Immutable plan SHA256\n\(digest)").font(.system(size: 10, design: .monospaced)).textSelection(.enabled) }
+                    if let digest = plan.digest { Text("Immutable plan SHA256\n\(digest)").font(.system(size: 11, design: .monospaced)).textSelection(.enabled) }
                 }.padding(.top, 14)
-            }.font(.caption).foregroundStyle(RoomsPalette.muted)
-            if !policyMatches { Label("Room policy changed. Author a fresh plan before starting.", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(RoomsPalette.amber) }
+            }.font(.caption).foregroundStyle(theme.muted)
+            if !policyMatches { Label("Room policy changed. Author a fresh plan before starting.", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(theme.warning) }
             HStack {
                 if plan.status == "draft" {
                     Button("Edit draft") { onEdit(plan) }
                     Spacer()
-                    Button("Accept this revision…") { reviewing = plan }.buttonStyle(.borderedProminent)
+                    Button("Accept this revision…") { reviewing = plan }.buttonStyle(.jarvisPrimary)
                 } else {
                     Button("Draft a variation…") { reusing = plan }
                     Spacer()
-                    Button(hasPriorRuns ? "Review & run again…" : "Start isolated run…") { reviewing = plan }.buttonStyle(.borderedProminent)
+                    Button(hasPriorRuns ? "Review & run again…" : "Start isolated run…") { reviewing = plan }.buttonStyle(.jarvisPrimary)
                         .disabled(!policyMatches || model.state?.worker.available != true)
                 }
             }.disabled(!model.canMutate || model.pendingActions.contains("plan:\(plan.id)"))
@@ -365,6 +343,7 @@ private struct RoomsPlanCard: View {
 }
 
 private struct RoomsRunCard: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var model: RoomsModel
     let run: HarnessRun
     @State private var stopping: HarnessRun?
@@ -385,23 +364,23 @@ private struct RoomsRunCard: View {
                 }
             }.disabled(!model.canMutate || model.pendingActions.contains("run:\(run.id)"))
             if run.status == "cancel_requested" || (run.status == "cancelled" && !run.cancelConfirmed) {
-                Label("Stop requested, not confirmed. Resources may still be active.", systemImage: "exclamationmark.octagon").font(.caption).foregroundStyle(RoomsPalette.red)
+                Label("Stop requested, not confirmed. Resources may still be active.", systemImage: "exclamationmark.octagon").font(.caption).foregroundStyle(theme.danger)
             }
             if run.status == "interrupted" {
                 Text("Restart reconciliation could not confirm completion. No uncertain work is replayed automatically. Retry requires the server to confirm the old resource stopped.")
-                    .font(.caption).foregroundStyle(RoomsPalette.amber)
+                    .font(.caption).foregroundStyle(theme.warning)
             }
-            if run.status == "paused" { Text("New dispatch is paused. Already-running workers may finish; pause is not cancellation.").font(.caption).foregroundStyle(RoomsPalette.amber) }
+            if run.status == "paused" { Text("New dispatch is paused. Already-running workers may finish; pause is not cancellation.").font(.caption).foregroundStyle(theme.warning) }
             RoomsUsageView(usage: run.usage, limits: run.policy.runBudget)
             RoomsWorkerCensus(nodes: run.nodes)
             DisclosureGroup("Immutable run policy · revision \(run.policy.revision)") {
                 VStack(alignment: .leading, spacing: 7) {
                     Text("\(run.policy.maxConcurrentWorkers) concurrent workers · \(run.policy.runBudget.maxTokens) token cap · \(run.policy.runBudget.maxWallTimeMs / 1_000)s wall-time cap")
                     Text("Docker · no network · \(run.policy.sandbox.memoryMiB) MiB · \(run.policy.sandbox.cpus, specifier: "%.2f") CPU · \(run.policy.sandbox.pidsLimit) processes")
-                    Text(run.policy.sandbox.image ?? "Image was unconfigured").font(.system(size: 9, design: .monospaced)).textSelection(.enabled)
+                    Text(run.policy.sandbox.image ?? "Image was unconfigured").font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
                     Text("Host actions: exact approval cards only. Later room edits do not change this run.")
-                }.font(.caption).foregroundStyle(RoomsPalette.muted).padding(.top, 10)
-            }.font(.caption).foregroundStyle(RoomsPalette.muted)
+                }.font(.caption).foregroundStyle(theme.muted).padding(.top, 10)
+            }.font(.caption).foregroundStyle(theme.muted)
             if let plan { RoomsDependencyGraph(nodes: plan.nodes, states: run.nodes) }
             ForEach(run.nodes) { node in worker(node) }
         }
@@ -422,20 +401,20 @@ private struct RoomsRunCard: View {
                 RoomsStatus(value: node.status)
             }
             Text(node.operation ?? (node.status == "queued" ? "Waiting for dependency success and budget reservation" : "No operation detail reported"))
-                .font(.caption).foregroundStyle(RoomsPalette.muted).textSelection(.enabled)
-            if let attempt = node.attemptId { Text("Attempt \(node.attemptNumber) · \(attempt)").font(.system(size: 9, design: .monospaced)).foregroundStyle(RoomsPalette.muted).textSelection(.enabled) }
-            if let error = node.error { Text(error).font(.caption).foregroundStyle(RoomsPalette.red).textSelection(.enabled) }
+                .font(.caption).foregroundStyle(theme.muted).textSelection(.enabled)
+            if let attempt = node.attemptId { Text("Attempt \(node.attemptNumber) · \(attempt)").font(.system(size: 11, design: .monospaced)).foregroundStyle(theme.muted).textSelection(.enabled) }
+            if let error = node.error { Text(error).font(.caption).foregroundStyle(theme.danger).textSelection(.enabled) }
             DisclosureGroup("Usage & output references") {
                 VStack(alignment: .leading, spacing: 10) {
                     RoomsUsageView(usage: node.usage)
-                    ForEach(node.artifactIds, id: \.self) { Text($0).font(.system(size: 10, design: .monospaced)).textSelection(.enabled) }
+                    ForEach(node.artifactIds, id: \.self) { Text($0).font(.system(size: 11, design: .monospaced)).textSelection(.enabled) }
                 }.padding(.top, 10)
-            }.font(.caption).foregroundStyle(RoomsPalette.muted)
+            }.font(.caption).foregroundStyle(theme.muted)
             if ["failed", "interrupted", "cancelled"].contains(node.status), node.attemptId != nil {
                 Button("Review explicit retry…") { retrying = RoomsRetrySelection(run: run, node: node) }.font(.caption)
                     .disabled(!model.canMutate || model.pendingActions.contains("run:\(run.id)"))
             }
-        }.padding(15).background(RoomsPalette.elevated.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+        }.padding(14).frame(maxWidth: .infinity, alignment: .leading).jarvisSurface(.elevated, radius: 12)
     }
 }
 

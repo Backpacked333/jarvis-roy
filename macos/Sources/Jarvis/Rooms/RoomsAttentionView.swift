@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct RoomsAttentionView: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var model: RoomsModel
     let onSpeakQuestion: (HarnessQuestion) -> Void
     let onReviewApproval: (HarnessApproval) -> Void
@@ -9,39 +10,38 @@ struct RoomsAttentionView: View {
             HStack {
                 Text("Attention").font(.system(size: 20, weight: .medium))
                 Spacer()
-                Text("\(model.questions.count + model.approvals.count)").font(.system(size: 13, design: .monospaced)).foregroundStyle(RoomsPalette.amber)
+                Text("\(model.questions.count + model.approvals.count)").font(.system(size: 13, design: .monospaced)).foregroundStyle(theme.warning)
             }
             Toggle("Read new questions aloud", isOn: $model.spokenAttentionEnabled).font(.caption)
                 .help("May read questions aloud while using other apps. This is not microphone consent. Quiet rooms stay in this inbox; one exact question at a time.")
             Toggle("Pause room alerts", isOn: $model.attentionMuted).font(.caption)
                 .help("Pauses proactive speech and notifications, not workers or microphone capture. The text inbox stays available.")
             RoomsNotificationSettings(notifications: model.notifications)
-            Text("QUESTIONS · INFORMATION ONLY").font(.system(size: 9, weight: .semibold)).tracking(1.3).foregroundStyle(RoomsPalette.amber)
+            Text("Questions · information only").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.warning)
             if model.questions.isEmpty {
                 Text("No pending clarifications. Questions will appear here with their exact room and attempt.")
-                    .font(.caption).foregroundStyle(RoomsPalette.muted).lineSpacing(4)
+                    .font(.caption).foregroundStyle(theme.muted).lineSpacing(4)
             }
             ForEach(model.questions) { question in
                 RoomsQuestionCard(model: model, question: question, onSpeak: onSpeakQuestion)
             }
-            Rectangle().fill(RoomsPalette.line).frame(height: 1)
-            Text("APPROVALS · EXPLICIT REVIEW").font(.system(size: 9, weight: .semibold)).tracking(1.3).foregroundStyle(RoomsPalette.red)
-            Text("A spoken “yes” never authorizes an operation.").font(.caption).foregroundStyle(RoomsPalette.muted)
+            Rectangle().fill(theme.line).frame(height: 1)
+            Text("Approvals · explicit review").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.danger)
+            Text("A spoken “yes” never authorizes an operation.").font(.caption).foregroundStyle(theme.muted)
             if model.approvals.isEmpty {
-                Text("No operations awaiting approval.").font(.caption).foregroundStyle(RoomsPalette.muted)
+                Text("No operations awaiting approval.").font(.caption).foregroundStyle(theme.muted)
             }
             ForEach(model.approvals) { approval in
                 VStack(alignment: .leading, spacing: 12) {
-                    Label(approval.title, systemImage: "lock.shield").font(.system(size: 13, weight: .semibold)).foregroundStyle(RoomsPalette.red)
+                    Label(approval.title, systemImage: "lock.shield").font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.danger)
                     Text(approval.detail).font(.caption).textSelection(.enabled).lineLimit(8)
-                    Text(roomName(approval.roomId)).font(.caption2).foregroundStyle(RoomsPalette.muted)
-                    if let reason = approval.blockedReason { Text(reason).font(.caption).foregroundStyle(RoomsPalette.amber) }
+                    Text(roomName(approval.roomId)).font(.caption2).foregroundStyle(theme.muted)
+                    if let reason = approval.blockedReason { Text(reason).font(.caption).foregroundStyle(theme.warning) }
                     Button("Review exact operation…") { onReviewApproval(approval) }
                         .disabled(!approval.reviewable || !model.canMutate)
                         .help("Opens the existing approval-card flow for interaction \(approval.interactionId). This button does not authorize it.")
                 }.padding(15).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoomsPalette.red.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(RoomsPalette.red.opacity(0.18)))
+                    .jarvisSurface(.danger, radius: 14)
             }
         }
     }
@@ -49,6 +49,7 @@ struct RoomsAttentionView: View {
 }
 
 private struct RoomsQuestionCard: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var model: RoomsModel
     let question: HarnessQuestion
     let onSpeak: (HarnessQuestion) -> Void
@@ -60,14 +61,14 @@ private struct RoomsQuestionCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label(room?.title ?? question.target.roomId, systemImage: "bubble.left.and.bubble.right")
-                    .font(.system(size: 11, weight: .medium)).foregroundStyle(RoomsPalette.amber)
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.warning)
                 Spacer()
                 if room?.policy.attention == "quiet" { Image(systemName: "bell.slash").help("Quiet room: excluded from spoken attention") }
             }
             Text(question.question.prompt).font(.system(size: 14, weight: .medium)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            Text(RoomsStateRules.questionScope(question.target)).font(.system(size: 9, design: .monospaced)).foregroundStyle(RoomsPalette.muted).textSelection(.enabled)
+            Text(RoomsStateRules.questionScope(question.target)).font(.system(size: 11, design: .monospaced)).foregroundStyle(theme.muted).textSelection(.enabled)
             Text("Expires \(RoomsStateRules.date(question.expiresAt)?.formatted(date: .abbreviated, time: .shortened) ?? question.expiresAt)")
-                .font(.caption2).foregroundStyle(RoomsPalette.muted)
+                .font(.caption2).foregroundStyle(theme.muted)
             ForEach(question.question.choices) { choice in
                 Button(choice.label) { Task { _ = await model.answer(question.binding, choiceId: choice.id) } }
                     .frame(maxWidth: .infinity, alignment: .leading).disabled(submitting || !model.canMutate)
@@ -77,7 +78,7 @@ private struct RoomsQuestionCard: View {
                     .textFieldStyle(.roundedBorder).accessibilityLabel("Answer: \(question.question.prompt)")
                 if draft.isStale(for: question) {
                     Text("This question changed while you were drafting. Your answer is still bound to the earlier revision, not this updated question.")
-                        .font(.caption).foregroundStyle(RoomsPalette.red)
+                        .font(.caption).foregroundStyle(theme.danger)
                     Button("Clear draft and review the new question") { draft = RoomsAnswerDraft() }
                 }
                 Button(submitting ? "Waiting for confirmation…" : "Send answer") {
@@ -86,7 +87,7 @@ private struct RoomsQuestionCard: View {
                     Task { if await model.answer(binding, text: text) { draft = RoomsAnswerDraft() } }
                 }.disabled(submitting || !model.canMutate || draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.isStale(for: question))
             } else if submitting {
-                Text("Waiting for server confirmation…").font(.caption).foregroundStyle(RoomsPalette.amber)
+                Text("Waiting for server confirmation…").font(.caption).foregroundStyle(theme.warning)
             }
             HStack {
                 Button(model.focusedQuestion == question.binding ? "Voice target selected" : "Answer by voice") { model.focus(question) }
@@ -97,12 +98,13 @@ private struct RoomsQuestionCard: View {
                     .disabled(model.voiceState != .idle || !model.canMutate)
             }.font(.caption)
         }.padding(15).frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoomsPalette.amber.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(model.focusedQuestion == question.binding ? RoomsPalette.amber.opacity(0.6) : RoomsPalette.amber.opacity(0.18)))
+            .jarvisSurface(.warning, radius: 14)
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(theme.warning.opacity(model.focusedQuestion == question.binding ? 0.9 : 0), lineWidth: 2))
     }
 }
 
 private struct RoomsNotificationSettings: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var notifications: RoomsNotifications
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -112,8 +114,8 @@ private struct RoomsNotificationSettings: View {
             )).font(.caption)
             if notifications.isRequesting { ProgressView("Waiting for permission…").font(.caption) }
             Text("Generic notice only. No room names, prompts, operation details or answer buttons appear on the lock screen.")
-                .font(.caption2).foregroundStyle(RoomsPalette.muted)
-            if let error = notifications.error { Text(error).font(.caption2).foregroundStyle(RoomsPalette.amber) }
+                .font(.caption2).foregroundStyle(theme.muted)
+            if let error = notifications.error { Text(error).font(.caption2).foregroundStyle(theme.warning) }
         }
     }
 }

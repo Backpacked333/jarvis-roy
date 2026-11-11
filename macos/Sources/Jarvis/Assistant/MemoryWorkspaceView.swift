@@ -130,7 +130,7 @@ struct MemoryWorkspaceView: View {
                 }
                 Spacer()
                 Button("Refresh") { Task { await model.refresh() } }.disabled(!enabled || model.busy)
-                Button("New memory") { creating = true }.disabled(!enabled || model.busy)
+                Button("New memory") { creating = true }.buttonStyle(.jarvisPrimary).disabled(!enabled || model.busy)
             }
             if enabled {
                 HStack {
@@ -193,7 +193,7 @@ struct MemoryWorkspaceView: View {
                     ScrollView { MemoryRecordDetail(entry: captured).frame(maxWidth: .infinity, alignment: .leading) }
                     Text("Approval applies to revision \(captured.revision). An edit requires a new review.").font(.caption).foregroundStyle(.secondary)
                     if let error = model.error { Text(error).font(.caption).foregroundStyle(.orange) }
-                    HStack { Button("Cancel") { reviewing = nil }; Spacer(); Button("Approve memory") { Task { if await model.approve(captured) { reviewing = nil } } }.disabled(model.busy) }
+                    HStack { Button("Cancel") { reviewing = nil }; Spacer(); Button("Approve memory") { Task { if await model.approve(captured) { reviewing = nil } } }.buttonStyle(.jarvisPrimary).disabled(model.busy) }
                 }.padding(24).frame(width: 580, height: 520)
             }
             .alert("Archive this memory?", isPresented: Binding(get: { archiving != nil }, set: { if !$0 { archiving = nil } })) {

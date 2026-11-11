@@ -68,3 +68,12 @@ jobs:
       - run: ./scripts/ci-native.sh swift test --package-path macos -c release
       - run: ./scripts/ci-native.sh swift test --package-path macos-control
       - run: ./scripts/ci-native.sh swift test --package-path macos-control -c release
+      # The default Xcode compiles the frosted fallback. Xcode 26 and later also compile the
+      # system Liquid Glass path, which sits behind a compiler check in Design/Glass.swift.
+      - name: Build the app with the newest installed Xcode
+        run: |
+          newest="$(ls -d /Applications/Xcode_[0-9]*.app | grep -vi beta | sort -V | tail -n 1)"
+          export DEVELOPER_DIR="$newest/Contents/Developer"
+          echo "Using $newest"
+          swift --version
+          ./scripts/ci-native.sh swift build --package-path macos --build-path macos/.build-newest-xcode

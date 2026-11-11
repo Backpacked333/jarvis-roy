@@ -79,7 +79,7 @@ struct WorkingSetView: View {
                 if model.busy { ProgressView().controlSize(.small) }
             }
             if let error = model.error { Text(error).font(.caption).foregroundStyle(.orange) }
-        }.padding(16).background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+        }.padding(16).jarvisSurface(.panel, radius: 12)
             .task { await model.load() }
     }
 }
@@ -170,7 +170,7 @@ private struct ContextManifestSelectionView: View {
             DisclosureGroup("Record identity") {
                 Text("\(selection.id)\nSHA-256 \(selection.originalSha256)").font(.caption.monospaced()).textSelection(.enabled)
             }
-        }.padding(16).background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 12))
+        }.padding(16).jarvisSurface(.panel, radius: 12)
     }
 }
 private struct ContextEvidenceView: View {
@@ -184,6 +184,6 @@ private struct ContextEvidenceView: View {
             Text(evidence.source.title).font(.headline)
             Text(locator).font(.caption).foregroundStyle(.secondary)
             Text(evidence.passage.text).textSelection(.enabled)
-        }.padding(16).background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        }.padding(16).jarvisSurface(.accent, radius: 12)
     }
 }
